@@ -2072,11 +2072,12 @@ git add .github/workflows/ci.yml
 git commit -m "ci: test on PRs, publish image to GHCR from main and tags"
 git push -u origin feat/1a-core
 gh pr create --base main --title "feat(core): server skeleton, Docker image and CI" \
-  --body "$(printf '## What changed\nPlan 1A: core skeleton (docs/superpowers/plans/2026-10-24-phase1a-core.md)\n\n## How it was tested\nmake test/vet; image verified on zraid (Task 9)\n\nCloses #')"
+  --body "$(printf '## What changed\nPlan 1A: core skeleton\n\n## Source\nSpec §2.1, §2.2, §8; plan docs/superpowers/plans/2026-10-24-phase1a-core.md\n\n## How it was tested\nmake test/vet; image verified on zraid (Task 9)\n')"
 gh pr checks --watch
 ```
-Expected: `test` passes and `image` is skipped (PR event). Another member reviews and
-squash-merges it. Don't merge it yourself.
+Expected: `test` passes and `image` is skipped (PR event). Another member reviews
+(`/code-review` first pass, then reads it). Once approved, the **author** squash-merges.
+An AI agent never merges: it hands back to its human (see `CLAUDE.md`).
 
 - [ ] **Step 4: After merge, confirm the image is published**
 
