@@ -16,12 +16,16 @@ Never bypass it with `--no-verify`.
 
 ## Workflow
 
-1. Every change starts from an issue (except tiny docs fixes).
+1. Pick the work: **either** an issue, **or** one part of the design spec
+   (e.g. "§4.4 Subtitles"). One issue or one spec part per PR, so PRs stay small.
 2. Branch off an up-to-date `main`: `git switch main && git pull && git switch -c feat/short-name`.
 3. Commit small and often.
-4. Push the branch and open a PR. Fill in the template; `Closes #N` links the issue.
-5. Another member reviews and approves. Don't merge your own PR unreviewed.
-6. Merge with **Squash and merge**. The branch is deleted automatically.
+4. Push the branch and open a PR. Fill in the template: `Closes #N` for an issue,
+   or the spec section you built.
+5. Another member reviews: run `/code-review` in Claude Code on the PR branch as a
+   first pass, then read it yourself and approve or request changes.
+   Don't merge your own PR unreviewed.
+6. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
 
 ## Naming
 
