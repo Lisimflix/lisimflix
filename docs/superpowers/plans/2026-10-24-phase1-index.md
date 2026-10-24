@@ -126,6 +126,10 @@ func (s *Service) Guard() authctx.Guard   // the real guard; replaces DenyAllGua
 // Admins: every library ID. Users: their explicit allow-list (empty list = no libraries).
 func (s *Service) VisibleLibraryIDs(ctx context.Context, p authctx.Principal) ([]int64, error)
 func (s *Service) MaxContentRating(ctx context.Context, p authctx.Principal) (string, error) // "" = unrestricted
+// Compare an item's rating label (e.g. "PG-13", "TV-14", "M") with MaxContentRating. Use this; don't invent another table.
+func RatingAge(label string) (age int, known bool)
+// Per-user streaming limits, consumed in phase 2.
+func (s *Service) StreamLimits(ctx context.Context, p authctx.Principal) (StreamLimits, error)
 ```
 Tables owned: `users`, `user_identities`, `profiles`, `sessions`, `invites`,
 `signup_requests`, `user_library_access`, `oauth_providers`.
