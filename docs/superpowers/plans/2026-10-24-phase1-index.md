@@ -49,8 +49,9 @@ first release stays focused on video.
   parallel branches from colliding.
 - Tests: every task is TDD. `make test` must pass before pushing. No network calls in unit
   tests: external APIs are tested against recorded fixtures in `testdata/` via `httptest.Server`.
-- Commits: Conventional Commits (`feat(scanner): ...`, `fix(auth): ...`), ending with a
-  `Co-Authored-By:` line when an AI agent wrote the change.
+- Commits and PR titles: Conventional Commits (`feat(scanner): ...`, `fix(auth): ...`), ending
+  with a `Co-Authored-By:` line when an AI agent wrote the change. Never commit to or push
+  `main`, never `--no-verify`, never merge your own PR (see `CLAUDE.md`).
 - No secrets in the repo. API keys come from env or the admin settings table.
 
 ## Shared contracts
@@ -285,9 +286,14 @@ func (s *Store) Put(ctx context.Context, st State) error
 ```
 Tables owned: `user_item_state`, `watch_history`, `watchlist`, `ratings`, `track_prefs`.
 
-## Branch and review flow (summary; full text in CONTRIBUTING.md)
+## Branch and review flow
 
-1. Assign yourself the plan's issue, then branch `<yourname>/<plan>-<short>` from `main`, e.g. `lisim/1b-oauth`.
-2. Work task by task. Each task ends in a commit. Push often.
-3. Open a PR when a task group is green. Link the issue. Another member reviews.
-4. Rebase on `main` before merge. Squash-merge is off; keep task commits.
+`CONTRIBUTING.md` is the source of truth. If anything here disagrees with it, `CONTRIBUTING.md` wins. In short:
+
+1. One-time: `git config core.hooksPath .githooks` (the pre-push hook blocks pushes to `main`).
+2. Assign yourself the plan's issue, then branch off an up-to-date `main` using the
+   CONTRIBUTING prefixes: `feat/1b-auth`, `feat/1c-scanner`, `docs/...`, `fix/...`.
+3. Work task by task. Each plan task ends in a commit on your branch. Push often.
+4. Open a PR (fill in the template, `Closes #N`). The PR title uses Conventional Commits with
+   the area as scope, e.g. `feat(auth): local admin login and sessions`. Another member reviews.
+5. **Squash and merge.** A large plan may be split into several PRs, one per group of tasks.

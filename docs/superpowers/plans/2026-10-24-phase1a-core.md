@@ -34,12 +34,12 @@ jellyfin-ffmpeg 8.1.3-1, GitHub Actions.
 
 ```
 .editorconfig                       editor defaults (tabs for Go/Makefile)
-.gitignore                          adds .dev/, server/lisimflix binary
+.gitignore                          (exists) append .dev/ and .superpowers/
 .dockerignore                       keeps build context small
 Makefile                            Docker-wrapped go test/vet/fmt/tidy, image, run
 README.md                           what it is, quick start
-CONTRIBUTING.md                     team workflow (branches, PRs, migrations, tests)
-CLAUDE.md                           same rules phrased for AI agents
+CONTRIBUTING.md                     (exists, from PR #1) append "Development" and "Code rules" sections
+CLAUDE.md                           (exists, from PR #1) append "Code rules for agents" section
 Dockerfile                          build → ffmpeg → runtime stages
 deploy/entrypoint.sh                drop to PUID/PGID, exec binary
 deploy/docker-compose.yml           reference deployment
@@ -68,8 +68,10 @@ web/README.md                       placeholder; React app arrives in phase 3
 ### Task 1: Repo conventions, Go module, version package, Makefile
 
 **Files:**
-- Create: `.editorconfig`, `.dockerignore`, `Makefile`, `README.md`, `CONTRIBUTING.md`, `CLAUDE.md`, `web/README.md`
-- Modify: `.gitignore`
+- Create: `.editorconfig`, `.dockerignore`, `Makefile`, `README.md`, `web/README.md`
+- Modify (append only, keep the existing text from PR #1): `.gitignore`, `CONTRIBUTING.md`, `CLAUDE.md`
+
+**Before starting:** `git config core.hooksPath .githooks`, then `git switch main && git pull && git switch -c feat/1a-core`.
 - Create: `server/go.mod`, `server/internal/version/version.go`
 - Test: `server/internal/version/version_test.go`
 
@@ -96,14 +98,14 @@ indent_style = tab
 indent_size = 4
 ```
 
-`.gitignore` (replace contents):
+`.gitignore`: append these lines (the Go, Node, secrets and editor entries already exist):
 ```
-.superpowers/
+
+# Local dev data and brainstorm mockups
 .dev/
-server/lisimflix
-*.test
-*.out
+.superpowers/
 ```
+(Skip `.superpowers/` if it is already present. The `docs/phase1-plans` PR adds it.)
 
 `.dockerignore`:
 ```
@@ -192,66 +194,58 @@ make run     # build image and run on :8420 with ./.dev folders
 See [CONTRIBUTING.md](CONTRIBUTING.md) before opening a PR.
 ````
 
-- [ ] **Step 4: Write `CONTRIBUTING.md`**
+- [ ] **Step 4: Append to `CONTRIBUTING.md`** (after the existing "Never commit" section; leave the existing text unchanged)
 
 ```markdown
-# Contributing to Lisimflix
 
-Team: Zac, Lisim, Ondo (plus AI agents working on our behalf). These rules exist so we can
-all work at once without breaking each other's work.
+## Picking up plan work
 
-## Picking up work
-1. Work comes from the plans in `docs/superpowers/plans/` and their issues on the
-   Lisimflix project board. Assign yourself the issue before starting.
-2. Read the plan's **Global Constraints** and the shared contracts in the phase index.
-   Contract names and signatures are fixed. Changing one needs a PR that edits the index
-   and is reviewed by the owners of every plan that uses it.
+- Plans live in `docs/superpowers/plans/`. Each has an issue on the project board. Assign yourself first.
+- Read the plan's **Global Constraints** and the shared contracts in the phase index.
+  Contract names and signatures are fixed. Changing one needs a PR that edits the index,
+  reviewed by the owners of every plan that uses it.
 
-## Branches and PRs
-- Branch from `main`: `<yourname>/<plan>-<short>`, e.g. `ondo/1d-tmdb`.
-- One plan task = one or more commits. Conventional Commits: `feat(scanner): parse anime absolute numbers`.
-- AI-written commits end with a `Co-Authored-By:` line naming the model.
-- Open a PR into `main`, link the issue, and request review from another member. CI must be green.
-- Rebase on `main` before merging. Never force-push `main`.
-- `main` is not technically protected (GitHub Free + private repo), so these rules are a team
-  agreement: **no direct pushes to `main`**.
+## Development
+
+Only Docker and make are needed. Go runs inside a container.
+
+- `make fmt test vet` before every push. CI runs the same checks.
+- `make run` builds the image and runs it on :8420 with `./.dev` folders.
 
 ## Code rules
-- Go code lives in `server/`. Run `make fmt test vet` before pushing.
-- TDD: write the failing test first. No network in unit tests. Use `httptest.Server` with
-  recorded fixtures under the package's `testdata/`.
+
+- Go code lives in `server/`. TDD: write the failing test first.
+- No network in unit tests. Use `httptest.Server` with recorded fixtures under the package's `testdata/`.
 - `/media` is read-only. Nothing may write, move or delete under the media root.
-- Errors from HTTP handlers use `httpx.WriteError(w, status, "snake_code", "message")`.
-- Each module owns its tables (see phase index). Don't write to another module's tables;
+- HTTP handler errors use `httpx.WriteError(w, status, "snake_code", "message")`.
+- Each module owns its tables (see the phase index). Don't write to another module's tables;
   call that module's Store.
+- AI-written commits end with a `Co-Authored-By:` line naming the model.
 
 ## Database migrations
+
 - One folder: `server/internal/db/migrations/`.
 - Name: `YYYYMMDDHHMMSS_<module>_<what>.sql` (UTC time when you write it), e.g.
   `20261025093000_auth_users.sql`. The runner rejects other names.
 - Never edit a migration after it is merged to `main`. Add a new one.
 - Use `STRICT` tables and explicit foreign keys with `ON DELETE` behaviour.
-
-## Secrets
-Never commit API keys, tokens or `.env` files. Keys come from env vars or the admin settings.
 ```
 
-- [ ] **Step 5: Write `CLAUDE.md`**
+- [ ] **Step 5: Append to `CLAUDE.md`** (leave the existing rules unchanged)
 
 ```markdown
-# Lisimflix: notes for AI agents
 
-Read first: `CONTRIBUTING.md`, the spec in `docs/superpowers/specs/`, and the phase index
-in `docs/superpowers/plans/` (shared contracts).
+## Code rules for agents
 
-- Several humans and agents work in this repo in parallel. Stay inside the files your plan
-  task lists. If you need a contract change, stop and say so. Don't change it silently.
+- Also read the phase index in `docs/superpowers/plans/` (shared contracts).
+- Several humans and agents work in parallel. Stay inside the files your plan task lists.
+  If you need a contract change, stop and say so. Don't change it silently.
 - Go is not installed on the host. Use `make test`, `make vet`, `make fmt` (Docker-wrapped).
 - TDD always: failing test → minimal code → passing test → commit.
-- Never write under the media root. Never commit secrets.
+- Never write under the media root.
 - Migrations: new timestamped file only, never edit merged ones.
-- Match surrounding style: small focused files, `slog` for logs, errors wrapped with `%w`
-  and context (`fmt.Errorf("scan %s: %w", path, err)`).
+- Match surrounding style: small focused files, `slog` for logs, errors wrapped with `%w` and
+  context (`fmt.Errorf("scan %s: %w", path, err)`).
 - End commit messages with a `Co-Authored-By:` line for the model you are.
 ```
 
@@ -306,7 +300,7 @@ Expected: `ok  github.com/Lisimflix/lisimflix/server/internal/version`
 
 ```bash
 git add .editorconfig .gitignore .dockerignore Makefile README.md CONTRIBUTING.md CLAUDE.md web/README.md server/
-git commit -m "chore: repo conventions, Go module and version package"
+git commit -m "chore(core): dev tooling, Go module and version package"
 ```
 
 ---
@@ -2071,16 +2065,18 @@ jobs:
 Run: `docker run --rm -v "$PWD":/repo -w /repo rhysd/actionlint:1.7.7 -color`
 Expected: no output (no errors).
 
-- [ ] **Step 3: Commit, push a branch, open a PR, and confirm the `test` job passes**
+- [ ] **Step 3: Commit, push the `feat/1a-core` branch, open the PR, and confirm the `test` job passes**
 
 ```bash
 git add .github/workflows/ci.yml
 git commit -m "ci: test on PRs, publish image to GHCR from main and tags"
-git push -u origin HEAD
-gh pr create --fill --base main
+git push -u origin feat/1a-core
+gh pr create --base main --title "feat(core): server skeleton, Docker image and CI" \
+  --body "$(printf '## What changed\nPlan 1A: core skeleton (docs/superpowers/plans/2026-10-24-phase1a-core.md)\n\n## How it was tested\nmake test/vet; image verified on zraid (Task 9)\n\nCloses #')"
 gh pr checks --watch
 ```
-Expected: `test` passes and `image` is skipped (PR event).
+Expected: `test` passes and `image` is skipped (PR event). Another member reviews and
+squash-merges it. Don't merge it yourself.
 
 - [ ] **Step 4: After merge, confirm the image is published**
 
