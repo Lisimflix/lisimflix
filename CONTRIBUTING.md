@@ -24,7 +24,7 @@ Never bypass it with `--no-verify`.
    or the spec section you built.
 5. Another member reviews: run `/code-review` in Claude Code on the PR branch as a
    first pass, then read it yourself and approve or request changes.
-   Don't merge your own PR unreviewed.
+   Don't merge your own PR unreviewed (except owners, see below).
 6. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
 
 ## Checks (CI)
@@ -37,6 +37,15 @@ Never bypass it with `--no-verify`.
 - CI minutes are limited (2,000/month on the free plan), so workflows must:
   use Linux runners only (`ubuntu-latest`), cache Go modules and node packages,
   and cancel superseded runs on the same PR.
+
+## Owners
+
+- **Git hygiene and CI** (`.github/`, `.githooks/`, `CONTRIBUTING.md`, `CLAUDE.md`): Pete.
+  The owner may self-merge docs and config changes in this area.
+- **Spec, plans and code**: shared. Anyone can improve them through a PR that the
+  other member reviews. If someone is actively working on a doc (open PR or assigned
+  issue), don't edit it; open an issue for them instead.
+- Code always needs the other member's review, whoever owns the area.
 
 ## Working together
 
