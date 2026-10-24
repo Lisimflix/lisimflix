@@ -123,6 +123,7 @@ type Service struct{ /* ... */ }
 func NewService(d *db.DB, cfg config.Config, log *slog.Logger, now func() time.Time) *Service
 func (s *Service) Guard() authctx.Guard   // the real guard; replaces DenyAllGuard in main
 // Policy queries used by other modules:
+// Admins: every library ID. Users: their explicit allow-list (empty list = no libraries).
 func (s *Service) VisibleLibraryIDs(ctx context.Context, p authctx.Principal) ([]int64, error)
 func (s *Service) MaxContentRating(ctx context.Context, p authctx.Principal) (string, error) // "" = unrestricted
 ```
@@ -201,7 +202,7 @@ type Result struct {
 //  bit depth, HDR type, channels, language, title, default/forced flags)
 func Run(ctx context.Context, ffprobePath, file string) (Result, error)
 
-// scanner events, consumed by 1D to trigger matching
+// package scanner  (server/internal/scanner): scan engine + events, consumed by 1D to trigger matching
 type ScanListener interface { ItemsChanged(ctx context.Context, libraryID int64, itemIDs []int64) }
 func (s *Scanner) AddListener(l ScanListener)
 ```

@@ -1,0 +1,6314 @@
+# Phase 1C: Libraries & Scanner Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Admins define Movies / TV / Anime / Home Video libraries over folders under `/media`;
+the server walks them, understands Plex/Radarr/Sonarr/anime naming, ID hints and `.nfo` IDs,
+probes every new or changed file with ffprobe, keeps the item tree in SQLite in step with the
+disk (fsnotify + debounced rescans + a 6-hourly full scan), and tells listeners (plan 1D)
+which items changed.
+
+**Architecture:** Four packages. `probe` wraps ffprobe and parses its JSON. `library` owns
+library definitions, folder validation, scan-status types, the visibility hook and the
+`/libraries` admin API. `media` owns the item/file model, its store and read-only item
+endpoints. `scanner` owns name parsing (`Classify`), NFO ID reading, the scan engine, the
+fsnotify watcher and the run loop; it imports `library`, `media` and `probe`, and implements
+`library.ScanController` so the library API can trigger scans without an import cycle.
+`cmd/lisimflix` wires them in a separate file so `main.go` changes by three lines.
+
+**Tech Stack:** Go 1.27, chi v5, modernc.org/sqlite, log/slog, `github.com/fsnotify/fsnotify`
+v1.9.0 (new), jellyfin-ffmpeg 8.1.3-1 ffprobe (Debian `ffmpeg` for the integration test).
+
+**Spec:** `docs/superpowers/specs/2026-10-24-lisimflix-design.md` (sections 3.1, 2.2, 7)
+**Index / shared contracts:** `docs/superpowers/plans/2026-10-24-phase1-index.md` (1C contract)
+**Builds on:** `docs/superpowers/plans/2026-10-24-phase1a-core.md` (assumed merged). Plan 1B
+(auth) may not be merged: this plan uses only the `authctx.Guard` interface and
+`authctx.StaticGuard` in tests.
+
+## Global Constraints
+
+- Go 1.27 (`golang:1.27-trixie`). Module `github.com/Lisimflix/lisimflix/server` in `server/`. `CGO_ENABLED=0` builds.
+- SQLite via `modernc.org/sqlite`, driver `"sqlite"`. Router `github.com/go-chi/chi/v5`. Logging `log/slog` only.
+- All API routes under `/api/v1`, JSON only, errors via `httpx.WriteError` envelope `{"error":{"code":"snake_case_code","message":"human text"}}`.
+- `/media` is **read-only**. Nothing in this plan writes, renames or deletes under the media root. Deleting a library or a missing file only deletes database rows.
+- ffprobe default path `/usr/lib/jellyfin-ffmpeg/ffprobe` (`cfg.FFprobePath`, env `LISIMFLIX_FFPROBE`); ffmpeg `cfg.FFmpegPath` (env `LISIMFLIX_FFMPEG`).
+- Migrations in `server/internal/db/migrations/`, named `YYYYMMDDHHMMSS_<module>_<what>.sql`; this plan uses `2026102511xxxx` (auth uses `20261025100000`+). Never edit a merged migration. `STRICT` tables, explicit `ON DELETE`.
+- Contract names in the index are fixed. This plan only **adds** (listed under "Contract additions" at the end).
+- TDD: failing test, run (fail), implement, run (pass), commit. No network in unit tests; no test touches `/media` (fake trees in `t.TempDir()`, fake `Prober`).
+- Commands: `make test`, `make vet`, `make fmt`, `make tidy` (Docker-wrapped, from plan 1A). CI runs `go test -race ./...`.
+- Workflow (`CONTRIBUTING.md` is the source of truth): branch `feat/1c-scanner` off an up-to-date `main`; never commit to or push `main`; never `--no-verify`. Each task ends in a commit on the branch. Open a PR whose title is a Conventional Commit with the area as scope (`feat(scanner): ...`), fill in the PR template (What changed / Source / How it was tested). A reviewer runs `/code-review` first, then reads it; after approval the **author** squash-merges. An AI agent never merges; it hands back to its human.
+- Do not overwrite `CONTRIBUTING.md`, `CLAUDE.md` or `.gitignore`; this plan does not need to change them.
+
+## Decisions taken in this plan
+
+- **Scanner package:** `Scanner`, `ScanListener`, `Prober` live in `server/internal/scanner` (the index lists them without a package). The index should record `scanner.ScanListener` / `(*scanner.Scanner).AddListener`.
+- **Extras** are `items` rows of kind `video` with `parent_id` = the movie (or show) and a new `extra_type` column (`trailer`, `featurette`, `behindthescenes`, `deleted`, `interview`, `scene`, `short`, `other`). No separate table: they get files, probes and playback like any video.
+- **Multi-episode files** (`S01E02E03`) are one episode item with `EpisodeNumber=2`, `EpisodeNumberEnd=3`.
+- **Date-based episodes** (`Show - 2024-03-01`) go to season = year, keyed by air date (`EpisodeNumber` nil, `AirDate` set).
+- **Anime numbering:** `season` (default) keeps `SxxEyy` and puts absolute-only files in the folder's season (or 1) with episode = absolute, for plan 1E to remap; `absolute` puts every non-special episode in season 1 with episode = absolute number. Specials (season 0 / `Specials` folder / `OVA 2`) stay season 0. `AbsoluteNumber` is stored whenever known.
+- **Anime libraries hold movies too:** a file with no episode number outside any season folder becomes a movie.
+- **Home videos** are flat top-level `video` items (title = file name, sort title = relative path so folders sort together). Folder browsing comes with the web app (spec 5.2 "optional folder view").
+- **Item identity** is a `scan_key` column, unique per library: `movie:<folder>`, `show:<folder>`, `season:<show>|<n>`, `episode:<show>|s<n>|e<n>` (or `|d<date>`), `extra:<path>`, `video:<path>`. Rescans upsert by key; title/year are only overwritten while `match_state = 'unmatched'`, so 1D metadata and manual edits survive.
+- **Broken files** are stored with `files.probe_error` (listed in scan status, kept in the DB for the admin UI) and re-probed on every full scan. They never abort a scan.
+- **Unmounted roots:** if a library folder is missing, or empty while the DB has files under it, the scan fails with "nothing was removed" and changes nothing.
+- **Symlinks** inside library folders are not followed (they could leave the media root).
+- **Scan status** is in memory (latest scan per library). Persistent history can come with the admin dashboard.
+- **Settings** (no `config.Config` change): server settings `scanner.full_scan_interval` (Go duration, default `6h`, `0` disables) and `scanner.probe_concurrency` (default 2), read at startup.
+- **Routes:** chi cannot mount two sub-routers on `/libraries`, so both the library and media modules register flat routes (`r.With(g.RequireAdmin).Post("/libraries", ...)`, media's `GET /libraries/{id}/items`) instead of `r.Route("/libraries", ...)`.
+- **Visibility hook:** `library.Visibility` has exactly the signature of `(*auth.Service).VisibleLibraryIDs` from 1B. Until 1B is wired, `library.AdminVisibility` lets admins see all libraries and other users none. Hidden libraries/items return 404 (not 403) so they do not leak.
+
+## File Structure
+
+```
+server/internal/probe/
+  probe.go                      Result/stream types, Run (exec ffprobe), Parse (JSON -> Result), HDR detection
+  probe_test.go                 fixture-driven unit tests
+  integration_test.go           //go:build integration: generates a 2 s clip with real ffmpeg and probes it
+  testdata/hevc_hdr10_truehd_pgs_ass.json, h264_aac_movtext.json, hevc_dv_p8_eac3.json
+server/internal/library/
+  library.go                    Type, Library, Options, errors, Validate, Within
+  store.go                      Store: List/Get/Create/Update/Delete (libraries, library_paths)
+  scan.go                       ScanStatus, ScanError, ScanController interface
+  visibility.go                 Visibility interface, AdminVisibility default, CanSee
+  api.go                        Module: /api/v1/libraries CRUD + scan trigger/status
+  library_test.go, store_test.go, api_test.go
+server/internal/media/
+  media.go                      Kind, Item, File, FileStat, extra types, SortTitle
+  store.go                      Store: contract reads + scanner upserts, file index, prune
+  api.go                        Module: /libraries/{id}/items, /items/{id}, /items/{id}/children
+  store_test.go, api_test.go
+server/internal/scanner/
+  names.go                      video extensions, skip rules, extras names, parseName, ID hints, versionLabel
+  classify.go                   Entry, Classify: movies / TV / anime / home videos
+  nfo.go                        ReadNFOIDs
+  scanner.go                    Prober, FFprobe, ScanListener, Options, Scanner, status helpers
+  scan.go                       ScanLibrary: root check, walk, diff, bounded probing, store, remove, prune, notify
+  run.go                        Run, scanAll, Trigger, Reload, schedule, debounceLoop
+  watch.go                      recursive fsnotify watcher
+  names_test.go, classify_test.go, nfo_test.go, scan_test.go, run_test.go
+  testdata/nfo/movie.nfo, tvshow.nfo, episode.nfo, url-only.nfo, broken.nfo
+server/internal/db/migrations/
+  20261025110000_library_libraries.sql
+  20261025110100_media_items.sql
+server/cmd/lisimflix/
+  library.go                    libraryModules(): stores, scanner (started), API modules, stop func
+  library_test.go               end-to-end: create library over API, scan, list items
+  main.go                       (modify: 3 lines)
+Makefile                        (append: test-integration target)
+server/go.mod, go.sum           (+ github.com/fsnotify/fsnotify v1.9.0)
+```
+
+---
+
+### Task 1: ffprobe wrapper and parser (`probe`)
+
+**Before starting:** `git config core.hooksPath .githooks`, then `git switch main && git pull && git switch -c feat/1c-scanner`.
+
+**Files:**
+- Create: `server/internal/probe/probe.go`
+- Create: `server/internal/probe/testdata/hevc_hdr10_truehd_pgs_ass.json`, `h264_aac_movtext.json`, `hevc_dv_p8_eac3.json`
+- Test: `server/internal/probe/probe_test.go`
+
+**Interfaces:**
+- Consumes: nothing (standard library only)
+- Produces: `probe.Result{Container, DurationMs, BitRate, Video, Audio, Subtitles, Chapters}` (contract), `VideoStream`, `AudioStream`, `SubtitleStream`, `Chapter`, `HDRType` (`SDR ""`, `HDR10`, `HDR10Plus "HDR10+"`, `HLG`, `DolbyVision "DV"`), `SubtitleKind` (`SubText "text"`, `SubImage "image"`, `SubASS "ass"`), `probe.Run(ctx, ffprobePath, file string) (Result, error)` (contract), `probe.Parse(data []byte) (Result, error)`, `probe.DefaultTimeout`. All types carry snake_case JSON tags (the same encoding is stored in `files.probe` and returned by the API).
+
+- [ ] **Step 1: Add the recorded ffprobe fixtures**
+
+These are trimmed real-world `ffprobe -v error -print_format json -show_format -show_streams -show_chapters` outputs:
+a 4K HEVC 10-bit HDR10 MKV with TrueHD 7.1 + AC-3, a forced PGS track, an ASS track and a font attachment;
+an H.264 MP4 with AAC, mov_text and embedded cover art; and a Dolby Vision profile 8.1 MKV with E-AC-3 Atmos and SRT.
+
+`server/internal/probe/testdata/hevc_hdr10_truehd_pgs_ass.json`:
+```json
+{
+    "streams": [
+        {
+            "index": 0,
+            "codec_name": "hevc",
+            "codec_long_name": "H.265 / HEVC (High Efficiency Video Coding)",
+            "profile": "Main 10",
+            "codec_type": "video",
+            "codec_tag_string": "[0][0][0][0]",
+            "codec_tag": "0x0000",
+            "width": 3840,
+            "height": 2160,
+            "coded_width": 3840,
+            "coded_height": 2160,
+            "has_b_frames": 2,
+            "sample_aspect_ratio": "1:1",
+            "display_aspect_ratio": "16:9",
+            "pix_fmt": "yuv420p10le",
+            "level": 153,
+            "color_range": "tv",
+            "color_space": "bt2020nc",
+            "color_transfer": "smpte2084",
+            "color_primaries": "bt2020",
+            "chroma_location": "left",
+            "refs": 1,
+            "r_frame_rate": "24000/1001",
+            "avg_frame_rate": "24000/1001",
+            "time_base": "1/1000",
+            "start_pts": 0,
+            "start_time": "0.000000",
+            "extradata_size": 2484,
+            "disposition": {
+                "default": 1,
+                "dub": 0,
+                "original": 0,
+                "comment": 0,
+                "lyrics": 0,
+                "karaoke": 0,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "visual_impaired": 0,
+                "clean_effects": 0,
+                "attached_pic": 0,
+                "timed_thumbnails": 0
+            },
+            "tags": {
+                "BPS": "52034562",
+                "DURATION": "02:01:05.024000000"
+            },
+            "side_data_list": [
+                {
+                    "side_data_type": "Mastering display metadata",
+                    "red_x": "35400/50000",
+                    "red_y": "14600/50000",
+                    "green_x": "8500/50000",
+                    "green_y": "39850/50000",
+                    "blue_x": "6550/50000",
+                    "blue_y": "2300/50000",
+                    "white_point_x": "15635/50000",
+                    "white_point_y": "16450/50000",
+                    "min_luminance": "50/10000",
+                    "max_luminance": "40000000/10000"
+                },
+                {
+                    "side_data_type": "Content light level metadata",
+                    "max_content": 1000,
+                    "max_average": 400
+                }
+            ]
+        },
+        {
+            "index": 1,
+            "codec_name": "truehd",
+            "codec_long_name": "TrueHD",
+            "codec_type": "audio",
+            "codec_tag_string": "[0][0][0][0]",
+            "codec_tag": "0x0000",
+            "sample_fmt": "s32",
+            "sample_rate": "48000",
+            "channels": 8,
+            "channel_layout": "7.1",
+            "bits_per_sample": 0,
+            "bits_per_raw_sample": "24",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "time_base": "1/1000",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "title": "TrueHD 7.1 Atmos",
+                "BPS": "4523112"
+            }
+        },
+        {
+            "index": 2,
+            "codec_name": "ac3",
+            "codec_long_name": "ATSC A/52A (AC-3)",
+            "codec_type": "audio",
+            "sample_fmt": "fltp",
+            "sample_rate": "48000",
+            "channels": 6,
+            "channel_layout": "5.1(side)",
+            "bits_per_sample": 0,
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "bit_rate": "640000",
+            "disposition": {
+                "default": 0,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "jpn"
+            }
+        },
+        {
+            "index": 3,
+            "codec_name": "hdmv_pgs_subtitle",
+            "codec_long_name": "HDMV Presentation Graphic Stream subtitles",
+            "codec_type": "subtitle",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "width": 1920,
+            "height": 1080,
+            "disposition": {
+                "default": 0,
+                "forced": 1,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "title": "Forced"
+            }
+        },
+        {
+            "index": 4,
+            "codec_name": "ass",
+            "codec_long_name": "ASS (Advanced SSA) subtitle",
+            "codec_type": "subtitle",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "hearing_impaired": 1,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "title": "Full [SDH]"
+            }
+        },
+        {
+            "index": 5,
+            "codec_name": "ttf",
+            "codec_long_name": "TrueType font",
+            "codec_type": "attachment",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "disposition": {
+                "default": 0,
+                "forced": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "filename": "OpenSans-Semibold.ttf",
+                "mimetype": "application/x-truetype-font"
+            }
+        }
+    ],
+    "chapters": [
+        {
+            "id": 1,
+            "time_base": "1/1000000000",
+            "start": 0,
+            "start_time": "0.000000",
+            "end": 312000000000,
+            "end_time": "312.000000",
+            "tags": {
+                "title": "Opening"
+            }
+        },
+        {
+            "id": 2,
+            "time_base": "1/1000000000",
+            "start": 312000000000,
+            "start_time": "312.000000",
+            "end": 7265024000000,
+            "end_time": "7265.024000",
+            "tags": {
+                "title": "Chapter 02"
+            }
+        }
+    ],
+    "format": {
+        "filename": "/media/movies/Example (2024)/Example (2024) - 2160p.mkv",
+        "nb_streams": 6,
+        "nb_programs": 0,
+        "format_name": "matroska,webm",
+        "format_long_name": "Matroska / WebM",
+        "start_time": "0.000000",
+        "duration": "7265.024000",
+        "size": "51234567890",
+        "bit_rate": "56417835",
+        "probe_score": 100,
+        "tags": {
+            "title": "Example",
+            "ENCODER": "libebml v1.4.4 + libmatroska v1.7.1"
+        }
+    }
+}
+```
+
+`server/internal/probe/testdata/h264_aac_movtext.json`:
+```json
+{
+    "streams": [
+        {
+            "index": 0,
+            "codec_name": "h264",
+            "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+            "profile": "High",
+            "codec_type": "video",
+            "codec_tag_string": "avc1",
+            "codec_tag": "0x31637661",
+            "width": 1920,
+            "height": 1080,
+            "has_b_frames": 2,
+            "pix_fmt": "yuv420p",
+            "level": 41,
+            "color_range": "tv",
+            "color_space": "bt709",
+            "color_transfer": "bt709",
+            "color_primaries": "bt709",
+            "chroma_location": "left",
+            "is_avc": "true",
+            "r_frame_rate": "25/1",
+            "avg_frame_rate": "25/1",
+            "time_base": "1/12800",
+            "duration": "1320.480000",
+            "bit_rate": "4800123",
+            "bits_per_raw_sample": "8",
+            "nb_frames": "33012",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "und",
+                "handler_name": "VideoHandler"
+            }
+        },
+        {
+            "index": 1,
+            "codec_name": "aac",
+            "codec_long_name": "AAC (Advanced Audio Coding)",
+            "profile": "LC",
+            "codec_type": "audio",
+            "codec_tag_string": "mp4a",
+            "sample_fmt": "fltp",
+            "sample_rate": "48000",
+            "channels": 2,
+            "channel_layout": "stereo",
+            "bits_per_sample": 0,
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "bit_rate": "192000",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "handler_name": "SoundHandler"
+            }
+        },
+        {
+            "index": 2,
+            "codec_name": "mov_text",
+            "codec_long_name": "MOV text",
+            "codec_type": "subtitle",
+            "codec_tag_string": "tx3g",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "bit_rate": "75",
+            "disposition": {
+                "default": 0,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "handler_name": "SubtitleHandler"
+            }
+        },
+        {
+            "index": 3,
+            "codec_name": "mjpeg",
+            "codec_long_name": "Motion JPEG",
+            "profile": "Baseline",
+            "codec_type": "video",
+            "width": 600,
+            "height": 900,
+            "pix_fmt": "yuvj420p",
+            "level": -99,
+            "r_frame_rate": "90000/1",
+            "avg_frame_rate": "0/0",
+            "disposition": {
+                "default": 0,
+                "forced": 0,
+                "attached_pic": 1
+            }
+        }
+    ],
+    "chapters": [],
+    "format": {
+        "filename": "/media/tv/Example Show (2019)/Season 01/Example Show - S01E02 - Pilot Part 2.mp4",
+        "nb_streams": 4,
+        "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+        "format_long_name": "QuickTime / MOV",
+        "start_time": "0.000000",
+        "duration": "1320.512000",
+        "size": "812345678",
+        "bit_rate": "4921330",
+        "probe_score": 100,
+        "tags": {
+            "major_brand": "isom",
+            "encoder": "Lavf61.7.100"
+        }
+    }
+}
+```
+
+`server/internal/probe/testdata/hevc_dv_p8_eac3.json`:
+```json
+{
+    "streams": [
+        {
+            "index": 0,
+            "codec_name": "hevc",
+            "codec_long_name": "H.265 / HEVC (High Efficiency Video Coding)",
+            "profile": "Main 10",
+            "codec_type": "video",
+            "codec_tag_string": "[0][0][0][0]",
+            "width": 3840,
+            "height": 1600,
+            "pix_fmt": "yuv420p10le",
+            "level": 150,
+            "color_range": "tv",
+            "color_space": "bt2020nc",
+            "color_transfer": "smpte2084",
+            "color_primaries": "bt2020",
+            "r_frame_rate": "24000/1001",
+            "avg_frame_rate": "24000/1001",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "BPS": "18123456"
+            },
+            "side_data_list": [
+                {
+                    "side_data_type": "DOVI configuration record",
+                    "dv_version_major": 1,
+                    "dv_version_minor": 0,
+                    "dv_profile": 8,
+                    "dv_level": 6,
+                    "rpu_present_flag": 1,
+                    "el_present_flag": 0,
+                    "bl_present_flag": 1,
+                    "dv_bl_signal_compatibility_id": 1,
+                    "dv_md_compression": "none"
+                }
+            ]
+        },
+        {
+            "index": 1,
+            "codec_name": "eac3",
+            "codec_long_name": "ATSC A/52B (AC-3, E-AC-3)",
+            "profile": "Dolby Digital Plus + Dolby Atmos",
+            "codec_type": "audio",
+            "sample_fmt": "fltp",
+            "sample_rate": "48000",
+            "channels": 6,
+            "channel_layout": "5.1(side)",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "bit_rate": "768000",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "title": "DDP 5.1 Atmos"
+            }
+        },
+        {
+            "index": 2,
+            "codec_name": "subrip",
+            "codec_long_name": "SubRip subtitle",
+            "codec_type": "subtitle",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "disposition": {
+                "default": 0,
+                "forced": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "spa"
+            }
+        }
+    ],
+    "chapters": [],
+    "format": {
+        "filename": "/media/movies/Example DV (2023)/Example DV (2023) - 2160p.mkv",
+        "nb_streams": 3,
+        "format_name": "matroska,webm",
+        "format_long_name": "Matroska / WebM",
+        "start_time": "0.000000",
+        "duration": "5400.000000",
+        "size": "13500000000",
+        "bit_rate": "20000000",
+        "probe_score": 100
+    }
+}
+```
+
+- [ ] **Step 2: Write the failing tests**
+
+`server/internal/probe/probe_test.go`:
+```go
+package probe
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+)
+
+func parseFixture(t *testing.T, name string) Result {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := Parse(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func TestParseHEVCHDR10MKV(t *testing.T) {
+	res := parseFixture(t, "hevc_hdr10_truehd_pgs_ass.json")
+	if res.Container != "matroska,webm" || res.DurationMs != 7265024 || res.BitRate != 56417835 {
+		t.Fatalf("format: %+v", res)
+	}
+	wantVideo := []VideoStream{{
+		Index: 0, Codec: "hevc", Profile: "Main 10", Level: 153, Width: 3840, Height: 2160,
+		BitDepth: 10, FrameRate: 23.976, PixFmt: "yuv420p10le", ColorTransfer: "smpte2084",
+		ColorPrimaries: "bt2020", ColorSpace: "bt2020nc", HDR: HDR10, BitRate: 52034562, Default: true,
+	}}
+	if !reflect.DeepEqual(res.Video, wantVideo) {
+		t.Fatalf("video:\n got %+v\nwant %+v", res.Video, wantVideo)
+	}
+	wantAudio := []AudioStream{
+		{Index: 1, Codec: "truehd", Channels: 8, Layout: "7.1", SampleRate: 48000, BitRate: 4523112,
+			Language: "eng", Title: "TrueHD 7.1 Atmos", Default: true},
+		{Index: 2, Codec: "ac3", Channels: 6, Layout: "5.1(side)", SampleRate: 48000, BitRate: 640000,
+			Language: "jpn"},
+	}
+	if !reflect.DeepEqual(res.Audio, wantAudio) {
+		t.Fatalf("audio:\n got %+v\nwant %+v", res.Audio, wantAudio)
+	}
+	wantSubs := []SubtitleStream{
+		{Index: 3, Codec: "hdmv_pgs_subtitle", Kind: SubImage, Language: "eng", Title: "Forced", Forced: true},
+		{Index: 4, Codec: "ass", Kind: SubASS, Language: "eng", Title: "Full [SDH]", Default: true, HearingImpaired: true},
+	}
+	if !reflect.DeepEqual(res.Subtitles, wantSubs) {
+		t.Fatalf("subtitles:\n got %+v\nwant %+v", res.Subtitles, wantSubs)
+	}
+	wantCh := []Chapter{{StartMs: 0, EndMs: 312000, Title: "Opening"}, {StartMs: 312000, EndMs: 7265024, Title: "Chapter 02"}}
+	if !reflect.DeepEqual(res.Chapters, wantCh) {
+		t.Fatalf("chapters: %+v", res.Chapters)
+	}
+}
+
+func TestParseH264MP4SkipsCoverArt(t *testing.T) {
+	res := parseFixture(t, "h264_aac_movtext.json")
+	if len(res.Video) != 1 {
+		t.Fatalf("cover art must be skipped, got %d video streams", len(res.Video))
+	}
+	v := res.Video[0]
+	if v.Codec != "h264" || v.Profile != "High" || v.Level != 41 || v.BitDepth != 8 ||
+		v.FrameRate != 25 || v.HDR != SDR || v.Width != 1920 || v.Height != 1080 {
+		t.Fatalf("video: %+v", v)
+	}
+	a := res.Audio[0]
+	if a.Codec != "aac" || a.Profile != "LC" || a.Channels != 2 || a.Layout != "stereo" || a.Language != "eng" || !a.Default {
+		t.Fatalf("audio: %+v", a)
+	}
+	s := res.Subtitles[0]
+	if s.Codec != "mov_text" || s.Kind != SubText || s.Language != "eng" || s.Default {
+		t.Fatalf("subtitle: %+v", s)
+	}
+	if res.DurationMs != 1320512 || len(res.Chapters) != 0 || res.Chapters == nil {
+		t.Fatalf("duration %d chapters %#v", res.DurationMs, res.Chapters)
+	}
+}
+
+func TestParseDolbyVisionProfile8(t *testing.T) {
+	res := parseFixture(t, "hevc_dv_p8_eac3.json")
+	v := res.Video[0]
+	if v.HDR != DolbyVision || v.DVProfile != 8 || v.DVLevel != 6 || v.DVBLCompatID != 1 || v.BitDepth != 10 {
+		t.Fatalf("video: %+v", v)
+	}
+	if a := res.Audio[0]; a.Profile != "Dolby Digital Plus + Dolby Atmos" || a.Codec != "eac3" {
+		t.Fatalf("audio: %+v", a)
+	}
+	if s := res.Subtitles[0]; s.Kind != SubText || s.Language != "spa" {
+		t.Fatalf("subtitle: %+v", s)
+	}
+}
+
+func TestDetectHDR(t *testing.T) {
+	cases := []struct {
+		name string
+		s    ffStream
+		want HDRType
+	}{
+		{"sdr", ffStream{ColorTransfer: "bt709"}, SDR},
+		{"hlg", ffStream{ColorTransfer: "arib-std-b67"}, HLG},
+		{"hdr10", ffStream{ColorTransfer: "smpte2084"}, HDR10},
+		{"hdr10+", ffStream{ColorTransfer: "smpte2084", SideData: []map[string]any{
+			{"side_data_type": "HDR Dynamic Metadata SMPTE2094-40 (HDR10+)"}}}, HDR10Plus},
+		{"dv p5 without transfer", ffStream{SideData: []map[string]any{
+			{"side_data_type": "DOVI configuration record", "dv_profile": float64(5)}}}, DolbyVision},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got, _, _, _ := detectHDR(c.s); got != c.want {
+				t.Fatalf("got %q want %q", got, c.want)
+			}
+		})
+	}
+}
+
+func TestBitDepth(t *testing.T) {
+	cases := []struct {
+		s    ffStream
+		want int
+	}{
+		{ffStream{PixFmt: "yuv420p"}, 8},
+		{ffStream{PixFmt: "yuv420p10le"}, 10},
+		{ffStream{PixFmt: "yuv444p12le"}, 12},
+		{ffStream{PixFmt: "yuv420p", BitsPerRawSample: "10"}, 10}, // bits_per_raw_sample wins
+	}
+	for _, c := range cases {
+		if got := bitDepth(c.s); got != c.want {
+			t.Fatalf("%+v: got %d want %d", c.s, got, c.want)
+		}
+	}
+}
+
+func TestParseRejectsGarbage(t *testing.T) {
+	if _, err := Parse([]byte(`not json`)); err == nil {
+		t.Fatal("want error")
+	}
+	if _, err := Parse([]byte(`{"streams":[]}`)); err == nil {
+		t.Fatal("want error for missing format")
+	}
+}
+
+func TestRunReportsMissingBinary(t *testing.T) {
+	_, err := Run(context.Background(), filepath.Join(t.TempDir(), "no-ffprobe"), "x.mkv")
+	if err == nil || !strings.Contains(err.Error(), "x.mkv") {
+		t.Fatalf("want error naming the file, got %v", err)
+	}
+}
+```
+
+- [ ] **Step 3: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: Parse` / `undefined: Result`
+
+- [ ] **Step 4: Implement**
+
+`server/internal/probe/probe.go`:
+```go
+// Package probe runs ffprobe on a media file and turns its JSON output into the
+// stream summary the scanner stores and the playback engine (phase 2) decides on.
+package probe
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"math"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+)
+
+// DefaultTimeout bounds one ffprobe run when ctx has no deadline of its own.
+const DefaultTimeout = 2 * time.Minute
+
+// Result is the analysed content of one media file.
+type Result struct {
+	Container  string           `json:"container"` // ffprobe format_name, e.g. "matroska,webm"
+	DurationMs int64            `json:"duration_ms"`
+	BitRate    int64            `json:"bit_rate"` // bits per second, 0 = unknown
+	Video      []VideoStream    `json:"video"`
+	Audio      []AudioStream    `json:"audio"`
+	Subtitles  []SubtitleStream `json:"subtitles"`
+	Chapters   []Chapter        `json:"chapters"`
+}
+
+// HDRType names the dynamic range format of a video stream. "" means SDR.
+type HDRType string
+
+const (
+	SDR         HDRType = ""
+	HDR10       HDRType = "HDR10"
+	HDR10Plus   HDRType = "HDR10+"
+	HLG         HDRType = "HLG"
+	DolbyVision HDRType = "DV" // see DVProfile / DVBLCompatID for the fallback layer
+)
+
+// VideoStream describes one video track. Cover-art pictures are not included.
+type VideoStream struct {
+	Index          int     `json:"index"`
+	Codec          string  `json:"codec"`             // ffprobe codec_name: h264, hevc, av1, vp9 ...
+	Profile        string  `json:"profile,omitempty"` // "High", "Main 10" ...
+	Level          int     `json:"level,omitempty"`   // raw ffprobe value: H.264 41 = 4.1, HEVC 153 = 5.1 (level x 30)
+	Width          int     `json:"width"`
+	Height         int     `json:"height"`
+	BitDepth       int     `json:"bit_depth"`
+	FrameRate      float64 `json:"frame_rate"`
+	PixFmt         string  `json:"pix_fmt,omitempty"`
+	ColorTransfer  string  `json:"color_transfer,omitempty"`
+	ColorPrimaries string  `json:"color_primaries,omitempty"`
+	ColorSpace     string  `json:"color_space,omitempty"`
+	HDR            HDRType `json:"hdr,omitempty"`
+	DVProfile      int     `json:"dv_profile,omitempty"`
+	DVLevel        int     `json:"dv_level,omitempty"`
+	DVBLCompatID   int     `json:"dv_bl_compat_id,omitempty"` // 0 none (P5), 1 HDR10, 2 SDR, 4 HLG
+	BitRate        int64   `json:"bit_rate,omitempty"`
+	Default        bool    `json:"default"`
+}
+
+// AudioStream describes one audio track.
+type AudioStream struct {
+	Index      int    `json:"index"`
+	Codec      string `json:"codec"`             // aac, ac3, eac3, truehd, dts, flac, opus ...
+	Profile    string `json:"profile,omitempty"` // "LC", "DTS-HD MA", "Dolby Digital Plus + Dolby Atmos" ...
+	Channels   int    `json:"channels"`
+	Layout     string `json:"layout,omitempty"` // "5.1(side)", "stereo" ...
+	SampleRate int    `json:"sample_rate,omitempty"`
+	BitRate    int64  `json:"bit_rate,omitempty"`
+	Language   string `json:"language,omitempty"` // ISO 639-2 as tagged ("eng", "jpn"); "" when untagged/und
+	Title      string `json:"title,omitempty"`
+	Default    bool   `json:"default"`
+	Forced     bool   `json:"forced"`
+}
+
+// SubtitleKind says how a subtitle track has to be rendered.
+type SubtitleKind string
+
+const (
+	SubText  SubtitleKind = "text"  // SRT, WebVTT, mov_text: convertible to WebVTT
+	SubImage SubtitleKind = "image" // PGS, VobSub, DVB: bitmap, render client-side or burn in
+	SubASS   SubtitleKind = "ass"   // ASS/SSA: styled, rendered with JASSUB
+)
+
+// SubtitleStream describes one subtitle track.
+type SubtitleStream struct {
+	Index           int          `json:"index"`
+	Codec           string       `json:"codec"`
+	Kind            SubtitleKind `json:"kind"`
+	Language        string       `json:"language,omitempty"`
+	Title           string       `json:"title,omitempty"`
+	Default         bool         `json:"default"`
+	Forced          bool         `json:"forced"`
+	HearingImpaired bool         `json:"hearing_impaired"`
+}
+
+// Chapter is one chapter marker.
+type Chapter struct {
+	StartMs int64  `json:"start_ms"`
+	EndMs   int64  `json:"end_ms"`
+	Title   string `json:"title,omitempty"`
+}
+
+// Run executes ffprobe on file and parses the result. The file is only read.
+func Run(ctx context.Context, ffprobePath, file string) (Result, error) {
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, DefaultTimeout)
+		defer cancel()
+	}
+	cmd := exec.CommandContext(ctx, ffprobePath,
+		"-v", "error", "-print_format", "json",
+		"-show_format", "-show_streams", "-show_chapters",
+		"--", file)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if len(msg) > 500 {
+			msg = msg[:500]
+		}
+		if msg != "" {
+			return Result{}, fmt.Errorf("ffprobe %s: %w: %s", file, err, msg)
+		}
+		return Result{}, fmt.Errorf("ffprobe %s: %w", file, err)
+	}
+	res, err := Parse(stdout.Bytes())
+	if err != nil {
+		return Result{}, fmt.Errorf("ffprobe %s: %w", file, err)
+	}
+	return res, nil
+}
+
+type ffOutput struct {
+	Streams  []ffStream  `json:"streams"`
+	Chapters []ffChapter `json:"chapters"`
+	Format   *struct {
+		FormatName string `json:"format_name"`
+		Duration   string `json:"duration"`
+		BitRate    string `json:"bit_rate"`
+	} `json:"format"`
+}
+
+type ffStream struct {
+	Index            int               `json:"index"`
+	CodecName        string            `json:"codec_name"`
+	CodecType        string            `json:"codec_type"`
+	Profile          string            `json:"profile"`
+	Level            int               `json:"level"`
+	Width            int               `json:"width"`
+	Height           int               `json:"height"`
+	PixFmt           string            `json:"pix_fmt"`
+	BitsPerRawSample string            `json:"bits_per_raw_sample"`
+	ColorTransfer    string            `json:"color_transfer"`
+	ColorPrimaries   string            `json:"color_primaries"`
+	ColorSpace       string            `json:"color_space"`
+	RFrameRate       string            `json:"r_frame_rate"`
+	AvgFrameRate     string            `json:"avg_frame_rate"`
+	Channels         int               `json:"channels"`
+	ChannelLayout    string            `json:"channel_layout"`
+	SampleRate       string            `json:"sample_rate"`
+	BitRate          string            `json:"bit_rate"`
+	Disposition      map[string]int    `json:"disposition"`
+	Tags             map[string]string `json:"tags"`
+	SideData         []map[string]any  `json:"side_data_list"`
+}
+
+type ffChapter struct {
+	StartTime string            `json:"start_time"`
+	EndTime   string            `json:"end_time"`
+	Tags      map[string]string `json:"tags"`
+}
+
+// Parse converts ffprobe JSON (-show_format -show_streams -show_chapters) into a Result.
+func Parse(data []byte) (Result, error) {
+	var out ffOutput
+	if err := json.Unmarshal(data, &out); err != nil {
+		return Result{}, fmt.Errorf("parse ffprobe json: %w", err)
+	}
+	if out.Format == nil {
+		return Result{}, fmt.Errorf("parse ffprobe json: no format section")
+	}
+	res := Result{
+		Container:  out.Format.FormatName,
+		DurationMs: secondsToMs(out.Format.Duration),
+		BitRate:    atoi64(out.Format.BitRate),
+		Video:      []VideoStream{},
+		Audio:      []AudioStream{},
+		Subtitles:  []SubtitleStream{},
+		Chapters:   []Chapter{},
+	}
+	for _, s := range out.Streams {
+		switch s.CodecType {
+		case "video":
+			if s.Disposition["attached_pic"] == 1 {
+				continue // embedded cover art, not a playable track
+			}
+			res.Video = append(res.Video, videoStream(s))
+		case "audio":
+			res.Audio = append(res.Audio, AudioStream{
+				Index:      s.Index,
+				Codec:      s.CodecName,
+				Profile:    s.Profile,
+				Channels:   s.Channels,
+				Layout:     s.ChannelLayout,
+				SampleRate: int(atoi64(s.SampleRate)),
+				BitRate:    streamBitRate(s),
+				Language:   language(s.Tags),
+				Title:      s.Tags["title"],
+				Default:    s.Disposition["default"] == 1,
+				Forced:     s.Disposition["forced"] == 1,
+			})
+		case "subtitle":
+			res.Subtitles = append(res.Subtitles, SubtitleStream{
+				Index:           s.Index,
+				Codec:           s.CodecName,
+				Kind:            subtitleKind(s.CodecName),
+				Language:        language(s.Tags),
+				Title:           s.Tags["title"],
+				Default:         s.Disposition["default"] == 1,
+				Forced:          s.Disposition["forced"] == 1,
+				HearingImpaired: s.Disposition["hearing_impaired"] == 1,
+			})
+		}
+	}
+	for _, c := range out.Chapters {
+		res.Chapters = append(res.Chapters, Chapter{
+			StartMs: secondsToMs(c.StartTime),
+			EndMs:   secondsToMs(c.EndTime),
+			Title:   c.Tags["title"],
+		})
+	}
+	return res, nil
+}
+
+func videoStream(s ffStream) VideoStream {
+	v := VideoStream{
+		Index:          s.Index,
+		Codec:          s.CodecName,
+		Profile:        s.Profile,
+		Level:          s.Level,
+		Width:          s.Width,
+		Height:         s.Height,
+		BitDepth:       bitDepth(s),
+		FrameRate:      frameRate(s),
+		PixFmt:         s.PixFmt,
+		ColorTransfer:  s.ColorTransfer,
+		ColorPrimaries: s.ColorPrimaries,
+		ColorSpace:     s.ColorSpace,
+		BitRate:        streamBitRate(s),
+		Default:        s.Disposition["default"] == 1,
+	}
+	if v.Level < 0 {
+		v.Level = 0
+	}
+	v.HDR, v.DVProfile, v.DVLevel, v.DVBLCompatID = detectHDR(s)
+	return v
+}
+
+// detectHDR checks, in order: Dolby Vision configuration record, HDR10+ dynamic
+// metadata, PQ transfer (HDR10), HLG transfer. HDR10+ metadata usually only shows
+// up per frame, so a stream-level probe often reports HDR10+ files as HDR10;
+// phase 2 can refine this with a frame probe.
+func detectHDR(s ffStream) (hdr HDRType, dvProfile, dvLevel, dvCompat int) {
+	for _, sd := range s.SideData {
+		if t, _ := sd["side_data_type"].(string); t == "DOVI configuration record" {
+			return DolbyVision, num(sd["dv_profile"]), num(sd["dv_level"]), num(sd["dv_bl_signal_compatibility_id"])
+		}
+	}
+	for _, sd := range s.SideData {
+		if t, _ := sd["side_data_type"].(string); strings.Contains(t, "SMPTE2094-40") || strings.Contains(t, "HDR10+") {
+			return HDR10Plus, 0, 0, 0
+		}
+	}
+	switch s.ColorTransfer {
+	case "smpte2084":
+		return HDR10, 0, 0, 0
+	case "arib-std-b67":
+		return HLG, 0, 0, 0
+	}
+	return SDR, 0, 0, 0
+}
+
+func bitDepth(s ffStream) int {
+	if n := atoi64(s.BitsPerRawSample); n > 0 {
+		return int(n)
+	}
+	p := s.PixFmt
+	switch {
+	case strings.Contains(p, "p16") || strings.HasSuffix(p, "16le") || strings.HasSuffix(p, "16be"):
+		return 16
+	case strings.Contains(p, "p12") || strings.HasSuffix(p, "12le") || strings.HasSuffix(p, "12be"):
+		return 12
+	case strings.Contains(p, "p10") || strings.HasSuffix(p, "10le") || strings.HasSuffix(p, "10be") || p == "p010le":
+		return 10
+	case p == "":
+		return 0
+	default:
+		return 8
+	}
+}
+
+func frameRate(s ffStream) float64 {
+	if f := ratio(s.AvgFrameRate); f > 0 {
+		return f
+	}
+	return ratio(s.RFrameRate)
+}
+
+// ratio parses "24000/1001" and rounds to 3 decimals (23.976).
+func ratio(r string) float64 {
+	num, den, ok := strings.Cut(r, "/")
+	if !ok {
+		return 0
+	}
+	n, err1 := strconv.ParseFloat(num, 64)
+	d, err2 := strconv.ParseFloat(den, 64)
+	if err1 != nil || err2 != nil || d == 0 {
+		return 0
+	}
+	return math.Round(n/d*1000) / 1000
+}
+
+func subtitleKind(codec string) SubtitleKind {
+	switch codec {
+	case "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub", "dvb_teletext":
+		return SubImage
+	case "ass", "ssa":
+		return SubASS
+	default:
+		return SubText
+	}
+}
+
+func language(tags map[string]string) string {
+	l := strings.ToLower(strings.TrimSpace(tags["language"]))
+	if l == "und" {
+		return ""
+	}
+	return l
+}
+
+// streamBitRate prefers bit_rate, then the Matroska BPS statistics tag.
+func streamBitRate(s ffStream) int64 {
+	if n := atoi64(s.BitRate); n > 0 {
+		return n
+	}
+	return atoi64(s.Tags["BPS"])
+}
+
+func secondsToMs(s string) int64 {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil || f < 0 {
+		return 0
+	}
+	return int64(math.Round(f * 1000))
+}
+
+func atoi64(s string) int64 {
+	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func num(v any) int {
+	switch x := v.(type) {
+	case float64:
+		return int(x)
+	case string:
+		return int(atoi64(x))
+	}
+	return 0
+}
+```
+
+- [ ] **Step 5: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/probe`
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/internal/probe
+git commit -m "feat(probe): parse ffprobe streams, HDR/DV type, subtitles and chapters"
+```
+
+---
+
+### Task 2: Probe integration test with real ffmpeg
+
+**Files:**
+- Create: `server/internal/probe/integration_test.go`
+- Modify: `Makefile` (append a target; do not touch existing lines)
+
+**Interfaces:**
+- Consumes: `probe.Run`, `config.Load` (for `FFmpegPath`/`FFprobePath`, so `LISIMFLIX_FFMPEG` / `LISIMFLIX_FFPROBE` apply)
+- Produces: `make test-integration`. The test is behind the `integration` build tag, so `make test` and CI skip it.
+
+- [ ] **Step 1: Write the integration test**
+
+`server/internal/probe/integration_test.go`:
+```go
+//go:build integration
+
+package probe
+
+import (
+	"context"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/Lisimflix/lisimflix/server/internal/config"
+)
+
+// Run with: make test-integration (installs Debian ffmpeg in the Go container), or
+// LISIMFLIX_FFMPEG=... LISIMFLIX_FFPROBE=... go test -tags integration ./internal/probe/
+func TestRunOnGeneratedClip(t *testing.T) {
+	cfg, err := config.Load(os.Getenv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bin := range []string{cfg.FFmpegPath, cfg.FFprobePath} {
+		if _, err := exec.LookPath(bin); err != nil {
+			t.Skipf("%s not available: %v", bin, err)
+		}
+	}
+	clip := filepath.Join(t.TempDir(), "clip.mkv")
+	gen := exec.Command(cfg.FFmpegPath, "-v", "error",
+		"-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+		"-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000",
+		"-t", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-ac", "2",
+		"-metadata:s:a:0", "language=eng", clip)
+	if out, err := gen.CombinedOutput(); err != nil {
+		t.Fatalf("generate clip: %v\n%s", err, out)
+	}
+	res, err := Run(context.Background(), cfg.FFprobePath, clip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Video) != 1 || res.Video[0].Codec != "h264" || res.Video[0].Width != 320 ||
+		res.Video[0].Height != 240 || res.Video[0].BitDepth != 8 || res.Video[0].FrameRate != 25 {
+		t.Fatalf("video: %+v", res.Video)
+	}
+	if len(res.Audio) != 1 || res.Audio[0].Codec != "aac" || res.Audio[0].Channels != 2 || res.Audio[0].Language != "eng" {
+		t.Fatalf("audio: %+v", res.Audio)
+	}
+	if res.DurationMs < 1900 || res.DurationMs > 2200 {
+		t.Fatalf("duration %d ms", res.DurationMs)
+	}
+}
+```
+
+- [ ] **Step 2: Append the Makefile target** (recipe line starts with a TAB). The `golang` image has no ffmpeg, so the target installs Debian's for the run. On zraid you can instead point the env vars at jellyfin-ffmpeg.
+
+```make
+
+# Probe tests against a real ffmpeg/ffprobe (Debian's build inside the Go container).
+.PHONY: test-integration
+test-integration:
+	$(DOCKER_GO) sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null && LISIMFLIX_FFMPEG=/usr/bin/ffmpeg LISIMFLIX_FFPROBE=/usr/bin/ffprobe go test -tags integration ./internal/probe/...'
+```
+
+- [ ] **Step 3: Run it**
+
+Run: `make test-integration`
+Expected: `ok  .../internal/probe` (TestRunOnGeneratedClip PASS: h264 320x240 8-bit 25 fps, aac stereo eng, ~2000 ms)
+Also run `make test`: expected PASS with the integration test excluded.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add Makefile server/internal/probe/integration_test.go
+git commit -m "test(probe): integration test probing a generated clip with real ffmpeg"
+```
+
+---
+
+### Task 3: Library model and folder validation
+
+**Files:**
+- Create: `server/internal/library/library.go`
+- Test: `server/internal/library/library_test.go`
+
+**Interfaces:**
+- Consumes: nothing
+- Produces: `library.Type` (`TypeMovies "movies"`, `TypeTV "tv"`, `TypeAnime "anime"`, `TypeHomeVideos "homevideos"`), `(Type) Valid() bool`, `Library{ID, Name, Type, Paths, Options}`, `Options{AnimeNumbering, KeepOriginalTitle}` (contract), `ErrNotFound`, `ErrNameTaken`, `ErrScanRunning`, `*ValidationError{Msg}`, `Validate(lib Library, mediaDir string, others []Library) (Library, error)`, `Within(parent, child string) bool`. Test helper `mediaTree(t) (tmp, media string)` (used by later library tests).
+
+- [ ] **Step 1: Write the failing tests**
+
+`server/internal/library/library_test.go`:
+```go
+package library
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// mediaTree makes <tmp>/media/{movies,tv,anime} and <tmp>/outside.
+func mediaTree(t *testing.T) (tmp, media string) {
+	t.Helper()
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	media = filepath.Join(tmp, "media")
+	for _, d := range []string{"media/movies", "media/tv", "media/anime", "outside"} {
+		if err := os.MkdirAll(filepath.Join(tmp, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return tmp, media
+}
+
+func TestValidateOK(t *testing.T) {
+	_, media := mediaTree(t)
+	got, err := Validate(Library{Name: "  Anime ", Type: TypeAnime, Paths: []string{media + "/anime/"}}, media, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "Anime" || got.Paths[0] != filepath.Join(media, "anime") || got.Options.AnimeNumbering != "season" {
+		t.Fatalf("got %+v", got)
+	}
+	got, err = Validate(Library{Name: "Movies", Type: TypeMovies, Paths: []string{media + "/movies"},
+		Options: Options{AnimeNumbering: "absolute"}}, media, nil)
+	if err != nil || got.Options.AnimeNumbering != "" {
+		t.Fatalf("non-anime numbering must be cleared: %+v %v", got, err)
+	}
+}
+
+func TestValidateRejects(t *testing.T) {
+	tmp, media := mediaTree(t)
+	if err := os.Symlink(filepath.Join(tmp, "outside"), filepath.Join(media, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(media, "file.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := []Library{{ID: 9, Name: "TV", Type: TypeTV, Paths: []string{filepath.Join(media, "tv")}}}
+	cases := []struct {
+		name string
+		lib  Library
+		want string
+	}{
+		{"empty name", Library{Type: TypeMovies, Paths: []string{media + "/movies"}}, "name"},
+		{"bad type", Library{Name: "x", Type: "music", Paths: []string{media + "/movies"}}, "type"},
+		{"bad numbering", Library{Name: "x", Type: TypeAnime, Paths: []string{media + "/anime"}, Options: Options{AnimeNumbering: "dvd"}}, "anime_numbering"},
+		{"no paths", Library{Name: "x", Type: TypeMovies}, "at least one"},
+		{"relative", Library{Name: "x", Type: TypeMovies, Paths: []string{"movies"}}, "absolute"},
+		{"missing", Library{Name: "x", Type: TypeMovies, Paths: []string{media + "/nope"}}, "does not exist"},
+		{"file", Library{Name: "x", Type: TypeMovies, Paths: []string{media + "/file.txt"}}, "not a directory"},
+		{"outside", Library{Name: "x", Type: TypeMovies, Paths: []string{tmp + "/outside"}}, "outside the media folder"},
+		{"dotdot", Library{Name: "x", Type: TypeMovies, Paths: []string{media + "/../outside"}}, "outside the media folder"},
+		{"symlink escape", Library{Name: "x", Type: TypeMovies, Paths: []string{media + "/escape"}}, "outside the media folder"},
+		{"self overlap", Library{Name: "x", Type: TypeMovies, Paths: []string{media, media + "/movies"}}, "overlap"},
+		{"other overlap", Library{Name: "x", Type: TypeMovies, Paths: []string{media + "/tv"}}, `library "TV"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Validate(c.lib, media, other)
+			var ve *ValidationError
+			if !errors.As(err, &ve) || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("want ValidationError containing %q, got %v", c.want, err)
+			}
+		})
+	}
+	// The library's own paths never count as an overlap (update case).
+	if _, err := Validate(Library{ID: 9, Name: "TV", Type: TypeTV, Paths: []string{media + "/tv"}}, media, other); err != nil {
+		t.Fatalf("self overlap on update: %v", err)
+	}
+}
+
+func TestWithin(t *testing.T) {
+	cases := []struct {
+		p, c string
+		want bool
+	}{
+		{"/media", "/media", true},
+		{"/media", "/media/tv", true},
+		{"/media", "/mediax", false},
+		{"/media/tv", "/media", false},
+		{"/media", "/media/..foo", true},
+	}
+	for _, c := range cases {
+		if got := Within(c.p, c.c); got != c.want {
+			t.Fatalf("Within(%q,%q)=%v", c.p, c.c, got)
+		}
+	}
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: Validate` / `undefined: Library`
+
+- [ ] **Step 3: Implement**
+
+`server/internal/library/library.go`:
+```go
+// Package library owns library definitions (name, type, folders, options),
+// their validation against the media root, and the admin API for them.
+package library
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// Type is the kind of content a library holds.
+type Type string
+
+const (
+	TypeMovies     Type = "movies"
+	TypeTV         Type = "tv"
+	TypeAnime      Type = "anime"
+	TypeHomeVideos Type = "homevideos"
+)
+
+// Valid reports whether t is a known library type.
+func (t Type) Valid() bool {
+	switch t {
+	case TypeMovies, TypeTV, TypeAnime, TypeHomeVideos:
+		return true
+	}
+	return false
+}
+
+// Library is one configured library.
+type Library struct {
+	ID      int64
+	Name    string
+	Type    Type
+	Paths   []string // absolute, symlink-resolved, each inside cfg.MediaDir
+	Options Options
+}
+
+// Options are per-library settings.
+type Options struct {
+	AnimeNumbering    string // "absolute" | "season"; anime only, default "season"
+	KeepOriginalTitle bool
+}
+
+var (
+	ErrNotFound    = errors.New("library not found")
+	ErrNameTaken   = errors.New("library name already in use")
+	ErrScanRunning = errors.New("a scan of this library is already running")
+)
+
+// ValidationError is returned by Validate; its message is safe to show users.
+type ValidationError struct{ Msg string }
+
+func (e *ValidationError) Error() string { return e.Msg }
+
+func invalid(format string, args ...any) error {
+	return &ValidationError{Msg: fmt.Sprintf(format, args...)}
+}
+
+// Validate normalises lib and checks it against the media root and the other
+// libraries. Every path must be absolute, exist, be a directory and resolve
+// (after following symlinks) to somewhere inside mediaDir. Paths may not
+// overlap each other or another library's paths. The returned Library has
+// trimmed fields, resolved paths and defaulted options.
+func Validate(lib Library, mediaDir string, others []Library) (Library, error) {
+	lib.Name = strings.TrimSpace(lib.Name)
+	if lib.Name == "" || len(lib.Name) > 100 {
+		return Library{}, invalid("name must be 1 to 100 characters")
+	}
+	if !lib.Type.Valid() {
+		return Library{}, invalid("type must be one of movies, tv, anime, homevideos")
+	}
+	switch {
+	case lib.Type != TypeAnime:
+		lib.Options.AnimeNumbering = ""
+	case lib.Options.AnimeNumbering == "":
+		lib.Options.AnimeNumbering = "season"
+	case lib.Options.AnimeNumbering != "season" && lib.Options.AnimeNumbering != "absolute":
+		return Library{}, invalid("options.anime_numbering must be season or absolute")
+	}
+	if len(lib.Paths) == 0 {
+		return Library{}, invalid("at least one folder is required")
+	}
+	root, err := filepath.EvalSymlinks(mediaDir)
+	if err != nil {
+		return Library{}, invalid("media folder %s is not available", mediaDir)
+	}
+	var paths []string
+	for _, p := range lib.Paths {
+		p = strings.TrimSpace(p)
+		if !filepath.IsAbs(p) {
+			return Library{}, invalid("folder %q must be an absolute path", p)
+		}
+		real, err := filepath.EvalSymlinks(filepath.Clean(p))
+		if err != nil {
+			return Library{}, invalid("folder %q does not exist", p)
+		}
+		st, err := os.Stat(real)
+		if err != nil || !st.IsDir() {
+			return Library{}, invalid("folder %q is not a directory", p)
+		}
+		if !Within(root, real) {
+			return Library{}, invalid("folder %q is outside the media folder %s", p, mediaDir)
+		}
+		for _, q := range paths {
+			if Within(q, real) || Within(real, q) {
+				return Library{}, invalid("folders %q and %q overlap", q, real)
+			}
+		}
+		paths = append(paths, real)
+	}
+	for _, o := range others {
+		if o.ID == lib.ID {
+			continue
+		}
+		for _, op := range o.Paths {
+			for _, p := range paths {
+				if Within(op, p) || Within(p, op) {
+					return Library{}, invalid("folder %q overlaps library %q", p, o.Name)
+				}
+			}
+		}
+	}
+	lib.Paths = paths
+	return lib, nil
+}
+
+// Within reports whether child is parent or inside it. Both must be clean absolute paths.
+func Within(parent, child string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+```
+
+- [ ] **Step 4: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/library`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/internal/library
+git commit -m "feat(library): library model and media-root folder validation"
+```
+
+---
+
+### Task 4: Library tables and Store
+
+**Files:**
+- Create: `server/internal/db/migrations/20261025110000_library_libraries.sql`
+- Create: `server/internal/library/store.go`
+- Test: `server/internal/library/store_test.go`
+
+**Interfaces:**
+- Consumes: `db.DB`, `dbtest.Open`, Task 3 types
+- Produces: tables `libraries(id, name UNIQUE NOCASE, type, options JSON, created_at, updated_at)`, `library_paths(library_id, path UNIQUE)`; `library.NewStore(d *db.DB) *Store`, `(*Store) List(ctx) ([]Library, error)`, `Get(ctx, id) (Library, error)` (contract), `Create(ctx, Library) (Library, error)`, `Update(ctx, Library) error` (name, options, paths; type is immutable), `Delete(ctx, id) error`. Unique-name violations map to `ErrNameTaken`, duplicate paths to `*ValidationError`. The Store does not validate: callers run `Validate` first.
+
+- [ ] **Step 1: Write the failing test**
+
+`server/internal/library/store_test.go`:
+```go
+package library
+
+import (
+	"context"
+	"errors"
+	"reflect"
+	"testing"
+
+	"github.com/Lisimflix/lisimflix/server/internal/db/dbtest"
+)
+
+func TestStoreCRUD(t *testing.T) {
+	ctx := context.Background()
+	s := NewStore(dbtest.Open(t))
+
+	a, err := s.Create(ctx, Library{Name: "Anime", Type: TypeAnime, Paths: []string{"/media/anime"},
+		Options: Options{AnimeNumbering: "absolute", KeepOriginalTitle: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := s.Create(ctx, Library{Name: "Movies", Type: TypeMovies, Paths: []string{"/media/movies", "/media/movies4k"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Create(ctx, Library{Name: "movies", Type: TypeMovies, Paths: []string{"/media/x"}}); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("duplicate name (case-insensitive): %v", err)
+	}
+	var ve *ValidationError
+	if _, err := s.Create(ctx, Library{Name: "Dup", Type: TypeMovies, Paths: []string{"/media/movies"}}); !errors.As(err, &ve) {
+		t.Fatalf("duplicate path: %v", err)
+	}
+
+	got, err := s.Get(ctx, a.ID)
+	if err != nil || !reflect.DeepEqual(got, a) {
+		t.Fatalf("Get = %+v, %v; want %+v", got, err, a)
+	}
+	list, err := s.List(ctx)
+	if err != nil || len(list) != 2 || list[0].Name != "Anime" || !reflect.DeepEqual(list[1].Paths, m.Paths) {
+		t.Fatalf("List = %+v, %v", list, err)
+	}
+
+	m.Name, m.Paths = "Films", []string{"/media/films"}
+	if err := s.Update(ctx, m); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get(ctx, m.ID)
+	if got.Name != "Films" || !reflect.DeepEqual(got.Paths, []string{"/media/films"}) {
+		t.Fatalf("after update %+v", got)
+	}
+
+	if err := s.Delete(ctx, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get(ctx, a.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get deleted: %v", err)
+	}
+	if err := s.Delete(ctx, a.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Delete twice: %v", err)
+	}
+	if err := s.Update(ctx, Library{ID: 999, Name: "x"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Update missing: %v", err)
+	}
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: NewStore`
+
+- [ ] **Step 3: Write the migration**
+
+`server/internal/db/migrations/20261025110000_library_libraries.sql`:
+```sql
+CREATE TABLE libraries (
+    id         INTEGER PRIMARY KEY,
+    name       TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    type       TEXT NOT NULL CHECK (type IN ('movies', 'tv', 'anime', 'homevideos')),
+    options    TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+) STRICT;
+
+CREATE TABLE library_paths (
+    library_id INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    path       TEXT NOT NULL UNIQUE,
+    PRIMARY KEY (library_id, path)
+) STRICT;
+```
+
+- [ ] **Step 4: Implement the Store**
+
+`server/internal/library/store.go`:
+```go
+package library
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/db"
+)
+
+// Store persists libraries in the libraries and library_paths tables.
+// It does not validate; call Validate first.
+type Store struct {
+	db  *db.DB
+	now func() time.Time
+}
+
+// NewStore returns a Store using d.
+func NewStore(d *db.DB) *Store { return &Store{db: d, now: time.Now} }
+
+type optionsJSON struct {
+	AnimeNumbering    string `json:"anime_numbering,omitempty"`
+	KeepOriginalTitle bool   `json:"keep_original_title"`
+}
+
+// List returns all libraries ordered by name.
+func (s *Store) List(ctx context.Context) ([]Library, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, name, type, options FROM libraries ORDER BY name COLLATE NOCASE, id`)
+	if err != nil {
+		return nil, fmt.Errorf("list libraries: %w", err)
+	}
+	defer rows.Close()
+	var libs []Library
+	byID := map[int64]int{}
+	for rows.Next() {
+		lib, err := scanLibrary(rows)
+		if err != nil {
+			return nil, err
+		}
+		byID[lib.ID] = len(libs)
+		libs = append(libs, lib)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	prow, err := s.db.QueryContext(ctx, `SELECT library_id, path FROM library_paths ORDER BY library_id, path`)
+	if err != nil {
+		return nil, fmt.Errorf("list library paths: %w", err)
+	}
+	defer prow.Close()
+	for prow.Next() {
+		var id int64
+		var p string
+		if err := prow.Scan(&id, &p); err != nil {
+			return nil, err
+		}
+		if i, ok := byID[id]; ok {
+			libs[i].Paths = append(libs[i].Paths, p)
+		}
+	}
+	return libs, prow.Err()
+}
+
+// Get returns one library or ErrNotFound.
+func (s *Store) Get(ctx context.Context, id int64) (Library, error) {
+	lib, err := scanLibrary(s.db.QueryRowContext(ctx, `SELECT id, name, type, options FROM libraries WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Library{}, ErrNotFound
+	}
+	if err != nil {
+		return Library{}, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT path FROM library_paths WHERE library_id = ? ORDER BY path`, id)
+	if err != nil {
+		return Library{}, fmt.Errorf("get library %d paths: %w", id, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return Library{}, err
+		}
+		lib.Paths = append(lib.Paths, p)
+	}
+	return lib, rows.Err()
+}
+
+// Create inserts lib and returns it with its new ID.
+func (s *Store) Create(ctx context.Context, lib Library) (Library, error) {
+	opts, err := json.Marshal(optionsJSON(lib.Options))
+	if err != nil {
+		return Library{}, err
+	}
+	now := s.now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Library{}, err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx,
+		`INSERT INTO libraries(name, type, options, created_at, updated_at) VALUES(?, ?, ?, ?, ?)`,
+		lib.Name, string(lib.Type), string(opts), now, now)
+	if err != nil {
+		return Library{}, mapErr(err)
+	}
+	if lib.ID, err = res.LastInsertId(); err != nil {
+		return Library{}, err
+	}
+	if err := insertPaths(ctx, tx, lib.ID, lib.Paths); err != nil {
+		return Library{}, err
+	}
+	return lib, tx.Commit()
+}
+
+// Update replaces name, options and paths of an existing library. The type never changes.
+func (s *Store) Update(ctx context.Context, lib Library) error {
+	opts, err := json.Marshal(optionsJSON(lib.Options))
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE libraries SET name = ?, options = ?, updated_at = ? WHERE id = ?`,
+		lib.Name, string(opts), s.now().UTC().Format(time.RFC3339Nano), lib.ID)
+	if err != nil {
+		return mapErr(err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM library_paths WHERE library_id = ?`, lib.ID); err != nil {
+		return err
+	}
+	if err := insertPaths(ctx, tx, lib.ID, lib.Paths); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// Delete removes a library. Its items and files rows go with it (ON DELETE CASCADE);
+// nothing on disk is touched.
+func (s *Store) Delete(ctx context.Context, id int64) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM libraries WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("delete library %d: %w", id, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func insertPaths(ctx context.Context, tx *sql.Tx, id int64, paths []string) error {
+	for _, p := range paths {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO library_paths(library_id, path) VALUES(?, ?)`, id, p); err != nil {
+			return mapErr(err)
+		}
+	}
+	return nil
+}
+
+func mapErr(err error) error {
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "UNIQUE constraint failed: libraries.name"):
+		return ErrNameTaken
+	case strings.Contains(msg, "UNIQUE constraint failed: library_paths.path"):
+		return &ValidationError{Msg: "folder already belongs to another library"}
+	}
+	return err
+}
+
+func scanLibrary(sc interface{ Scan(...any) error }) (Library, error) {
+	var lib Library
+	var typ, opts string
+	if err := sc.Scan(&lib.ID, &lib.Name, &typ, &opts); err != nil {
+		return Library{}, err
+	}
+	lib.Type = Type(typ)
+	var o optionsJSON
+	if err := json.Unmarshal([]byte(opts), &o); err != nil {
+		return Library{}, fmt.Errorf("library %d options: %w", lib.ID, err)
+	}
+	lib.Options = Options(o)
+	return lib, nil
+}
+```
+
+- [ ] **Step 5: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/library` and `ok  .../internal/db` (embedded migrations still apply)
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/internal/db/migrations/20261025110000_library_libraries.sql server/internal/library
+git commit -m "feat(library): libraries and library_paths tables with Store"
+```
+
+---
+
+### Task 5: Scan status types, visibility hook and the libraries API
+
+**Files:**
+- Create: `server/internal/library/scan.go`, `server/internal/library/visibility.go`, `server/internal/library/api.go`
+- Test: `server/internal/library/api_test.go`
+
+**Interfaces:**
+- Consumes: `library.Store`, `Validate`, `httpx.WriteJSON/WriteError/DecodeJSON`, `authctx.Guard/FromContext/Principal`, `app.New` + `authctx.StaticGuard` (tests)
+- Produces:
+  - `library.ScanStatus{LibraryID, State ("idle"|"running"|"done"|"failed"), StartedAt, FinishedAt, FilesFound, FilesToProbe, FilesProbed, FilesRemoved, ItemsChanged, Message, Errors []ScanError, ErrorsDropped}`, `ScanError{Path, Reason}` (JSON snake_case).
+  - `library.ScanController` interface: `Trigger(ctx, libraryID) error` (`ErrScanRunning` when busy), `Status(libraryID) ScanStatus`, `Reload(ctx) error`. Implemented by `*scanner.Scanner` in Task 11.
+  - `library.Visibility` interface: `VisibleLibraryIDs(ctx, authctx.Principal) ([]int64, error)` (same signature as 1B's `(*auth.Service).VisibleLibraryIDs`); `library.AdminVisibility{Store}` default; `library.CanSee(ctx, v, p, id) (bool, error)`.
+  - `library.NewModule(store *Store, mediaDir string, scans ScanController, vis Visibility) *Module` (`app.Module`, name `"library"`).
+  - Routes: `GET /api/v1/libraries` (user, filtered by Visibility, `{"libraries":[...]}`), `POST /api/v1/libraries` (admin, 201), `GET /api/v1/libraries/{id}` (user, 404 if not visible), `PATCH /api/v1/libraries/{id}` (admin; `name`, `paths`, `options`; `type` is rejected as an unknown field), `DELETE /api/v1/libraries/{id}` (admin, 204), `POST /api/v1/libraries/{id}/scan` (admin, 202 + status, 409 `scan_running`), `GET /api/v1/libraries/{id}/scan` (admin, status). Library JSON: `{"id","name","type","paths" (admins only),"options":{"anime_numbering","keep_original_title"}}`. Error codes: `invalid_body`, `invalid_library` (400), `not_found` (404), `name_taken`, `scan_running` (409), `internal` (500). Create/update call `Reload` then `Trigger`; delete calls `Reload`.
+
+- [ ] **Step 1: Write the failing tests**
+
+`server/internal/library/api_test.go`:
+```go
+package library
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/Lisimflix/lisimflix/server/internal/app"
+	"github.com/Lisimflix/lisimflix/server/internal/authctx"
+	"github.com/Lisimflix/lisimflix/server/internal/config"
+	"github.com/Lisimflix/lisimflix/server/internal/db/dbtest"
+)
+
+type fakeScans struct {
+	triggered []int64
+	reloads   int
+	busy      bool
+}
+
+func (f *fakeScans) Trigger(_ context.Context, id int64) error {
+	if f.busy {
+		return ErrScanRunning
+	}
+	f.triggered = append(f.triggered, id)
+	return nil
+}
+func (f *fakeScans) Status(id int64) ScanStatus {
+	return ScanStatus{LibraryID: id, State: "idle", Errors: []ScanError{}}
+}
+func (f *fakeScans) Reload(context.Context) error { f.reloads++; return nil }
+
+type apiEnv struct {
+	media string
+	store *Store
+	scans *fakeScans
+	admin http.Handler
+	user  http.Handler
+}
+
+func newAPI(t *testing.T) apiEnv {
+	t.Helper()
+	_, media := mediaTree(t)
+	d := dbtest.Open(t)
+	e := apiEnv{media: media, store: NewStore(d), scans: &fakeScans{}}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mod := NewModule(e.store, media, e.scans, AdminVisibility{Store: e.store})
+	e.admin = app.New(config.Config{}, d, log, authctx.StaticGuard{P: authctx.Principal{UserID: 1, IsAdmin: true}}, mod).Handler()
+	e.user = app.New(config.Config{}, d, log, authctx.StaticGuard{P: authctx.Principal{UserID: 2}}, mod).Handler()
+	return e
+}
+
+func call(h http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+	return rec
+}
+
+func TestLibraryAPILifecycle(t *testing.T) {
+	e := newAPI(t)
+	rec := call(e.admin, "POST", "/api/v1/libraries",
+		`{"name":"Anime","type":"anime","paths":["`+e.media+`/anime"],"options":{"anime_numbering":"absolute"}}`)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	var created libraryJSON
+	json.Unmarshal(rec.Body.Bytes(), &created)
+	if created.ID == 0 || created.Options.AnimeNumbering != "absolute" || len(created.Paths) != 1 {
+		t.Fatalf("created %+v", created)
+	}
+	if len(e.scans.triggered) != 1 || e.scans.reloads != 1 {
+		t.Fatalf("create must reload watchers and trigger a scan: %+v", e.scans)
+	}
+
+	if rec := call(e.admin, "POST", "/api/v1/libraries", `{"name":"anime","type":"tv","paths":["`+e.media+`/tv"]}`); rec.Code != 409 {
+		t.Fatalf("duplicate name: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(e.admin, "POST", "/api/v1/libraries", `{"name":"Bad","type":"tv","paths":["/etc"]}`); rec.Code != 400 ||
+		!strings.Contains(rec.Body.String(), "invalid_library") {
+		t.Fatalf("outside media: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = call(e.admin, "GET", "/api/v1/libraries", "")
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"name":"Anime"`) {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body)
+	}
+
+	rec = call(e.admin, "PATCH", "/api/v1/libraries/1", `{"name":"Anime TV"}`)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), `"Anime TV"`) {
+		t.Fatalf("patch: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(e.admin, "PATCH", "/api/v1/libraries/1", `{"type":"tv"}`); rec.Code != 400 {
+		t.Fatalf("type is immutable (unknown field): %d", rec.Code)
+	}
+
+	if rec := call(e.admin, "POST", "/api/v1/libraries/1/scan", ""); rec.Code != 202 {
+		t.Fatalf("scan: %d %s", rec.Code, rec.Body)
+	}
+	e.scans.busy = true
+	if rec := call(e.admin, "POST", "/api/v1/libraries/1/scan", ""); rec.Code != 409 {
+		t.Fatalf("scan while running: %d", rec.Code)
+	}
+	if rec := call(e.admin, "GET", "/api/v1/libraries/1/scan", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), `"state":"idle"`) {
+		t.Fatalf("scan status: %d %s", rec.Code, rec.Body)
+	}
+
+	if rec := call(e.admin, "DELETE", "/api/v1/libraries/1", ""); rec.Code != 204 {
+		t.Fatalf("delete: %d", rec.Code)
+	}
+	if rec := call(e.admin, "GET", "/api/v1/libraries/1", ""); rec.Code != 404 {
+		t.Fatalf("get deleted: %d", rec.Code)
+	}
+	if rec := call(e.admin, "GET", "/api/v1/libraries/abc", ""); rec.Code != 404 {
+		t.Fatalf("bad id: %d", rec.Code)
+	}
+}
+
+func TestLibraryAPINonAdmin(t *testing.T) {
+	e := newAPI(t)
+	if _, err := e.store.Create(context.Background(), Library{Name: "Movies", Type: TypeMovies, Paths: []string{e.media + "/movies"}}); err != nil {
+		t.Fatal(err)
+	}
+	rec := call(e.user, "GET", "/api/v1/libraries", "")
+	if rec.Code != 200 || strings.TrimSpace(rec.Body.String()) != `{"libraries":[]}` {
+		t.Fatalf("default visibility hides libraries from non-admins: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(e.user, "GET", "/api/v1/libraries/1", ""); rec.Code != 404 {
+		t.Fatalf("hidden library: %d", rec.Code)
+	}
+	for _, c := range []struct{ method, path string }{
+		{"POST", "/api/v1/libraries"}, {"PATCH", "/api/v1/libraries/1"}, {"DELETE", "/api/v1/libraries/1"},
+		{"POST", "/api/v1/libraries/1/scan"}, {"GET", "/api/v1/libraries/1/scan"},
+	} {
+		if rec := call(e.user, c.method, c.path, "{}"); rec.Code != 403 {
+			t.Fatalf("%s %s: %d", c.method, c.path, rec.Code)
+		}
+	}
+}
+
+type allVisible struct{}
+
+func (allVisible) VisibleLibraryIDs(context.Context, authctx.Principal) ([]int64, error) {
+	return []int64{1}, nil
+}
+
+func TestLibraryAPIVisibilityHookHidesPaths(t *testing.T) {
+	_, media := mediaTree(t)
+	d := dbtest.Open(t)
+	s := NewStore(d)
+	s.Create(context.Background(), Library{Name: "Movies", Type: TypeMovies, Paths: []string{media + "/movies"}})
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := app.New(config.Config{}, d, log, authctx.StaticGuard{P: authctx.Principal{UserID: 2}},
+		NewModule(s, media, &fakeScans{}, allVisible{})).Handler()
+	rec := call(h, "GET", "/api/v1/libraries/1", "")
+	if rec.Code != 200 || strings.Contains(rec.Body.String(), "paths") {
+		t.Fatalf("visible library for user, without server paths: %d %s", rec.Code, rec.Body)
+	}
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: NewModule` / `undefined: ScanStatus` / `undefined: AdminVisibility`
+
+- [ ] **Step 3: Implement the scan status types and controller interface**
+
+`server/internal/library/scan.go`:
+```go
+package library
+
+import (
+	"context"
+	"time"
+)
+
+// ScanStatus is the progress and outcome of the latest scan of one library.
+// It lives in memory (the scanner keeps it); broken files are also persisted
+// in files.probe_error.
+type ScanStatus struct {
+	LibraryID     int64       `json:"library_id"`
+	State         string      `json:"state"` // "idle" | "running" | "done" | "failed"
+	StartedAt     *time.Time  `json:"started_at,omitempty"`
+	FinishedAt    *time.Time  `json:"finished_at,omitempty"`
+	FilesFound    int         `json:"files_found"`
+	FilesToProbe  int         `json:"files_to_probe"`
+	FilesProbed   int         `json:"files_probed"`
+	FilesRemoved  int         `json:"files_removed"`
+	ItemsChanged  int         `json:"items_changed"`
+	Message       string      `json:"message,omitempty"` // failure reason when State is "failed"
+	Errors        []ScanError `json:"errors"`
+	ErrorsDropped int         `json:"errors_dropped,omitempty"` // errors beyond the kept limit
+}
+
+// ScanError is one file or folder the scan could not handle.
+type ScanError struct {
+	Path   string `json:"path"`
+	Reason string `json:"reason"`
+}
+
+// ScanController is what the library API needs from the scanner. It is
+// implemented by *scanner.Scanner (the scanner package imports this one, so the
+// interface lives here to avoid an import cycle).
+type ScanController interface {
+	// Trigger starts a full scan in the background. ErrScanRunning if one is running.
+	Trigger(ctx context.Context, libraryID int64) error
+	// Status returns the latest scan status ("idle" if never scanned).
+	Status(libraryID int64) ScanStatus
+	// Reload re-reads the library list so watchers follow added/changed/removed folders.
+	Reload(ctx context.Context) error
+}
+```
+
+- [ ] **Step 4: Implement the visibility hook**
+
+`server/internal/library/visibility.go`:
+```go
+package library
+
+import (
+	"context"
+	"slices"
+
+	"github.com/Lisimflix/lisimflix/server/internal/authctx"
+)
+
+// Visibility decides which libraries a principal may see. *auth.Service (plan
+// 1B) satisfies it with the same method signature; until 1B is wired in main,
+// AdminVisibility is used.
+type Visibility interface {
+	VisibleLibraryIDs(ctx context.Context, p authctx.Principal) ([]int64, error)
+}
+
+// AdminVisibility lets admins see every library and everyone else none.
+type AdminVisibility struct{ Store *Store }
+
+// VisibleLibraryIDs implements Visibility.
+func (v AdminVisibility) VisibleLibraryIDs(ctx context.Context, p authctx.Principal) ([]int64, error) {
+	if !p.IsAdmin {
+		return nil, nil
+	}
+	libs, err := v.Store.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]int64, len(libs))
+	for i, l := range libs {
+		ids[i] = l.ID
+	}
+	return ids, nil
+}
+
+// CanSee reports whether p may see library id.
+func CanSee(ctx context.Context, v Visibility, p authctx.Principal, id int64) (bool, error) {
+	ids, err := v.VisibleLibraryIDs(ctx, p)
+	if err != nil {
+		return false, err
+	}
+	return slices.Contains(ids, id), nil
+}
+```
+
+- [ ] **Step 5: Implement the API module**
+
+`server/internal/library/api.go`:
+```go
+package library
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"slices"
+	"strconv"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/Lisimflix/lisimflix/server/internal/authctx"
+	"github.com/Lisimflix/lisimflix/server/internal/httpx"
+)
+
+// Module serves /api/v1/libraries. Routes are registered flat (not with
+// r.Route("/libraries")) because the media module also serves
+// /libraries/{id}/items and chi cannot mount two subrouters on one prefix.
+type Module struct {
+	store    *Store
+	mediaDir string
+	scans    ScanController
+	vis      Visibility
+}
+
+// NewModule returns the library API module.
+func NewModule(store *Store, mediaDir string, scans ScanController, vis Visibility) *Module {
+	return &Module{store: store, mediaDir: mediaDir, scans: scans, vis: vis}
+}
+
+// Name implements app.Module.
+func (m *Module) Name() string { return "library" }
+
+// Mount implements app.Module.
+func (m *Module) Mount(r chi.Router, g authctx.Guard) {
+	r.With(g.RequireUser).Get("/libraries", m.list)
+	r.With(g.RequireAdmin).Post("/libraries", m.create)
+	r.With(g.RequireUser).Get("/libraries/{id}", m.get)
+	r.With(g.RequireAdmin).Patch("/libraries/{id}", m.update)
+	r.With(g.RequireAdmin).Delete("/libraries/{id}", m.remove)
+	r.With(g.RequireAdmin).Post("/libraries/{id}/scan", m.scan)
+	r.With(g.RequireAdmin).Get("/libraries/{id}/scan", m.scanStatus)
+}
+
+type libraryJSON struct {
+	ID      int64       `json:"id"`
+	Name    string      `json:"name"`
+	Type    Type        `json:"type"`
+	Paths   []string    `json:"paths,omitempty"` // admins only
+	Options optionsJSON `json:"options"`
+}
+
+func toJSON(l Library, admin bool) libraryJSON {
+	j := libraryJSON{ID: l.ID, Name: l.Name, Type: l.Type, Options: optionsJSON(l.Options)}
+	if admin {
+		j.Paths = l.Paths
+	}
+	return j
+}
+
+func (m *Module) list(w http.ResponseWriter, r *http.Request) {
+	p, _ := authctx.FromContext(r.Context())
+	ids, err := m.vis.VisibleLibraryIDs(r.Context(), p)
+	if err != nil {
+		internal(w)
+		return
+	}
+	libs, err := m.store.List(r.Context())
+	if err != nil {
+		internal(w)
+		return
+	}
+	out := []libraryJSON{}
+	for _, l := range libs {
+		if slices.Contains(ids, l.ID) {
+			out = append(out, toJSON(l, p.IsAdmin))
+		}
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"libraries": out})
+}
+
+func (m *Module) get(w http.ResponseWriter, r *http.Request) {
+	p, _ := authctx.FromContext(r.Context())
+	lib, ok := m.load(w, r)
+	if !ok {
+		return
+	}
+	visible, err := CanSee(r.Context(), m.vis, p, lib.ID)
+	if err != nil {
+		internal(w)
+		return
+	}
+	if !visible {
+		notFound(w)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toJSON(lib, p.IsAdmin))
+}
+
+type createBody struct {
+	Name    string      `json:"name"`
+	Type    Type        `json:"type"`
+	Paths   []string    `json:"paths"`
+	Options optionsJSON `json:"options"`
+}
+
+func (m *Module) create(w http.ResponseWriter, r *http.Request) {
+	var body createBody
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	others, err := m.store.List(r.Context())
+	if err != nil {
+		internal(w)
+		return
+	}
+	lib, err := Validate(Library{Name: body.Name, Type: body.Type, Paths: body.Paths, Options: Options(body.Options)}, m.mediaDir, others)
+	if err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if lib, err = m.store.Create(r.Context(), lib); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	m.afterChange(r.Context(), lib.ID)
+	httpx.WriteJSON(w, http.StatusCreated, toJSON(lib, true))
+}
+
+type patchBody struct {
+	Name    *string      `json:"name"`
+	Paths   *[]string    `json:"paths"`
+	Options *optionsJSON `json:"options"`
+}
+
+func (m *Module) update(w http.ResponseWriter, r *http.Request) {
+	lib, ok := m.load(w, r)
+	if !ok {
+		return
+	}
+	var body patchBody
+	if err := httpx.DecodeJSON(r, &body); err != nil {
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_body", err.Error())
+		return
+	}
+	if body.Name != nil {
+		lib.Name = *body.Name
+	}
+	if body.Paths != nil {
+		lib.Paths = *body.Paths
+	}
+	if body.Options != nil {
+		lib.Options = Options(*body.Options)
+	}
+	others, err := m.store.List(r.Context())
+	if err != nil {
+		internal(w)
+		return
+	}
+	if lib, err = Validate(lib, m.mediaDir, others); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	if err := m.store.Update(r.Context(), lib); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	m.afterChange(r.Context(), lib.ID)
+	httpx.WriteJSON(w, http.StatusOK, toJSON(lib, true))
+}
+
+func (m *Module) remove(w http.ResponseWriter, r *http.Request) {
+	lib, ok := m.load(w, r)
+	if !ok {
+		return
+	}
+	if err := m.store.Delete(r.Context(), lib.ID); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	_ = m.scans.Reload(context.WithoutCancel(r.Context()))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (m *Module) scan(w http.ResponseWriter, r *http.Request) {
+	lib, ok := m.load(w, r)
+	if !ok {
+		return
+	}
+	if err := m.scans.Trigger(context.WithoutCancel(r.Context()), lib.ID); err != nil {
+		writeStoreErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, m.scans.Status(lib.ID))
+}
+
+func (m *Module) scanStatus(w http.ResponseWriter, r *http.Request) {
+	lib, ok := m.load(w, r)
+	if !ok {
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, m.scans.Status(lib.ID))
+}
+
+// afterChange points the watchers at the new folders and starts a scan.
+// Failures here are logged by the scanner and retried by the periodic scan,
+// so they do not fail the request.
+func (m *Module) afterChange(ctx context.Context, id int64) {
+	ctx = context.WithoutCancel(ctx)
+	_ = m.scans.Reload(ctx)
+	_ = m.scans.Trigger(ctx, id)
+}
+
+func (m *Module) load(w http.ResponseWriter, r *http.Request) (Library, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		notFound(w)
+		return Library{}, false
+	}
+	lib, err := m.store.Get(r.Context(), id)
+	if err != nil {
+		writeStoreErr(w, err)
+		return Library{}, false
+	}
+	return lib, true
+}
+
+func writeStoreErr(w http.ResponseWriter, err error) {
+	var ve *ValidationError
+	switch {
+	case errors.As(err, &ve):
+		httpx.WriteError(w, http.StatusBadRequest, "invalid_library", ve.Msg)
+	case errors.Is(err, ErrNotFound):
+		notFound(w)
+	case errors.Is(err, ErrNameTaken):
+		httpx.WriteError(w, http.StatusConflict, "name_taken", err.Error())
+	case errors.Is(err, ErrScanRunning):
+		httpx.WriteError(w, http.StatusConflict, "scan_running", err.Error())
+	default:
+		internal(w)
+	}
+}
+
+func notFound(w http.ResponseWriter) {
+	httpx.WriteError(w, http.StatusNotFound, "not_found", "no such library")
+}
+
+func internal(w http.ResponseWriter) {
+	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+}
+```
+
+- [ ] **Step 6: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/library`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add server/internal/library
+git commit -m "feat(library): admin libraries API, scan status types and visibility hook"
+```
+
+---
+
+### Task 6: Item and file tables, model and Store (`media`)
+
+**Files:**
+- Create: `server/internal/db/migrations/20261025110100_media_items.sql`
+- Create: `server/internal/media/media.go`, `server/internal/media/store.go`
+- Test: `server/internal/media/store_test.go`
+
+**Interfaces:**
+- Consumes: `db.DB`, `dbtest.Open`, `library.NewStore/Create` (tests need a library row for the foreign key), `probe.Result`
+- Produces:
+  - Tables `items` (unique `(library_id, scan_key)`, `parent_id` cascade, `extra_type`, `episode_number_end`, `air_date`, `locked_fields` JSON), `files` (unique `path`, `mtime_ns`, `probe` JSON, `probe_error`, `version`), `item_external_ids(item_id, provider, value)`.
+  - Contract: `media.Kind` (`KindMovie`, `KindShow`, `KindSeason`, `KindEpisode`, `KindVideo`), `media.Item`, `media.File`, `NewStore`, `GetItem`, `Children`, `ListTopLevel`, `UpdateItem`, `Files`, `ItemsNeedingMatch` (unmatched top-level movies and shows).
+  - Additions: `Item.EpisodeNumberEnd *int`, `Item.AirDate string`, `Item.ExtraType string`, `File.ProbeError string`, `media.FileStat{ID, ItemID, Size, ModTime, ProbeError}`, extra-type constants (`ExtraTrailer` ... `ExtraOther`), `media.ErrNotFound`, `media.SortTitle(string) string`, and scanner-facing store methods:
+    `UpsertItem(ctx, libraryID int64, key string, it Item) (int64, error)`,
+    `SetExternalIDs(ctx, itemID int64, ids map[string]string, overwrite bool) error`,
+    `FileIndex(ctx, libraryID int64) (map[string]FileStat, error)`,
+    `PutFile(ctx, libraryID int64, f File) (int64, error)`,
+    `DeleteFiles(ctx, ids []int64) error`,
+    `CountFiles(ctx, libraryID int64, dir string) (int, error)`,
+    `PruneEmpty(ctx, libraryID int64) (int64, error)`.
+
+- [ ] **Step 1: Write the failing tests**
+
+`server/internal/media/store_test.go`:
+```go
+package media
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/db/dbtest"
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/probe"
+)
+
+func ip(n int) *int { return &n }
+
+func setup(t *testing.T) (*Store, int64) {
+	t.Helper()
+	d := dbtest.Open(t)
+	lib, err := library.NewStore(d).Create(context.Background(), library.Library{Name: "TV", Type: library.TypeTV, Paths: []string{"/media/tv"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewStore(d), lib.ID
+}
+
+func TestUpsertTreeAndRead(t *testing.T) {
+	ctx := context.Background()
+	s, lib := setup(t)
+	show, err := s.UpsertItem(ctx, lib, "show:/media/tv/Show", Item{Kind: KindShow, Title: "The Show", SortTitle: "Show", Year: 2019})
+	if err != nil {
+		t.Fatal(err)
+	}
+	season, _ := s.UpsertItem(ctx, lib, "season:/media/tv/Show|1", Item{Kind: KindSeason, ParentID: show, Title: "Season 1", SeasonNumber: ip(1)})
+	e2, _ := s.UpsertItem(ctx, lib, "episode:/media/tv/Show|s1|e2", Item{Kind: KindEpisode, ParentID: season, SeasonNumber: ip(1), EpisodeNumber: ip(2), EpisodeNumberEnd: ip(3)})
+	e1, _ := s.UpsertItem(ctx, lib, "episode:/media/tv/Show|s1|e1", Item{Kind: KindEpisode, ParentID: season, SeasonNumber: ip(1), EpisodeNumber: ip(1)})
+	if err := s.SetExternalIDs(ctx, show, map[string]string{"tvdb": "123"}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	again, _ := s.UpsertItem(ctx, lib, "show:/media/tv/Show", Item{Kind: KindShow, Title: "The Show", SortTitle: "Show", Year: 2019})
+	if again != show {
+		t.Fatalf("upsert must return the same id: %d vs %d", again, show)
+	}
+
+	top, err := s.ListTopLevel(ctx, lib)
+	if err != nil || len(top) != 1 || top[0].ExternalIDs["tvdb"] != "123" || top[0].MatchState != "unmatched" {
+		t.Fatalf("top %+v %v", top, err)
+	}
+	eps, _ := s.Children(ctx, season)
+	if len(eps) != 2 || eps[0].ID != e1 || eps[1].ID != e2 || *eps[1].EpisodeNumberEnd != 3 {
+		t.Fatalf("episodes must sort by number: %+v", eps)
+	}
+	need, _ := s.ItemsNeedingMatch(ctx, lib)
+	if len(need) != 1 || need[0].ID != show {
+		t.Fatalf("needing match %+v", need)
+	}
+}
+
+func TestUpsertKeepsMatchedTitles(t *testing.T) {
+	ctx := context.Background()
+	s, lib := setup(t)
+	id, _ := s.UpsertItem(ctx, lib, "movie:/m/Heat", Item{Kind: KindMovie, Title: "heat", Year: 1995})
+	it, _ := s.GetItem(ctx, id)
+	it.Title, it.MatchState, it.LockedFields = "Heat", "matched", []string{"title"}
+	it.ExternalIDs = map[string]string{"tmdb": "949"}
+	if err := s.UpdateItem(ctx, it); err != nil {
+		t.Fatal(err)
+	}
+	s.UpsertItem(ctx, lib, "movie:/m/Heat", Item{Kind: KindMovie, Title: "heat", Year: 1995})
+	s.SetExternalIDs(ctx, id, map[string]string{"tmdb": "1", "imdb": "tt0113277"}, false)
+	got, _ := s.GetItem(ctx, id)
+	if got.Title != "Heat" || got.ExternalIDs["tmdb"] != "949" || got.ExternalIDs["imdb"] != "tt0113277" ||
+		len(got.LockedFields) != 1 {
+		t.Fatalf("rescan clobbered metadata: %+v", got)
+	}
+	if err := s.UpdateItem(ctx, Item{ID: 999}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("update missing: %v", err)
+	}
+	if _, err := s.GetItem(ctx, 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("get missing: %v", err)
+	}
+}
+
+func TestFilesIndexDeleteAndPrune(t *testing.T) {
+	ctx := context.Background()
+	s, lib := setup(t)
+	movie, _ := s.UpsertItem(ctx, lib, "movie:/media/tv/M", Item{Kind: KindMovie, Title: "M"})
+	trailer, _ := s.UpsertItem(ctx, lib, "extra:/media/tv/M/M-trailer.mkv", Item{Kind: KindVideo, ParentID: movie, ExtraType: ExtraTrailer})
+	mt := time.Unix(1700000000, 123456789)
+	pr := probe.Result{Container: "matroska,webm", DurationMs: 1000, Video: []probe.VideoStream{{Codec: "hevc", HDR: probe.HDR10}}}
+	f1, err := s.PutFile(ctx, lib, File{ItemID: movie, Path: "/media/tv/M/M - 1080p.mkv", Size: 10, ModTime: mt, Probe: pr, Version: "1080p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.PutFile(ctx, lib, File{ItemID: movie, Path: "/media/tv/M/M - 2160p.mkv", Size: 20, ModTime: mt, Version: "2160p"})
+	s.PutFile(ctx, lib, File{ItemID: trailer, Path: "/media/tv/M/M-trailer.mkv", Size: 1, ModTime: mt, ProbeError: "boom"})
+
+	idx, _ := s.FileIndex(ctx, lib)
+	if st := idx["/media/tv/M/M - 1080p.mkv"]; st.ID != f1 || st.Size != 10 || !st.ModTime.Equal(mt) {
+		t.Fatalf("index %+v", st)
+	}
+	if idx["/media/tv/M/M-trailer.mkv"].ProbeError != "boom" {
+		t.Fatal("probe error not stored")
+	}
+	files, _ := s.Files(ctx, movie)
+	if len(files) != 2 || files[0].Version != "1080p" || files[0].Probe.Video[0].HDR != probe.HDR10 {
+		t.Fatalf("files %+v", files)
+	}
+	if n, _ := s.CountFiles(ctx, lib, "/media/tv"); n != 3 {
+		t.Fatalf("count under root = %d", n)
+	}
+	if n, _ := s.CountFiles(ctx, lib, "/media/t"); n != 0 {
+		t.Fatalf("prefix must stop at a path separator, got %d", n)
+	}
+
+	// Main files gone but trailer remains: movie stays (it has a child).
+	s.DeleteFiles(ctx, []int64{idx["/media/tv/M/M - 1080p.mkv"].ID, idx["/media/tv/M/M - 2160p.mkv"].ID})
+	if n, _ := s.PruneEmpty(ctx, lib); n != 0 {
+		t.Fatalf("pruned %d, want 0", n)
+	}
+	s.DeleteFiles(ctx, []int64{idx["/media/tv/M/M-trailer.mkv"].ID})
+	if n, _ := s.PruneEmpty(ctx, lib); n != 2 {
+		t.Fatalf("pruned %d, want 2 (trailer then movie)", n)
+	}
+	if top, _ := s.ListTopLevel(ctx, lib); len(top) != 0 {
+		t.Fatalf("left %+v", top)
+	}
+}
+
+func TestPruneShowTree(t *testing.T) {
+	ctx := context.Background()
+	s, lib := setup(t)
+	show, _ := s.UpsertItem(ctx, lib, "show:x", Item{Kind: KindShow})
+	season, _ := s.UpsertItem(ctx, lib, "season:x|1", Item{Kind: KindSeason, ParentID: show, SeasonNumber: ip(1)})
+	s.UpsertItem(ctx, lib, "episode:x|s1|e1", Item{Kind: KindEpisode, ParentID: season, SeasonNumber: ip(1), EpisodeNumber: ip(1)})
+	if n, _ := s.PruneEmpty(ctx, lib); n != 3 {
+		t.Fatalf("pruned %d, want episode+season+show", n)
+	}
+}
+
+func TestSortTitle(t *testing.T) {
+	for in, want := range map[string]string{"The Matrix": "Matrix", "A Quiet Place": "Quiet Place", "An": "An", "Theodore": "Theodore", "Heat": "Heat"} {
+		if got := SortTitle(in); got != want {
+			t.Fatalf("SortTitle(%q) = %q", in, got)
+		}
+	}
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: NewStore` / `undefined: Item`
+
+- [ ] **Step 3: Write the migration**
+
+`server/internal/db/migrations/20261025110100_media_items.sql`:
+```sql
+CREATE TABLE items (
+    id                 INTEGER PRIMARY KEY,
+    library_id         INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    parent_id          INTEGER REFERENCES items(id) ON DELETE CASCADE,
+    scan_key           TEXT NOT NULL,
+    kind               TEXT NOT NULL CHECK (kind IN ('movie', 'show', 'season', 'episode', 'video')),
+    title              TEXT NOT NULL DEFAULT '',
+    original_title     TEXT NOT NULL DEFAULT '',
+    sort_title         TEXT NOT NULL DEFAULT '',
+    year               INTEGER NOT NULL DEFAULT 0,
+    season_number      INTEGER,
+    episode_number     INTEGER,
+    episode_number_end INTEGER,
+    absolute_number    INTEGER,
+    air_date           TEXT NOT NULL DEFAULT '',
+    extra_type         TEXT NOT NULL DEFAULT '',
+    match_state        TEXT NOT NULL DEFAULT 'unmatched' CHECK (match_state IN ('unmatched', 'matched', 'manual')),
+    locked_fields      TEXT NOT NULL DEFAULT '[]',
+    added_at           TEXT NOT NULL,
+    updated_at         TEXT NOT NULL,
+    UNIQUE (library_id, scan_key)
+) STRICT;
+
+CREATE INDEX items_parent ON items(parent_id);
+CREATE INDEX items_library_top ON items(library_id, sort_title) WHERE parent_id IS NULL;
+CREATE INDEX items_match ON items(library_id, match_state);
+
+CREATE TABLE item_external_ids (
+    item_id  INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    provider TEXT NOT NULL,
+    value    TEXT NOT NULL,
+    PRIMARY KEY (item_id, provider)
+) STRICT;
+
+CREATE INDEX item_external_ids_lookup ON item_external_ids(provider, value);
+
+CREATE TABLE files (
+    id          INTEGER PRIMARY KEY,
+    item_id     INTEGER NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    library_id  INTEGER NOT NULL REFERENCES libraries(id) ON DELETE CASCADE,
+    path        TEXT NOT NULL UNIQUE,
+    size        INTEGER NOT NULL,
+    mtime_ns    INTEGER NOT NULL,
+    version     TEXT NOT NULL DEFAULT '',
+    probe       TEXT NOT NULL DEFAULT '{}',
+    probe_error TEXT NOT NULL DEFAULT '',
+    added_at    TEXT NOT NULL,
+    updated_at  TEXT NOT NULL
+) STRICT;
+
+CREATE INDEX files_item ON files(item_id);
+CREATE INDEX files_library ON files(library_id);
+```
+
+- [ ] **Step 4: Implement the model**
+
+`server/internal/media/media.go`:
+```go
+// Package media is the item domain model (movies, shows, seasons, episodes,
+// videos/extras) and its files, stored in items, files and item_external_ids.
+package media
+
+import (
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/probe"
+)
+
+// Kind is the type of an item.
+type Kind string
+
+const (
+	KindMovie   Kind = "movie"
+	KindShow    Kind = "show"
+	KindSeason  Kind = "season"
+	KindEpisode Kind = "episode"
+	KindVideo   Kind = "video" // home video, or an extra when ExtraType is set
+)
+
+// Extra types for KindVideo children of a movie or show.
+const (
+	ExtraTrailer         = "trailer"
+	ExtraFeaturette      = "featurette"
+	ExtraBehindTheScenes = "behindthescenes"
+	ExtraDeletedScene    = "deleted"
+	ExtraInterview       = "interview"
+	ExtraScene           = "scene"
+	ExtraShort           = "short"
+	ExtraOther           = "other"
+)
+
+// ErrNotFound is returned when an item does not exist.
+var ErrNotFound = errors.New("item not found")
+
+// Item is one node in a library tree.
+type Item struct {
+	ID               int64
+	LibraryID        int64
+	ParentID         int64 // 0 for top level (movie, show, video)
+	Kind             Kind
+	Title            string
+	OriginalTitle    string
+	SortTitle        string
+	Year             int               // 0 = unknown
+	SeasonNumber     *int              // season, episode
+	EpisodeNumber    *int              // episode
+	EpisodeNumberEnd *int              // episode: last number of a multi-episode file (S01E02E03 -> 3)
+	AbsoluteNumber   *int              // episode (anime)
+	AirDate          string            // episode: YYYY-MM-DD for date-based shows, filled by metadata later
+	ExtraType        string            // video children of a movie/show: trailer, featurette, ...
+	ExternalIDs      map[string]string // keys: "tmdb","tvdb","imdb","anidb","anilist","mal"
+	MatchState       string            // "unmatched" | "matched" | "manual"
+	LockedFields     []string
+	AddedAt          time.Time
+	UpdatedAt        time.Time
+}
+
+// File is one media file belonging to an item. Several files on one item are versions.
+type File struct {
+	ID         int64
+	ItemID     int64
+	Path       string // absolute
+	Size       int64
+	ModTime    time.Time
+	Probe      probe.Result
+	ProbeError string // non-empty when ffprobe failed; such files are re-probed every full scan
+	Version    string // "" or label like "Director's Cut"; groups multiple files per movie
+}
+
+// FileStat is the scanner's change-detection view of a stored file.
+type FileStat struct {
+	ID         int64
+	ItemID     int64
+	Size       int64
+	ModTime    time.Time
+	ProbeError string
+}
+
+// SortTitle drops a leading English article: "The Matrix" -> "Matrix".
+func SortTitle(title string) string {
+	t := strings.TrimSpace(title)
+	lower := strings.ToLower(t)
+	for _, a := range []string{"the ", "a ", "an "} {
+		if strings.HasPrefix(lower, a) && len(t) > len(a) {
+			return strings.TrimSpace(t[len(a):])
+		}
+	}
+	return t
+}
+```
+
+- [ ] **Step 5: Implement the Store**
+
+`server/internal/media/store.go`:
+```go
+package media
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/db"
+)
+
+// Store reads and writes items, files and external IDs.
+type Store struct {
+	db  *db.DB
+	now func() time.Time
+}
+
+// NewStore returns a Store using d.
+func NewStore(d *db.DB) *Store { return &Store{db: d, now: time.Now} }
+
+const itemCols = `id, library_id, COALESCE(parent_id, 0), kind, title, original_title, sort_title, year,
+	season_number, episode_number, episode_number_end, absolute_number, air_date, extra_type,
+	match_state, locked_fields, added_at, updated_at`
+
+// orderChildren sorts seasons and episodes numerically, everything else by sort title.
+const orderChildren = ` ORDER BY season_number IS NULL, season_number, episode_number IS NULL, episode_number,
+	air_date, sort_title COLLATE NOCASE, id`
+
+func (s *Store) stamp() string { return s.now().UTC().Format(time.RFC3339Nano) }
+
+// GetItem returns one item with its external IDs, or ErrNotFound.
+func (s *Store) GetItem(ctx context.Context, id int64) (Item, error) {
+	it, err := scanItem(s.db.QueryRowContext(ctx, `SELECT `+itemCols+` FROM items WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Item{}, ErrNotFound
+	}
+	if err != nil {
+		return Item{}, fmt.Errorf("get item %d: %w", id, err)
+	}
+	items := []Item{it}
+	if err := s.attachIDs(ctx, items); err != nil {
+		return Item{}, err
+	}
+	return items[0], nil
+}
+
+// Children returns the direct children of parentID (seasons, episodes, extras).
+func (s *Store) Children(ctx context.Context, parentID int64) ([]Item, error) {
+	return s.queryItems(ctx, `parent_id = ?`+orderChildren, parentID)
+}
+
+// ListTopLevel returns the movies, shows and videos at the top of a library.
+func (s *Store) ListTopLevel(ctx context.Context, libraryID int64) ([]Item, error) {
+	return s.queryItems(ctx, `library_id = ? AND parent_id IS NULL ORDER BY sort_title COLLATE NOCASE, year, id`, libraryID)
+}
+
+// ItemsNeedingMatch returns unmatched top-level movies and shows (what 1D matches).
+func (s *Store) ItemsNeedingMatch(ctx context.Context, libraryID int64) ([]Item, error) {
+	return s.queryItems(ctx, `library_id = ? AND parent_id IS NULL AND match_state = 'unmatched'
+		AND kind IN ('movie', 'show') ORDER BY id`, libraryID)
+}
+
+// UpdateItem writes every editable field and replaces the external IDs.
+// It respects nothing; callers check LockedFields.
+func (s *Store) UpdateItem(ctx context.Context, it Item) error {
+	if it.MatchState == "" {
+		it.MatchState = "unmatched"
+	}
+	locked, err := json.Marshal(nonNil(it.LockedFields))
+	if err != nil {
+		return err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE items SET title = ?, original_title = ?, sort_title = ?, year = ?,
+		season_number = ?, episode_number = ?, episode_number_end = ?, absolute_number = ?, air_date = ?,
+		extra_type = ?, match_state = ?, locked_fields = ?, updated_at = ? WHERE id = ?`,
+		it.Title, it.OriginalTitle, it.SortTitle, it.Year,
+		nullInt(it.SeasonNumber), nullInt(it.EpisodeNumber), nullInt(it.EpisodeNumberEnd), nullInt(it.AbsoluteNumber),
+		it.AirDate, it.ExtraType, it.MatchState, string(locked), s.stamp(), it.ID)
+	if err != nil {
+		return fmt.Errorf("update item %d: %w", it.ID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM item_external_ids WHERE item_id = ?`, it.ID); err != nil {
+		return err
+	}
+	for k, v := range it.ExternalIDs {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO item_external_ids(item_id, provider, value) VALUES(?, ?, ?)`, it.ID, k, v); err != nil {
+			return fmt.Errorf("update item %d ids: %w", it.ID, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// Files returns the files of an item, ordered by version label then path.
+func (s *Store) Files(ctx context.Context, itemID int64) ([]File, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, item_id, path, size, mtime_ns, version, probe, probe_error
+		FROM files WHERE item_id = ? ORDER BY version, path`, itemID)
+	if err != nil {
+		return nil, fmt.Errorf("files of item %d: %w", itemID, err)
+	}
+	defer rows.Close()
+	var out []File
+	for rows.Next() {
+		var f File
+		var mtime int64
+		var pj string
+		if err := rows.Scan(&f.ID, &f.ItemID, &f.Path, &f.Size, &mtime, &f.Version, &pj, &f.ProbeError); err != nil {
+			return nil, err
+		}
+		f.ModTime = time.Unix(0, mtime)
+		if err := json.Unmarshal([]byte(pj), &f.Probe); err != nil {
+			return nil, fmt.Errorf("file %d probe json: %w", f.ID, err)
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// --- scanner-facing methods (additions to the 1C contract) ---
+
+// UpsertItem creates or updates the item identified by (libraryID, key) and
+// returns its ID. key is the scanner's stable identity, e.g. "movie:/media/movies/Heat (1995)".
+// Structural fields (parent, kind, numbers, extra type) always follow the
+// filesystem. Title, sort title, year and air date are only overwritten while
+// the item is still unmatched, so metadata and manual edits survive rescans.
+func (s *Store) UpsertItem(ctx context.Context, libraryID int64, key string, it Item) (int64, error) {
+	now := s.stamp()
+	var id int64
+	err := s.db.QueryRowContext(ctx, `INSERT INTO items(library_id, parent_id, scan_key, kind, title, sort_title, year,
+			season_number, episode_number, episode_number_end, absolute_number, air_date, extra_type, added_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(library_id, scan_key) DO UPDATE SET
+			parent_id = excluded.parent_id,
+			kind = excluded.kind,
+			season_number = excluded.season_number,
+			episode_number = excluded.episode_number,
+			episode_number_end = excluded.episode_number_end,
+			absolute_number = excluded.absolute_number,
+			extra_type = excluded.extra_type,
+			title = CASE WHEN items.match_state = 'unmatched' THEN excluded.title ELSE items.title END,
+			sort_title = CASE WHEN items.match_state = 'unmatched' THEN excluded.sort_title ELSE items.sort_title END,
+			year = CASE WHEN items.match_state = 'unmatched' THEN excluded.year ELSE items.year END,
+			air_date = CASE WHEN items.match_state = 'unmatched' THEN excluded.air_date ELSE items.air_date END,
+			updated_at = excluded.updated_at
+		RETURNING id`,
+		libraryID, nullID(it.ParentID), key, string(it.Kind), it.Title, it.SortTitle, it.Year,
+		nullInt(it.SeasonNumber), nullInt(it.EpisodeNumber), nullInt(it.EpisodeNumberEnd), nullInt(it.AbsoluteNumber),
+		it.AirDate, it.ExtraType, now, now).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("upsert item %s: %w", key, err)
+	}
+	return id, nil
+}
+
+// SetExternalIDs stores ids on an item. With overwrite false, existing values
+// win (the scanner uses this so filename hints never replace matched IDs).
+func (s *Store) SetExternalIDs(ctx context.Context, itemID int64, ids map[string]string, overwrite bool) error {
+	q := `INSERT INTO item_external_ids(item_id, provider, value) VALUES(?, ?, ?) ON CONFLICT(item_id, provider) DO NOTHING`
+	if overwrite {
+		q = `INSERT INTO item_external_ids(item_id, provider, value) VALUES(?, ?, ?)
+			ON CONFLICT(item_id, provider) DO UPDATE SET value = excluded.value`
+	}
+	for k, v := range ids {
+		if _, err := s.db.ExecContext(ctx, q, itemID, k, v); err != nil {
+			return fmt.Errorf("set external id %s on item %d: %w", k, itemID, err)
+		}
+	}
+	return nil
+}
+
+// FileIndex returns every stored file of a library keyed by path.
+func (s *Store) FileIndex(ctx context.Context, libraryID int64) (map[string]FileStat, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id, item_id, path, size, mtime_ns, probe_error FROM files WHERE library_id = ?`, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("file index %d: %w", libraryID, err)
+	}
+	defer rows.Close()
+	out := map[string]FileStat{}
+	for rows.Next() {
+		var st FileStat
+		var p string
+		var mtime int64
+		if err := rows.Scan(&st.ID, &st.ItemID, &p, &st.Size, &mtime, &st.ProbeError); err != nil {
+			return nil, err
+		}
+		st.ModTime = time.Unix(0, mtime)
+		out[p] = st
+	}
+	return out, rows.Err()
+}
+
+// PutFile inserts or updates the file with f.Path and returns its ID.
+func (s *Store) PutFile(ctx context.Context, libraryID int64, f File) (int64, error) {
+	pj, err := json.Marshal(f.Probe)
+	if err != nil {
+		return 0, err
+	}
+	now := s.stamp()
+	var id int64
+	err = s.db.QueryRowContext(ctx, `INSERT INTO files(item_id, library_id, path, size, mtime_ns, version, probe, probe_error, added_at, updated_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(path) DO UPDATE SET item_id = excluded.item_id, library_id = excluded.library_id,
+			size = excluded.size, mtime_ns = excluded.mtime_ns, version = excluded.version,
+			probe = excluded.probe, probe_error = excluded.probe_error, updated_at = excluded.updated_at
+		RETURNING id`,
+		f.ItemID, libraryID, f.Path, f.Size, f.ModTime.UnixNano(), f.Version, string(pj), f.ProbeError, now, now).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("put file %s: %w", f.Path, err)
+	}
+	return id, nil
+}
+
+// DeleteFiles removes file rows (never files on disk).
+func (s *Store) DeleteFiles(ctx context.Context, ids []int64) error {
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		q := `DELETE FROM files WHERE id IN (` + placeholders(len(chunk)) + `)`
+		if _, err := s.db.ExecContext(ctx, q, int64Args(chunk)...); err != nil {
+			return fmt.Errorf("delete files: %w", err)
+		}
+	}
+	return nil
+}
+
+// CountFiles counts stored files of a library at or below dir.
+func (s *Store) CountFiles(ctx context.Context, libraryID int64, dir string) (int, error) {
+	dir = strings.TrimRight(dir, "/")
+	var n int
+	// '0' sorts right after '/', so [dir+"/", dir+"0") is exactly "everything under dir/".
+	err := s.db.QueryRowContext(ctx, `SELECT count(*) FROM files WHERE library_id = ? AND path >= ? AND path < ?`,
+		libraryID, dir+"/", dir+"0").Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count files under %s: %w", dir, err)
+	}
+	return n, nil
+}
+
+// PruneEmpty deletes items left without files: episodes and videos with no
+// file, movies with no file and no children, then empty seasons, then empty
+// shows. It returns how many items were removed.
+func (s *Store) PruneEmpty(ctx context.Context, libraryID int64) (int64, error) {
+	stmts := []string{
+		`DELETE FROM items WHERE library_id = ? AND kind IN ('episode', 'video')
+			AND NOT EXISTS (SELECT 1 FROM files f WHERE f.item_id = items.id)`,
+		`DELETE FROM items WHERE library_id = ? AND kind = 'movie'
+			AND NOT EXISTS (SELECT 1 FROM files f WHERE f.item_id = items.id)
+			AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)`,
+		`DELETE FROM items WHERE library_id = ? AND kind = 'season'
+			AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)`,
+		`DELETE FROM items WHERE library_id = ? AND kind = 'show'
+			AND NOT EXISTS (SELECT 1 FROM items c WHERE c.parent_id = items.id)`,
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	var total int64
+	for _, q := range stmts {
+		res, err := tx.ExecContext(ctx, q, libraryID)
+		if err != nil {
+			return 0, fmt.Errorf("prune library %d: %w", libraryID, err)
+		}
+		n, _ := res.RowsAffected()
+		total += n
+	}
+	return total, tx.Commit()
+}
+
+// --- helpers ---
+
+func (s *Store) queryItems(ctx context.Context, where string, args ...any) ([]Item, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+itemCols+` FROM items WHERE `+where, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query items: %w", err)
+	}
+	items := []Item{}
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		items = append(items, it)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, s.attachIDs(ctx, items)
+}
+
+func (s *Store) attachIDs(ctx context.Context, items []Item) error {
+	idx := make(map[int64]int, len(items))
+	ids := make([]int64, len(items))
+	for i := range items {
+		items[i].ExternalIDs = map[string]string{}
+		idx[items[i].ID] = i
+		ids[i] = items[i].ID
+	}
+	for start := 0; start < len(ids); start += 500 {
+		chunk := ids[start:min(start+500, len(ids))]
+		rows, err := s.db.QueryContext(ctx, `SELECT item_id, provider, value FROM item_external_ids
+			WHERE item_id IN (`+placeholders(len(chunk))+`)`, int64Args(chunk)...)
+		if err != nil {
+			return fmt.Errorf("external ids: %w", err)
+		}
+		for rows.Next() {
+			var id int64
+			var k, v string
+			if err := rows.Scan(&id, &k, &v); err != nil {
+				rows.Close()
+				return err
+			}
+			items[idx[id]].ExternalIDs[k] = v
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func scanItem(sc interface{ Scan(...any) error }) (Item, error) {
+	var it Item
+	var kind, locked, added, updated string
+	var season, ep, epEnd, abs sql.NullInt64
+	err := sc.Scan(&it.ID, &it.LibraryID, &it.ParentID, &kind, &it.Title, &it.OriginalTitle, &it.SortTitle, &it.Year,
+		&season, &ep, &epEnd, &abs, &it.AirDate, &it.ExtraType, &it.MatchState, &locked, &added, &updated)
+	if err != nil {
+		return Item{}, err
+	}
+	it.Kind = Kind(kind)
+	it.SeasonNumber, it.EpisodeNumber, it.EpisodeNumberEnd, it.AbsoluteNumber = intPtr(season), intPtr(ep), intPtr(epEnd), intPtr(abs)
+	if err := json.Unmarshal([]byte(locked), &it.LockedFields); err != nil {
+		return Item{}, fmt.Errorf("item %d locked_fields: %w", it.ID, err)
+	}
+	it.AddedAt, _ = time.Parse(time.RFC3339Nano, added)
+	it.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	return it, nil
+}
+
+func intPtr(n sql.NullInt64) *int {
+	if !n.Valid {
+		return nil
+	}
+	v := int(n.Int64)
+	return &v
+}
+
+func nullInt(p *int) any {
+	if p == nil {
+		return nil
+	}
+	return int64(*p)
+}
+
+func nullID(id int64) any {
+	if id == 0 {
+		return nil
+	}
+	return id
+}
+
+func nonNil(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
+}
+
+func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?,", n), ",") }
+
+func int64Args(ids []int64) []any {
+	out := make([]any, len(ids))
+	for i, id := range ids {
+		out[i] = id
+	}
+	return out
+}
+```
+
+- [ ] **Step 6: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/media`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add server/internal/db/migrations/20261025110100_media_items.sql server/internal/media
+git commit -m "feat(media): items, files and external IDs tables with Store"
+```
+
+---
+
+### Task 7: Read-only item endpoints
+
+**Files:**
+- Create: `server/internal/media/api.go`
+- Test: `server/internal/media/api_test.go`
+
+**Interfaces:**
+- Consumes: `media.Store`, `library.Visibility`, `library.CanSee`, `httpx`, `authctx`
+- Produces: `media.NewModule(store *Store, vis library.Visibility) *Module` (name `"media"`). Routes (all `RequireUser`, 404 when the library is not visible):
+  `GET /api/v1/libraries/{id}/items` → `{"items":[item...]}` (top level, sorted by sort title);
+  `GET /api/v1/items/{id}` → item plus `"files":[{"id","path" (admins only),"size","version","probe_error","probe":{...}}]`;
+  `GET /api/v1/items/{id}/children` → `{"items":[...]}`. Item JSON keys: `id, library_id, parent_id, kind, title, original_title, sort_title, year, season_number, episode_number, episode_number_end, absolute_number, air_date, extra_type, external_ids, match_state, added_at, updated_at`.
+
+- [ ] **Step 1: Write the failing test**
+
+`server/internal/media/api_test.go`:
+```go
+package media
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/app"
+	"github.com/Lisimflix/lisimflix/server/internal/authctx"
+	"github.com/Lisimflix/lisimflix/server/internal/config"
+	"github.com/Lisimflix/lisimflix/server/internal/db/dbtest"
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+)
+
+type onlyLibs []int64
+
+func (o onlyLibs) VisibleLibraryIDs(context.Context, authctx.Principal) ([]int64, error) {
+	return o, nil
+}
+
+func TestMediaAPI(t *testing.T) {
+	ctx := context.Background()
+	d := dbtest.Open(t)
+	libs := library.NewStore(d)
+	tv, _ := libs.Create(ctx, library.Library{Name: "TV", Type: library.TypeTV, Paths: []string{"/media/tv"}})
+	hidden, _ := libs.Create(ctx, library.Library{Name: "Hidden", Type: library.TypeMovies, Paths: []string{"/media/h"}})
+	s := NewStore(d)
+	show, _ := s.UpsertItem(ctx, tv.ID, "show:a", Item{Kind: KindShow, Title: "Show", SortTitle: "Show"})
+	season, _ := s.UpsertItem(ctx, tv.ID, "season:a|1", Item{Kind: KindSeason, ParentID: show, Title: "Season 1", SeasonNumber: ip(1)})
+	ep, _ := s.UpsertItem(ctx, tv.ID, "episode:a|s1|e1", Item{Kind: KindEpisode, ParentID: season, SeasonNumber: ip(1), EpisodeNumber: ip(1)})
+	s.PutFile(ctx, tv.ID, File{ItemID: ep, Path: "/media/tv/a/S01E01.mkv", Size: 5, ModTime: time.Unix(1, 0)})
+	secret, _ := s.UpsertItem(ctx, hidden.ID, "movie:h", Item{Kind: KindMovie, Title: "Secret"})
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := func(admin bool) http.Handler {
+		g := authctx.StaticGuard{P: authctx.Principal{UserID: 2, IsAdmin: admin}}
+		return app.New(config.Config{}, d, log, g, NewModule(s, onlyLibs{tv.ID})).Handler()
+	}
+	get := func(h http.Handler, path string) (int, string) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		return rec.Code, rec.Body.String()
+	}
+	user, admin := h(false), h(true)
+
+	code, body := get(user, "/api/v1/libraries/1/items")
+	var list struct{ Items []itemJSON }
+	json.Unmarshal([]byte(body), &list)
+	if code != 200 || len(list.Items) != 1 || list.Items[0].Kind != KindShow {
+		t.Fatalf("top level: %d %s", code, body)
+	}
+	if code, body = get(user, "/api/v1/items/"+itoa(show)+"/children"); code != 200 || !strings.Contains(body, `"season_number":1`) {
+		t.Fatalf("children: %d %s", code, body)
+	}
+	code, body = get(user, "/api/v1/items/"+itoa(ep))
+	if code != 200 || !strings.Contains(body, `"files":[{`) || strings.Contains(body, "/media/tv") {
+		t.Fatalf("episode for user must include files but no paths: %d %s", code, body)
+	}
+	if _, body = get(admin, "/api/v1/items/"+itoa(ep)); !strings.Contains(body, `"path":"/media/tv/a/S01E01.mkv"`) {
+		t.Fatalf("admin sees paths: %s", body)
+	}
+	for _, p := range []string{"/api/v1/items/" + itoa(secret), "/api/v1/libraries/" + itoa(hidden.ID) + "/items", "/api/v1/items/999", "/api/v1/items/x"} {
+		if code, _ := get(user, p); code != 404 {
+			t.Fatalf("%s: %d, want 404", p, code)
+		}
+	}
+}
+
+func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: NewModule`
+
+- [ ] **Step 3: Implement**
+
+`server/internal/media/api.go`:
+```go
+package media
+
+import (
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"github.com/go-chi/chi/v5"
+
+	"github.com/Lisimflix/lisimflix/server/internal/authctx"
+	"github.com/Lisimflix/lisimflix/server/internal/httpx"
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/probe"
+)
+
+// Module serves read-only item endpoints. Phase 3 adds paging, filters and
+// artwork; these exist so scans can be verified through the API.
+type Module struct {
+	store *Store
+	vis   library.Visibility
+}
+
+// NewModule returns the media API module.
+func NewModule(store *Store, vis library.Visibility) *Module { return &Module{store: store, vis: vis} }
+
+// Name implements app.Module.
+func (m *Module) Name() string { return "media" }
+
+// Mount implements app.Module.
+func (m *Module) Mount(r chi.Router, g authctx.Guard) {
+	r.With(g.RequireUser).Get("/libraries/{id}/items", m.listTop)
+	r.With(g.RequireUser).Get("/items/{id}", m.get)
+	r.With(g.RequireUser).Get("/items/{id}/children", m.children)
+}
+
+type itemJSON struct {
+	ID               int64             `json:"id"`
+	LibraryID        int64             `json:"library_id"`
+	ParentID         int64             `json:"parent_id,omitempty"`
+	Kind             Kind              `json:"kind"`
+	Title            string            `json:"title"`
+	OriginalTitle    string            `json:"original_title,omitempty"`
+	SortTitle        string            `json:"sort_title"`
+	Year             int               `json:"year,omitempty"`
+	SeasonNumber     *int              `json:"season_number,omitempty"`
+	EpisodeNumber    *int              `json:"episode_number,omitempty"`
+	EpisodeNumberEnd *int              `json:"episode_number_end,omitempty"`
+	AbsoluteNumber   *int              `json:"absolute_number,omitempty"`
+	AirDate          string            `json:"air_date,omitempty"`
+	ExtraType        string            `json:"extra_type,omitempty"`
+	ExternalIDs      map[string]string `json:"external_ids"`
+	MatchState       string            `json:"match_state"`
+	AddedAt          time.Time         `json:"added_at"`
+	UpdatedAt        time.Time         `json:"updated_at"`
+	Files            []fileJSON        `json:"files,omitempty"`
+}
+
+type fileJSON struct {
+	ID         int64        `json:"id"`
+	Path       string       `json:"path,omitempty"` // admins only
+	Size       int64        `json:"size"`
+	Version    string       `json:"version,omitempty"`
+	ProbeError string       `json:"probe_error,omitempty"`
+	Probe      probe.Result `json:"probe"`
+}
+
+func toItemJSON(it Item) itemJSON {
+	return itemJSON{
+		ID: it.ID, LibraryID: it.LibraryID, ParentID: it.ParentID, Kind: it.Kind, Title: it.Title,
+		OriginalTitle: it.OriginalTitle, SortTitle: it.SortTitle, Year: it.Year,
+		SeasonNumber: it.SeasonNumber, EpisodeNumber: it.EpisodeNumber, EpisodeNumberEnd: it.EpisodeNumberEnd,
+		AbsoluteNumber: it.AbsoluteNumber, AirDate: it.AirDate, ExtraType: it.ExtraType,
+		ExternalIDs: it.ExternalIDs, MatchState: it.MatchState, AddedAt: it.AddedAt, UpdatedAt: it.UpdatedAt,
+	}
+}
+
+func toList(items []Item) map[string][]itemJSON {
+	out := make([]itemJSON, len(items))
+	for i, it := range items {
+		out[i] = toItemJSON(it)
+	}
+	return map[string][]itemJSON{"items": out}
+}
+
+func (m *Module) listTop(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok || !m.visible(w, r, id) {
+		return
+	}
+	items, err := m.store.ListTopLevel(r.Context(), id)
+	if err != nil {
+		internal(w)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toList(items))
+}
+
+func (m *Module) get(w http.ResponseWriter, r *http.Request) {
+	it, ok := m.loadItem(w, r)
+	if !ok {
+		return
+	}
+	files, err := m.store.Files(r.Context(), it.ID)
+	if err != nil {
+		internal(w)
+		return
+	}
+	p, _ := authctx.FromContext(r.Context())
+	out := toItemJSON(it)
+	for _, f := range files {
+		fj := fileJSON{ID: f.ID, Size: f.Size, Version: f.Version, ProbeError: f.ProbeError, Probe: f.Probe}
+		if p.IsAdmin {
+			fj.Path = f.Path
+		}
+		out.Files = append(out.Files, fj)
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+func (m *Module) children(w http.ResponseWriter, r *http.Request) {
+	it, ok := m.loadItem(w, r)
+	if !ok {
+		return
+	}
+	items, err := m.store.Children(r.Context(), it.ID)
+	if err != nil {
+		internal(w)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, toList(items))
+}
+
+// loadItem fetches the {id} item and checks the caller may see its library.
+func (m *Module) loadItem(w http.ResponseWriter, r *http.Request) (Item, bool) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return Item{}, false
+	}
+	it, err := m.store.GetItem(r.Context(), id)
+	if errors.Is(err, ErrNotFound) {
+		notFound(w)
+		return Item{}, false
+	}
+	if err != nil {
+		internal(w)
+		return Item{}, false
+	}
+	if !m.visible(w, r, it.LibraryID) {
+		return Item{}, false
+	}
+	return it, true
+}
+
+// visible writes 404 (not 403, so hidden libraries do not leak) when the
+// caller may not see libraryID.
+func (m *Module) visible(w http.ResponseWriter, r *http.Request, libraryID int64) bool {
+	p, _ := authctx.FromContext(r.Context())
+	ok, err := library.CanSee(r.Context(), m.vis, p, libraryID)
+	if err != nil {
+		internal(w)
+		return false
+	}
+	if !ok {
+		notFound(w)
+	}
+	return ok
+}
+
+func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		notFound(w)
+		return 0, false
+	}
+	return id, true
+}
+
+func notFound(w http.ResponseWriter) {
+	httpx.WriteError(w, http.StatusNotFound, "not_found", "no such item")
+}
+
+func internal(w http.ResponseWriter) {
+	httpx.WriteError(w, http.StatusInternalServerError, "internal", "internal error")
+}
+```
+
+- [ ] **Step 4: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/media`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/internal/media
+git commit -m "feat(media): read-only item, children and library items endpoints"
+```
+
+---
+
+### Task 8: Name helpers: skip rules, title/year/ID hints, version labels
+
+**Files:**
+- Create: `server/internal/scanner/names.go`
+- Test: `server/internal/scanner/names_test.go`
+
+**Interfaces:**
+- Consumes: nothing
+- Produces (package-internal unless capitalised): `IsVideo(name) bool`; `isTempName(name) bool` (hidden, `.partial`, `.!qB`, `.part`, `.tmp`, `.crdownload`, `.download`, `.filepart`); `skipFile(name string, size int64) bool` (also non-video extensions and "sample" files under 300 MiB); `skipDir(name) bool` (`.x`, `@eaDir`, `#recycle`, `$RECYCLE.BIN`, `lost+found`, `System Volume Information`, `Sample(s)`); `extraFolders` map; `extraFromSuffix(stem) (typ, title string, ok bool)`; `nameInfo{Title, Year, IDs, Edition}`; `parseName(name) nameInfo`; `idHints(name) map[string]string`; `normalizeID(provider, value) (key, value string, ok bool)`; `dotsToSpaces`, `cleanTitle`; `versionLabel(stem) string`; regexps `idHintRe`, `editionRe`, `parenYearRe`, `bracketRe`, `qualityRe`, `resRe`, `spacesRe`, `imdbRe`, `releaseGroupRe` (reused by Task 9).
+
+- [ ] **Step 1: Write the failing tests**
+
+`server/internal/scanner/names_test.go`:
+```go
+package scanner
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestParseName(t *testing.T) {
+	cases := []struct {
+		in    string
+		title string
+		year  int
+		ids   map[string]string
+	}{
+		{"Movie Title (2024)", "Movie Title", 2024, map[string]string{}},
+		{"The Matrix (1999) {imdb-tt0133093}", "The Matrix", 1999, map[string]string{"imdb": "tt0133093"}},
+		{"Heat (1995) {tmdb-949}", "Heat", 1995, map[string]string{"tmdb": "949"}},
+		{"Heat (1995) [tmdbid-949]", "Heat", 1995, map[string]string{"tmdb": "949"}},
+		{"Heat (1995) [imdbid-tt0113277] {tmdb-949}", "Heat", 1995, map[string]string{"tmdb": "949", "imdb": "tt0113277"}},
+		{"Show (2019) {tvdb-123}", "Show", 2019, map[string]string{"tvdb": "123"}},
+		{"Frieren (2023) [anidb-17617]", "Frieren", 2023, map[string]string{"anidb": "17617"}},
+		{"1917 (2019)", "1917", 2019, map[string]string{}},
+		{"2012 (2009)", "2012", 2009, map[string]string{}},
+		{"1917", "1917", 0, map[string]string{}},
+		{"Blade.Runner.2049.2017.1080p.BluRay.x264-GRP", "Blade Runner 2049", 2017, map[string]string{}},
+		{"Movie.Title.2010.2160p.UHD.BluRay.x265-GRP", "Movie Title", 2010, map[string]string{}},
+		{"Some_Movie_1984_DVDRip", "Some Movie", 1984, map[string]string{}},
+		{"Mr. Robot", "Mr. Robot", 0, map[string]string{}},
+		{"Amélie (2001)", "Amélie", 2001, map[string]string{}},
+		{"Movie (2010) {edition-Director's Cut}", "Movie", 2010, map[string]string{}},
+		{"[Group] Show Name", "Show Name", 0, map[string]string{}},
+		{"Bad ID {imdb-123}", "Bad ID", 0, map[string]string{}},
+	}
+	for _, c := range cases {
+		t.Run(c.in, func(t *testing.T) {
+			got := parseName(c.in)
+			if got.Title != c.title || got.Year != c.year || !reflect.DeepEqual(got.IDs, c.ids) {
+				t.Fatalf("parseName(%q) = %+v, want %q %d %v", c.in, got, c.title, c.year, c.ids)
+			}
+		})
+	}
+}
+
+func TestVersionLabel(t *testing.T) {
+	cases := map[string]string{
+		"Movie (2010)":                                              "",
+		"Movie (2010) - 2160p":                                      "2160p",
+		"Movie (2010) - 1080p":                                      "1080p",
+		"Movie (2010) - Director's Cut":                             "Director's Cut",
+		"Movie (2010) - Director's Cut [1080p]":                     "Director's Cut",
+		"Movie (2010) {edition-Extended Edition}":                   "Extended Edition",
+		"Movie (2010) {tmdb-1} - [Bluray-1080p][DTS 5.1][x264]-GRP": "1080p",
+		"Movie.Title.2010.1080p.BluRay.x264-GRP":                    "1080p",
+		"Movie (2010) 4K":                                           "2160p",
+	}
+	for in, want := range cases {
+		if got := versionLabel(in); got != want {
+			t.Errorf("versionLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestSkipRules(t *testing.T) {
+	const big = 2 << 30
+	cases := []struct {
+		name string
+		size int64
+		skip bool
+	}{
+		{"Movie (2010).mkv", big, false},
+		{"Movie (2010).MP4", big, false},
+		{"Show - S01E01.ts", big, false},
+		{"Movie (2010).mkv.partial", big, true},
+		{"Movie (2010).mkv.!qB", big, true},
+		{"Movie (2010).mkv.part", big, true},
+		{".Movie (2010).mkv", big, true},
+		{"Movie (2010).nfo", 1000, true},
+		{"Movie (2010).srt", 1000, true},
+		{"Movie (2010).jpg", 1000, true},
+		{"movie-sample.mkv", 50 << 20, true},
+		{"sample.mkv", 50 << 20, true},
+		{"Movie.2010.1080p.SAMPLE.mkv", 50 << 20, true},
+		{"The Sample (2020).mkv", big, false},
+	}
+	for _, c := range cases {
+		if got := skipFile(c.name, c.size); got != c.skip {
+			t.Errorf("skipFile(%q) = %v, want %v", c.name, got, c.skip)
+		}
+	}
+	for name, want := range map[string]bool{"@eaDir": true, ".grab": true, "Sample": true, "#recycle": true, "Season 01": false, "Featurettes": false} {
+		if got := skipDir(name); got != want {
+			t.Errorf("skipDir(%q) = %v", name, got)
+		}
+	}
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: parseName` / `undefined: versionLabel` / `undefined: skipFile`
+
+- [ ] **Step 3: Implement**
+
+`server/internal/scanner/names.go`:
+```go
+// Package scanner walks library folders, turns file names into items, probes
+// new or changed files with ffprobe, watches folders for changes, and tells
+// listeners (metadata matching, plan 1D) which items changed.
+package scanner
+
+import (
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+// videoExts are the file extensions the scanner indexes (lower case).
+var videoExts = map[string]bool{
+	".mkv": true, ".mp4": true, ".m4v": true, ".avi": true, ".mov": true, ".wmv": true,
+	".ts": true, ".m2ts": true, ".mts": true, ".webm": true, ".mpg": true, ".mpeg": true,
+	".flv": true, ".ogv": true, ".3gp": true, ".divx": true, ".asf": true, ".rmvb": true,
+	".f4v": true, ".vob": true,
+}
+
+// tempSuffixes mark files that are still being downloaded or copied.
+var tempSuffixes = []string{".partial", ".!qb", ".part", ".tmp", ".crdownload", ".download", ".filepart"}
+
+// sampleMaxBytes: a file whose name says "sample" is skipped only below this size,
+// so a real movie called "The Sample" still gets indexed.
+const sampleMaxBytes = 300 << 20
+
+var sampleRe = regexp.MustCompile(`(?i)(?:^|[-._ \[(])sample(?:$|[-._ \])])`)
+
+// IsVideo reports whether name has a recognised video extension.
+func IsVideo(name string) bool { return videoExts[strings.ToLower(filepath.Ext(name))] }
+
+// isTempName reports hidden files and in-progress downloads.
+func isTempName(name string) bool {
+	if strings.HasPrefix(name, ".") {
+		return true
+	}
+	lower := strings.ToLower(name)
+	for _, s := range tempSuffixes {
+		if strings.HasSuffix(lower, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// skipFile reports whether a file must not be indexed: hidden, partial
+// download, not a video, or a small "sample" file.
+func skipFile(name string, size int64) bool {
+	if isTempName(name) || !IsVideo(name) {
+		return true
+	}
+	stem := strings.TrimSuffix(name, filepath.Ext(name))
+	return size < sampleMaxBytes && sampleRe.MatchString(stem)
+}
+
+// skipDir reports folders the walker never enters.
+func skipDir(name string) bool {
+	if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "@") {
+		return true // .grab, .deletedByTMM, @eaDir (Synology) ...
+	}
+	switch strings.ToLower(name) {
+	case "#recycle", "$recycle.bin", "lost+found", "system volume information", "sample", "samples":
+		return true
+	}
+	return false
+}
+
+// extraFolders maps Plex/Jellyfin extras folder names to media.Extra* types.
+var extraFolders = map[string]string{
+	"behind the scenes": "behindthescenes",
+	"deleted scenes":    "deleted",
+	"featurettes":       "featurette",
+	"interviews":        "interview",
+	"scenes":            "scene",
+	"shorts":            "short",
+	"trailers":          "trailer",
+	"extras":            "other",
+	"other":             "other",
+	"others":            "other",
+}
+
+// extraSuffixes are Plex-style file-name suffixes for extras next to the movie.
+var extraSuffixes = []struct{ suffix, typ string }{
+	{"-behindthescenes", "behindthescenes"},
+	{"-deleted", "deleted"},
+	{"-featurette", "featurette"},
+	{"-interview", "interview"},
+	{"-scene", "scene"},
+	{"-short", "short"},
+	{"-trailer", "trailer"},
+	{"-other", "other"},
+}
+
+// extraFromSuffix returns the extra type and cleaned title for "Name-trailer"
+// or a bare "trailer".
+func extraFromSuffix(stem string) (typ, title string, ok bool) {
+	lower := strings.ToLower(stem)
+	if lower == "trailer" {
+		return "trailer", "Trailer", true
+	}
+	for _, s := range extraSuffixes {
+		if strings.HasSuffix(lower, s.suffix) && len(stem) > len(s.suffix) {
+			return s.typ, cleanTitle(dotsToSpaces(stem[:len(stem)-len(s.suffix)])), true
+		}
+	}
+	return "", "", false
+}
+
+var (
+	idHintRe    = regexp.MustCompile(`(?i)[\[{]\s*(tmdb|tvdb|imdb|anidb|anilist|mal)(?:id)?\s*[-=:]\s*([a-z0-9]+)\s*[\]}]`)
+	editionRe   = regexp.MustCompile(`(?i)\{edition-([^}]+)\}`)
+	parenYearRe = regexp.MustCompile(`\((\d{4})\)`)
+	bracketRe   = regexp.MustCompile(`\[[^\]]*\]|\{[^}]*\}`)
+	qualityRe   = regexp.MustCompile(`(?i)(?:^|[\s(\[_-])(2160p|1080p|1080i|720p|576p|480p|4k|uhd|bluray|blu-ray|bdrip|brrip|bdremux|web-?dl|webrip|hdtv|dvdrip|remux|hdr10|x264|x265|h\.?264|h\.?265|hevc|10bit|8bit)(?:$|[\s)\]_-])`)
+	resRe       = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(2160p|1080p|1080i|720p|576p|480p|4k|uhd)(?:$|[^a-z0-9])`)
+	spacesRe    = regexp.MustCompile(`\s+`)
+	imdbRe      = regexp.MustCompile(`^tt\d+$`)
+)
+
+// nameInfo is what a folder or file name says about a movie or show.
+type nameInfo struct {
+	Title   string
+	Year    int
+	IDs     map[string]string
+	Edition string
+}
+
+// parseName reads "Title (Year) {tmdb-1}", Radarr/Sonarr names and scene
+// names like "Title.Year.1080p.BluRay.x264-GRP".
+func parseName(name string) nameInfo {
+	ni := nameInfo{IDs: idHints(name)}
+	if m := editionRe.FindStringSubmatch(name); m != nil {
+		ni.Edition = strings.TrimSpace(m[1])
+	}
+	s := bracketRe.ReplaceAllString(name, " ")
+	if ms := parenYearRe.FindAllStringSubmatchIndex(s, -1); len(ms) > 0 {
+		m := ms[len(ms)-1]
+		if y, _ := strconv.Atoi(s[m[2]:m[3]]); validYear(y) && strings.TrimSpace(s[:m[0]]) != "" {
+			ni.Year = y
+			ni.Title = cleanTitle(s[:m[0]])
+			return ni
+		}
+	}
+	s = dotsToSpaces(s)
+	if loc := qualityRe.FindStringSubmatchIndex(s); loc != nil && strings.TrimSpace(s[:loc[2]]) != "" {
+		s = s[:loc[2]]
+	}
+	// The last year-like word that is not the first word is the year:
+	// "Blade Runner 2049 2017" -> 2017, but "1917" alone stays a title.
+	words := strings.Fields(s)
+	for i := len(words) - 1; i > 0; i-- {
+		w := strings.Trim(words[i], "()")
+		if y, err := strconv.Atoi(w); err == nil && len(w) == 4 && validYear(y) {
+			ni.Year = y
+			s = strings.Join(words[:i], " ")
+			break
+		}
+	}
+	ni.Title = cleanTitle(s)
+	return ni
+}
+
+// idHints extracts {tmdb-123}, [tmdbid-123], {imdb-tt123}, [anidb-123] ... hints.
+func idHints(name string) map[string]string {
+	ids := map[string]string{}
+	for _, m := range idHintRe.FindAllStringSubmatch(name, -1) {
+		if k, v, ok := normalizeID(m[1], m[2]); ok {
+			ids[k] = v
+		}
+	}
+	return ids
+}
+
+// normalizeID maps provider names to item_external_ids keys and checks values.
+func normalizeID(provider, value string) (string, string, bool) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch strings.ToLower(strings.TrimSpace(provider)) {
+	case "tmdb", "themoviedb":
+		provider = "tmdb"
+	case "tvdb", "thetvdb":
+		provider = "tvdb"
+	case "imdb":
+		if !imdbRe.MatchString(value) {
+			return "", "", false
+		}
+		return "imdb", value, true
+	case "anidb":
+		provider = "anidb"
+	case "anilist":
+		provider = "anilist"
+	case "mal", "myanimelist":
+		provider = "mal"
+	default:
+		return "", "", false
+	}
+	if _, err := strconv.ParseInt(value, 10, 64); err != nil || value == "0" {
+		return "", "", false
+	}
+	return provider, value, true
+}
+
+func validYear(y int) bool { return y >= 1880 && y <= 2100 }
+
+// dotsToSpaces turns scene-style "The.Movie_Name" into "The Movie Name" when
+// the name has no real spaces.
+func dotsToSpaces(s string) string {
+	if strings.Count(s, " ") >= strings.Count(s, ".")+strings.Count(s, "_") {
+		return s
+	}
+	return strings.NewReplacer(".", " ", "_", " ").Replace(s)
+}
+
+func cleanTitle(s string) string {
+	s = spacesRe.ReplaceAllString(s, " ")
+	s = strings.Trim(s, " -_.([")
+	return strings.TrimSpace(s)
+}
+
+// versionLabel derives a File.Version for a movie file: an {edition-...} tag,
+// else the text after " - " following the year ("Director's Cut", "1080p"),
+// else the resolution found anywhere in the name, else "".
+func versionLabel(stem string) string {
+	if m := editionRe.FindStringSubmatch(stem); m != nil {
+		return strings.TrimSpace(m[1])
+	}
+	rest := ""
+	if ms := parenYearRe.FindAllStringIndex(stem, -1); len(ms) > 0 {
+		rest = stem[ms[len(ms)-1][1]:]
+	} else if i := strings.Index(stem, " - "); i >= 0 {
+		rest = stem[i:]
+	}
+	rest = idHintRe.ReplaceAllString(rest, "")
+	rest = strings.TrimSpace(rest)
+	if strings.HasPrefix(rest, "- ") || rest == "-" {
+		rest = strings.TrimSpace(rest[1:])
+		label := strings.TrimSpace(bracketRe.ReplaceAllString(rest, " "))
+		label = cleanTitle(releaseGroupRe.ReplaceAllString(label, ""))
+		if label != "" {
+			return label
+		}
+	}
+	if m := resRe.FindStringSubmatch(stem); m != nil {
+		r := strings.ToLower(m[1])
+		if r == "4k" || r == "uhd" {
+			return "2160p"
+		}
+		return r
+	}
+	return ""
+}
+
+// releaseGroupRe matches a trailing "-GROUP" left over after brackets are removed.
+var releaseGroupRe = regexp.MustCompile(`(?:^|\s)-[^\s-][^\s]*$`)
+```
+
+- [ ] **Step 4: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/scanner`
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/internal/scanner
+git commit -m "feat(scanner): skip rules, title/year/ID-hint parsing and version labels"
+```
+
+---
+
+### Task 9: Classify files into movies, episodes, extras and home videos
+
+**Files:**
+- Create: `server/internal/scanner/classify.go`
+- Test: `server/internal/scanner/classify_test.go`
+
+**Interfaces:**
+- Consumes: Task 8 helpers, `library.Library/Type/Options`, `media.Kind*`
+- Produces: `scanner.ErrUnrecognised`; `scanner.Entry{Path, Kind, GroupKind, GroupKey, GroupDir, Title, Year, IDs, Version, ExtraType, ItemTitle, SortTitle, Season, Episode, EpisodeEnd, Absolute *int, AirDate}`; `scanner.Classify(lib library.Library, root, path string) (Entry, error)`. Entry shapes:
+  movie file `Kind=movie, GroupKind=movie`; episode `Kind=episode, GroupKind=show` (Season always set; Episode or AirDate set);
+  extra `Kind=video, GroupKind=movie|show, ExtraType` set; home video `Kind=video, GroupKind=""`.
+  `GroupKey` is the movie/show folder (absolute path), or `root|lower(title)|year` for loose movies and `root|lower(show)` for loose episodes.
+
+This is the heart of the plan: the table below is the specification of supported naming. Add a row for any real-world name that misparses before fixing it.
+
+- [ ] **Step 1: Write the failing table-driven tests**
+
+`server/internal/scanner/classify_test.go`:
+```go
+package scanner
+
+import (
+	"errors"
+	"fmt"
+	"reflect"
+	"testing"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/media"
+)
+
+func n(v int) *int { return &v }
+
+// want lists the Entry fields a case checks; Path is filled in by the test.
+type want struct {
+	Kind       media.Kind
+	GroupKind  media.Kind
+	GroupKey   string
+	Title      string
+	Year       int
+	IDs        map[string]string
+	Version    string
+	ExtraType  string
+	ItemTitle  string
+	Season     *int
+	Episode    *int
+	EpisodeEnd *int
+	Absolute   *int
+	AirDate    string
+}
+
+func check(t *testing.T, lib library.Library, root, rel string, w want) {
+	t.Helper()
+	e, err := Classify(lib, root, root+"/"+rel)
+	if err != nil {
+		t.Fatalf("Classify(%q): %v", rel, err)
+	}
+	if w.IDs == nil {
+		w.IDs = map[string]string{}
+	}
+	if e.IDs == nil {
+		e.IDs = map[string]string{}
+	}
+	got := want{e.Kind, e.GroupKind, e.GroupKey, e.Title, e.Year, e.IDs, e.Version, e.ExtraType, e.ItemTitle,
+		e.Season, e.Episode, e.EpisodeEnd, e.Absolute, e.AirDate}
+	if !reflect.DeepEqual(got, w) {
+		t.Fatalf("Classify(%q)\n got %s\nwant %s", rel, show(got), show(w))
+	}
+}
+
+func show(w want) string {
+	p := func(x *int) any {
+		if x == nil {
+			return nil
+		}
+		return *x
+	}
+	return fmt.Sprint(map[string]any{"kind": w.Kind, "group": w.GroupKind, "key": w.GroupKey, "title": w.Title,
+		"year": w.Year, "ids": w.IDs, "version": w.Version, "extra": w.ExtraType, "item": w.ItemTitle,
+		"s": p(w.Season), "e": p(w.Episode), "eEnd": p(w.EpisodeEnd), "abs": p(w.Absolute), "air": w.AirDate})
+}
+
+var (
+	movies = library.Library{ID: 1, Type: library.TypeMovies}
+	tv     = library.Library{ID: 2, Type: library.TypeTV}
+	anime  = library.Library{ID: 3, Type: library.TypeAnime, Options: library.Options{AnimeNumbering: "season"}}
+	animeA = library.Library{ID: 4, Type: library.TypeAnime, Options: library.Options{AnimeNumbering: "absolute"}}
+	home   = library.Library{ID: 5, Type: library.TypeHomeVideos}
+)
+
+func TestClassifyMovies(t *testing.T) {
+	const r = "/media/movies"
+	cases := []struct {
+		rel string
+		w   want
+	}{
+		{"Movie Title (2024)/Movie Title (2024) - 2160p.mkv", want{Kind: "movie", GroupKind: "movie",
+			GroupKey: r + "/Movie Title (2024)", Title: "Movie Title", Year: 2024, Version: "2160p"}},
+		{"Movie Title (2024)/Movie Title (2024).mkv", want{Kind: "movie", GroupKind: "movie",
+			GroupKey: r + "/Movie Title (2024)", Title: "Movie Title", Year: 2024}},
+		{"Movie (2010)/Movie (2010) - Director's Cut.mkv", want{Kind: "movie", GroupKind: "movie",
+			GroupKey: r + "/Movie (2010)", Title: "Movie", Year: 2010, Version: "Director's Cut"}},
+		{"The Matrix (1999) {tmdb-603}/The Matrix (1999) {imdb-tt0133093} - [Bluray-1080p][DTS 5.1][x264]-GRP.mkv",
+			want{Kind: "movie", GroupKind: "movie", GroupKey: r + "/The Matrix (1999) {tmdb-603}", Title: "The Matrix",
+				Year: 1999, IDs: map[string]string{"tmdb": "603", "imdb": "tt0133093"}, Version: "1080p"}},
+		{"Heat (1995) [tmdbid-949]/Heat.1995.2160p.UHD.BluRay.x265-GRP.mkv", want{Kind: "movie", GroupKind: "movie",
+			GroupKey: r + "/Heat (1995) [tmdbid-949]", Title: "Heat", Year: 1995, IDs: map[string]string{"tmdb": "949"}, Version: "2160p"}},
+		{"Movies A-Z/Alien (1979)/Alien.mkv", want{Kind: "movie", GroupKind: "movie",
+			GroupKey: r + "/Movies A-Z/Alien (1979)", Title: "Alien", Year: 1979}},
+		{"Random Folder/Arrival.2016.1080p.WEB-DL.mkv", want{Kind: "movie", GroupKind: "movie",
+			GroupKey: r + "/Random Folder", Title: "Arrival", Year: 2016, Version: "1080p"}},
+		{"Loose Movie (2001) - 720p.mkv", want{Kind: "movie", GroupKind: "movie",
+			GroupKey: r + "|loose movie|2001", Title: "Loose Movie", Year: 2001, Version: "720p"}},
+		// Extras: Plex folders and suffixes.
+		{"Movie (2010)/Featurettes/Making Of.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "featurette", ItemTitle: "Making Of"}},
+		{"Movie (2010)/Behind The Scenes/On Set.mp4", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "behindthescenes", ItemTitle: "On Set"}},
+		{"Movie (2010)/Deleted Scenes/Alt Ending.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "deleted", ItemTitle: "Alt Ending"}},
+		{"Movie (2010)/Trailers/Teaser.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "trailer", ItemTitle: "Teaser"}},
+		{"Movie (2010)/Extras/Gag Reel.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "other", ItemTitle: "Gag Reel"}},
+		{"Movie (2010)/Interviews/Director.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "interview", ItemTitle: "Director"}},
+		{"Movie (2010)/Scenes/Opening.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "scene", ItemTitle: "Opening"}},
+		{"Movie (2010)/Shorts/Short Film.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "short", ItemTitle: "Short Film"}},
+		{"Movie (2010)/Other/Promo.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "other", ItemTitle: "Promo"}},
+		{"Movie (2010)/Movie (2010)-trailer.mkv", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "trailer", ItemTitle: "Movie (2010)"}},
+		{"Movie (2010)/trailer.mp4", want{Kind: "video", GroupKind: "movie", GroupKey: r + "/Movie (2010)",
+			Title: "Movie", Year: 2010, ExtraType: "trailer", ItemTitle: "Trailer"}},
+	}
+	for _, c := range cases {
+		t.Run(c.rel, func(t *testing.T) { check(t, movies, r, c.rel, c.w) })
+	}
+}
+
+func TestClassifyTV(t *testing.T) {
+	const r = "/media/tv"
+	show := r + "/Show (2019) {tvdb-123}"
+	ids := map[string]string{"tvdb": "123"}
+	cases := []struct {
+		rel string
+		w   want
+	}{
+		{"Show (2019) {tvdb-123}/Season 01/Show - S01E02 - Title.mkv", want{Kind: "episode", GroupKind: "show", GroupKey: show,
+			Title: "Show", Year: 2019, IDs: ids, ItemTitle: "Title", Season: n(1), Episode: n(2)}},
+		{"Show (2019) {tvdb-123}/Season 01/Show (2019) - S01E02E03 - Two Parter [WEBDL-1080p][EAC3 5.1][h264]-GRP.mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: show, Title: "Show", Year: 2019, IDs: ids,
+				ItemTitle: "Two Parter", Version: "1080p", Season: n(1), Episode: n(2), EpisodeEnd: n(3)}},
+		{"Show (2019) {tvdb-123}/Season 01/Show - S01E04-E05.mkv", want{Kind: "episode", GroupKind: "show", GroupKey: show,
+			Title: "Show", Year: 2019, IDs: ids, Season: n(1), Episode: n(4), EpisodeEnd: n(5)}},
+		{"Show (2019) {tvdb-123}/Season 01/Show - S01E06-07.mkv", want{Kind: "episode", GroupKind: "show", GroupKey: show,
+			Title: "Show", Year: 2019, IDs: ids, Season: n(1), Episode: n(6), EpisodeEnd: n(7)}},
+		{"Show (2019) {tvdb-123}/Specials/Show - S00E01 - Christmas Special.mkv", want{Kind: "episode", GroupKind: "show",
+			GroupKey: show, Title: "Show", Year: 2019, IDs: ids, ItemTitle: "Christmas Special", Season: n(0), Episode: n(1)}},
+		{"Show (2019) {tvdb-123}/Season 00/Show - S00E02.mkv", want{Kind: "episode", GroupKind: "show", GroupKey: show,
+			Title: "Show", Year: 2019, IDs: ids, Season: n(0), Episode: n(2)}},
+		{"Show (2019) {tvdb-123}/Season 2/Show.S02E10.1080p.WEB.h264-GRP.mkv", want{Kind: "episode", GroupKind: "show",
+			GroupKey: show, Title: "Show", Year: 2019, IDs: ids, Version: "1080p", Season: n(2), Episode: n(10)}},
+		{"Show (2019) {tvdb-123}/Season 3/3x07 - Old Style.avi", want{Kind: "episode", GroupKind: "show", GroupKey: show,
+			Title: "Show", Year: 2019, IDs: ids, ItemTitle: "Old Style", Season: n(3), Episode: n(7)}},
+		{"The Daily Show/Season 2024/The Daily Show - 2024-03-01 - Guest Name.mkv", want{Kind: "episode", GroupKind: "show",
+			GroupKey: r + "/The Daily Show", Title: "The Daily Show", ItemTitle: "Guest Name", Season: n(2024), AirDate: "2024-03-01"}},
+		{"Late Show/Late.Show.2024.03.04.720p.WEB.mkv", want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Late Show",
+			Title: "Late Show", Version: "720p", Season: n(2024), AirDate: "2024-03-04"}},
+		{"Loose.Show.S01E01.720p.mkv", want{Kind: "episode", GroupKind: "show", GroupKey: r + "|loose show",
+			Title: "Loose Show", Version: "720p", Season: n(1), Episode: n(1)}},
+		{"Show (2019) {tvdb-123}/Featurettes/Cast Interview.mkv", want{Kind: "video", GroupKind: "show", GroupKey: show,
+			Title: "Show", Year: 2019, IDs: ids, ExtraType: "featurette", ItemTitle: "Cast Interview"}},
+		{"Show (2019) {tvdb-123}/Season 01/Extras/Blooper.mkv", want{Kind: "video", GroupKind: "show", GroupKey: show,
+			Title: "Show", Year: 2019, IDs: ids, ExtraType: "other", ItemTitle: "Blooper"}},
+	}
+	for _, c := range cases {
+		t.Run(c.rel, func(t *testing.T) { check(t, tv, r, c.rel, c.w) })
+	}
+}
+
+func TestClassifyTVUnrecognised(t *testing.T) {
+	for _, rel := range []string{"Show/Season 01/Behind the Story.mkv", "Show/Random.mkv"} {
+		if _, err := Classify(tv, "/media/tv", "/media/tv/"+rel); !errors.Is(err, ErrUnrecognised) {
+			t.Fatalf("%s: want ErrUnrecognised, got %v", rel, err)
+		}
+	}
+}
+
+func TestClassifyAnime(t *testing.T) {
+	const r = "/media/anime"
+	op := r + "/One Piece (1999) [anidb-69]"
+	opIDs := map[string]string{"anidb": "69"}
+	cases := []struct {
+		lib library.Library
+		rel string
+		w   want
+	}{
+		{anime, "Frieren (2023)/Season 01/Frieren - S01E05 - 005 - Phantoms of the Dead [Bluray-1080p][10bit][x265][FLAC 2.0][JA]-Group.mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Frieren (2023)", Title: "Frieren", Year: 2023,
+				ItemTitle: "Phantoms of the Dead", Version: "1080p", Season: n(1), Episode: n(5), Absolute: n(5)}},
+		{anime, "Show (2020)/Season 02/Show - S02E01 - 013 - Next Arc [HDTV-720p].mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Show (2020)", Title: "Show", Year: 2020,
+				ItemTitle: "Next Arc", Version: "720p", Season: n(2), Episode: n(1), Absolute: n(13)}},
+		{animeA, "Show (2020)/Season 02/Show - S02E01 - 013 - Next Arc [HDTV-720p].mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Show (2020)", Title: "Show", Year: 2020,
+				ItemTitle: "Next Arc", Version: "720p", Season: n(1), Episode: n(13), Absolute: n(13)}},
+		{anime, "One Piece (1999) [anidb-69]/[SubsPlease] One Piece - 1094 [1080p].mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: op, Title: "One Piece", Year: 1999, IDs: opIDs,
+				Version: "1080p", Season: n(1), Episode: n(1094), Absolute: n(1094)}},
+		{animeA, "One Piece (1999) [anidb-69]/One Piece - 1094.mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: op, Title: "One Piece", Year: 1999, IDs: opIDs,
+				Season: n(1), Episode: n(1094), Absolute: n(1094)}},
+		{anime, "One Piece (1999) [anidb-69]/Season 21/One Piece - 1094v2 - The Title.mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: op, Title: "One Piece", Year: 1999, IDs: opIDs,
+				ItemTitle: "The Title", Season: n(21), Episode: n(1094), Absolute: n(1094)}},
+		{anime, "Re Zero (2016)/Re Zero - Starting Life in Another World - 05.mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Re Zero (2016)", Title: "Re Zero", Year: 2016,
+				Season: n(1), Episode: n(5), Absolute: n(5)}},
+		{anime, "Show (2020)/Specials/Show - S00E01 - OVA Title.mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Show (2020)", Title: "Show", Year: 2020,
+				ItemTitle: "OVA Title", Season: n(0), Episode: n(1)}},
+		{anime, "Show (2020)/Specials/[Grp] Show - 02 [720p].mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Show (2020)", Title: "Show", Year: 2020,
+				Version: "720p", Season: n(0), Episode: n(2)}},
+		{animeA, "Show (2020)/[Grp] Show - OVA 2 [720p].mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Show (2020)", Title: "Show", Year: 2020,
+				Version: "720p", Season: n(0), Episode: n(2)}},
+		{anime, "Show (2020)/Show Ep 07.mkv",
+			want{Kind: "episode", GroupKind: "show", GroupKey: r + "/Show (2020)", Title: "Show", Year: 2020,
+				Season: n(1), Episode: n(7), Absolute: n(7)}},
+		{anime, "Your Name (2016)/Your Name (2016) - 1080p.mkv",
+			want{Kind: "movie", GroupKind: "movie", GroupKey: r + "/Your Name (2016)", Title: "Your Name", Year: 2016, Version: "1080p"}},
+		{anime, "Akira (1988) [anidb-28]/Akira.mkv",
+			want{Kind: "movie", GroupKind: "movie", GroupKey: r + "/Akira (1988) [anidb-28]", Title: "Akira", Year: 1988,
+				IDs: map[string]string{"anidb": "28"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.rel, func(t *testing.T) { check(t, c.lib, r, c.rel, c.w) })
+	}
+}
+
+func TestClassifyAnimeInSeasonFolderNeedsNumber(t *testing.T) {
+	if _, err := Classify(anime, "/a", "/a/Show/Season 01/Behind the Story.mkv"); !errors.Is(err, ErrUnrecognised) {
+		t.Fatalf("want ErrUnrecognised, got %v", err)
+	}
+}
+
+func TestClassifyHomeVideos(t *testing.T) {
+	e, err := Classify(home, "/media/home", "/media/home/2019/Birthday/Cake Time.MP4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Kind != media.KindVideo || e.GroupKind != "" || e.ItemTitle != "Cake Time" || e.SortTitle != "2019/birthday/cake time" {
+		t.Fatalf("%+v", e)
+	}
+	// Extras folders mean nothing in home videos.
+	e, _ = Classify(home, "/media/home", "/media/home/Trip/Trailers/Clip.mkv")
+	if e.ExtraType != "" || e.Kind != media.KindVideo {
+		t.Fatalf("%+v", e)
+	}
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: Classify` / `undefined: ErrUnrecognised`
+
+- [ ] **Step 3: Implement**
+
+`server/internal/scanner/classify.go`:
+```go
+package scanner
+
+import (
+	"errors"
+	"fmt"
+	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/media"
+)
+
+// ErrUnrecognised is wrapped by Classify when a file name cannot be placed.
+var ErrUnrecognised = errors.New("unrecognised file name")
+
+// Entry is where one video file belongs in its library.
+//
+//   - Movie file:     Kind=movie,   GroupKind=movie; the file attaches to the movie item.
+//   - Episode file:   Kind=episode, GroupKind=show;  show > season > episode items.
+//   - Extra:          Kind=video,   GroupKind=movie|show, ExtraType set; child of the group.
+//   - Home video:     Kind=video,   GroupKind="";    top-level item per file.
+type Entry struct {
+	Path      string
+	Kind      media.Kind
+	GroupKind media.Kind
+	GroupKey  string            // identity of the movie/show: its folder, or root|title|year for loose movies
+	GroupDir  string            // folder holding movie.nfo / tvshow.nfo; "" for loose files
+	Title     string            // movie or show title
+	Year      int               // movie or show year
+	IDs       map[string]string // movie/show ID hints from folder and file names
+	Version   string            // movie or episode file version label
+
+	ExtraType string // extras only
+	ItemTitle string // episode title, extra title or home video title
+	SortTitle string // home videos: relative path, so folders sort together
+
+	Season     *int
+	Episode    *int
+	EpisodeEnd *int
+	Absolute   *int
+	AirDate    string
+}
+
+// Classify maps path (a video file under root) to an Entry for lib.
+func Classify(lib library.Library, root, path string) (Entry, error) {
+	rel, err := filepath.Rel(root, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return Entry{}, fmt.Errorf("%w: %s is not under %s", ErrUnrecognised, path, root)
+	}
+	parts := strings.Split(filepath.ToSlash(rel), "/")
+	dirs, file := parts[:len(parts)-1], parts[len(parts)-1]
+	stem := strings.TrimSuffix(file, filepath.Ext(file))
+
+	if lib.Type == library.TypeHomeVideos {
+		return Entry{Path: path, Kind: media.KindVideo, ItemTitle: stem,
+			SortTitle: strings.ToLower(filepath.ToSlash(strings.TrimSuffix(rel, filepath.Ext(rel))))}, nil
+	}
+	isShow := lib.Type == library.TypeTV || lib.Type == library.TypeAnime
+
+	// Extras in a Plex-style folder below the movie/show folder.
+	for i := 1; i < len(dirs); i++ {
+		typ, ok := extraFolders[strings.ToLower(dirs[i])]
+		if !ok {
+			continue
+		}
+		groupDirs := dirs[:i]
+		if isShow {
+			groupDirs = dirs[:1]
+		}
+		return extraEntry(path, root, groupDirs, typ, cleanTitle(dotsToSpaces(stem)), isShow), nil
+	}
+	// Extras named with a suffix next to the movie, or anywhere in a show folder.
+	if typ, title, ok := extraFromSuffix(stem); ok && len(dirs) > 0 {
+		groupDirs := dirs
+		if isShow {
+			groupDirs = dirs[:1]
+		}
+		return extraEntry(path, root, groupDirs, typ, title, isShow), nil
+	}
+
+	if isShow {
+		e, err := classifyEpisode(lib, root, path, dirs, stem)
+		if err == nil || lib.Type == library.TypeTV {
+			return e, err
+		}
+		// Anime libraries also hold movies: a file outside season folders
+		// with no episode number is treated as a movie.
+		if hasSeasonDir(dirs) {
+			return Entry{}, err
+		}
+	}
+	return classifyMovie(root, path, dirs, stem), nil
+}
+
+func extraEntry(path, root string, groupDirs []string, typ, title string, isShow bool) Entry {
+	groupDir := filepath.Join(append([]string{root}, groupDirs...)...)
+	ni := parseName(groupDirs[len(groupDirs)-1])
+	kind := media.KindMovie
+	if isShow {
+		kind = media.KindShow
+	}
+	if title == "" {
+		title = strings.ToUpper(typ[:1]) + typ[1:]
+	}
+	return Entry{Path: path, Kind: media.KindVideo, GroupKind: kind, GroupKey: groupDir, GroupDir: groupDir,
+		Title: ni.Title, Year: ni.Year, IDs: ni.IDs, ExtraType: typ, ItemTitle: title}
+}
+
+func classifyMovie(root, path string, dirs []string, stem string) Entry {
+	file := parseName(stem)
+	e := Entry{Path: path, Kind: media.KindMovie, GroupKind: media.KindMovie, Version: versionLabel(stem)}
+	if len(dirs) == 0 {
+		// Loose file in the library root: group versions by title and year.
+		e.Title, e.Year, e.IDs = file.Title, file.Year, file.IDs
+		e.GroupKey = fmt.Sprintf("%s|%s|%d", root, strings.ToLower(file.Title), file.Year)
+		return e
+	}
+	e.GroupDir = filepath.Join(append([]string{root}, dirs...)...)
+	e.GroupKey = e.GroupDir
+	folder := parseName(dirs[len(dirs)-1])
+	e.Title, e.Year = folder.Title, folder.Year
+	if folder.Year == 0 && file.Year != 0 {
+		e.Title, e.Year = file.Title, file.Year
+	}
+	e.IDs = folder.IDs
+	for k, v := range file.IDs {
+		if _, ok := e.IDs[k]; !ok {
+			e.IDs[k] = v
+		}
+	}
+	return e
+}
+
+var (
+	seasonDirRe = regexp.MustCompile(`(?i)^(?:season|series|staffel|saison|s)[\s._-]*(\d{1,4})$`)
+	specialsRe  = regexp.MustCompile(`(?i)^specials?$`)
+	sxeRe       = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])s(\d{1,4})[\s._-]?e(\d{1,4})`)
+	moreEpRe    = regexp.MustCompile(`(?i)^(?:-?e|-)(\d{1,4})(?:[^0-9]|$)`)
+	nxnRe       = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(\d{1,2})x(\d{2,3})(?:[^0-9]|$)`)
+	dateRe      = regexp.MustCompile(`(?:^|[^0-9])((?:19|20)\d{2})[-. ](\d{2})[-. ](\d{2})(?:[^0-9]|$)`)
+	absAfterRe  = regexp.MustCompile(`^\s*-\s*(\d{1,4})(?:v\d+)?(?:\s|$)`)
+	absOnlyRe   = regexp.MustCompile(`(?i)^(.*?)\s+-\s+(?:(?:e|ep|episode)\s?)?(\d{1,4})(?:v\d+)?(?:\s+-\s+(.*))?$`)
+	epWordRe    = regexp.MustCompile(`(?i)^(.*?)\s+(?:e|ep|episode)\s?(\d{1,4})(?:v\d+)?(?:\s+-\s+(.*))?$`)
+	specialRe   = regexp.MustCompile(`(?i)^(.*?)\s+(?:-\s+)?(?:ova|oad|sp|special)\s?-?\s?(\d{1,3})(?:v\d+)?(?:\s+-\s+(.*))?$`)
+)
+
+func seasonFromDir(name string) (int, bool) {
+	if specialsRe.MatchString(name) {
+		return 0, true
+	}
+	if m := seasonDirRe.FindStringSubmatch(name); m != nil {
+		n, _ := strconv.Atoi(m[1])
+		return n, true
+	}
+	return 0, false
+}
+
+func hasSeasonDir(dirs []string) bool {
+	for _, d := range dirs {
+		if _, ok := seasonFromDir(d); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func ptr(n int) *int { return &n }
+
+// classifyEpisode handles TV and anime names:
+//
+//	Show (2019) {tvdb-123}/Season 01/Show - S01E02 - Title.mkv   (also S01E02E03, 1x02)
+//	Show/Show - 2024-03-01 - Title.mkv                            (daily; season = year)
+//	Anime/Show - S01E05 - 005 - Title [Bluray-1080p][10bit]-Grp.mkv
+//	Anime/[Group] Show - 1094 [1080p].mkv, Show - 1094, Show - OVA 2
+func classifyEpisode(lib library.Library, root, path string, dirs []string, stem string) (Entry, error) {
+	anime := lib.Type == library.TypeAnime
+	e := Entry{Path: path, Kind: media.KindEpisode, GroupKind: media.KindShow, Version: episodeVersion(stem)}
+
+	var folderSeason *int
+	for _, d := range dirs[min(1, len(dirs)):] {
+		if n, ok := seasonFromDir(d); ok {
+			folderSeason = ptr(n)
+		}
+	}
+
+	ids := idHints(stem)
+	s := dotsToSpaces(bracketRe.ReplaceAllString(stem, " "))
+	s = parenYearRe.ReplaceAllString(s, " ")
+	s = spacesRe.ReplaceAllString(s, " ")
+	showPart, rest := "", ""
+
+	if m := sxeRe.FindStringSubmatchIndex(s); m != nil {
+		season, _ := strconv.Atoi(s[m[2]:m[3]])
+		ep, _ := strconv.Atoi(s[m[4]:m[5]])
+		e.Season, e.Episode = ptr(season), ptr(ep)
+		showPart, rest = s[:m[0]], s[m[1]:]
+		for {
+			mm := moreEpRe.FindStringSubmatchIndex(rest)
+			if mm == nil {
+				break
+			}
+			n, _ := strconv.Atoi(rest[mm[2]:mm[3]])
+			if n > ep {
+				e.EpisodeEnd = ptr(n)
+			}
+			rest = rest[mm[3]:]
+		}
+		if anime {
+			if mm := absAfterRe.FindStringSubmatchIndex(rest); mm != nil {
+				n, _ := strconv.Atoi(rest[mm[2]:mm[3]])
+				e.Absolute = ptr(n)
+				rest = rest[mm[3]:]
+			}
+		}
+	} else if m := nxnRe.FindStringSubmatchIndex(s); m != nil {
+		season, _ := strconv.Atoi(s[m[2]:m[3]])
+		ep, _ := strconv.Atoi(s[m[4]:m[5]])
+		e.Season, e.Episode = ptr(season), ptr(ep)
+		showPart, rest = s[:m[2]], s[m[5]:]
+	} else if m := dateRe.FindStringSubmatchIndex(s); m != nil {
+		e.AirDate = s[m[2]:m[3]] + "-" + s[m[4]:m[5]] + "-" + s[m[6]:m[7]]
+		year, _ := strconv.Atoi(s[m[2]:m[3]])
+		e.Season = ptr(year)
+		showPart, rest = s[:m[2]], s[m[7]:]
+	} else if m := specialRe.FindStringSubmatch(strings.TrimSpace(s)); anime && m != nil {
+		n, _ := strconv.Atoi(m[2])
+		e.Season, e.Episode = ptr(0), ptr(n)
+		showPart, rest = m[1], m[3]
+	} else if m := absOnlyRe.FindStringSubmatch(strings.TrimSpace(s)); anime && m != nil {
+		n, _ := strconv.Atoi(m[2])
+		e.Absolute = ptr(n)
+		showPart, rest = m[1], m[3]
+	} else if m := epWordRe.FindStringSubmatch(strings.TrimSpace(s)); anime && m != nil {
+		n, _ := strconv.Atoi(m[2])
+		e.Absolute = ptr(n)
+		showPart, rest = m[1], m[3]
+	} else {
+		return Entry{}, fmt.Errorf("%w: no season/episode number in %q", ErrUnrecognised, filepath.Base(path))
+	}
+
+	if e.Season == nil {
+		e.Season = folderSeason
+	}
+	if anime {
+		applyAnimeNumbering(&e, lib.Options.AnimeNumbering, folderSeason)
+	}
+	if e.Season == nil || (e.Episode == nil && e.AirDate == "") {
+		return Entry{}, fmt.Errorf("%w: no season for %q", ErrUnrecognised, filepath.Base(path))
+	}
+	e.ItemTitle = episodeTitle(rest)
+
+	if len(dirs) > 0 {
+		e.GroupDir = filepath.Join(root, dirs[0])
+		e.GroupKey = e.GroupDir
+		ni := parseName(dirs[0])
+		e.Title, e.Year, e.IDs = ni.Title, ni.Year, ni.IDs
+	} else {
+		ni := parseName(showPart)
+		e.Title, e.Year = ni.Title, ni.Year
+		e.IDs = map[string]string{}
+		e.GroupKey = fmt.Sprintf("%s|%s", root, strings.ToLower(e.Title))
+	}
+	for k, v := range ids {
+		if _, ok := e.IDs[k]; !ok {
+			e.IDs[k] = v
+		}
+	}
+	if e.Title == "" {
+		return Entry{}, fmt.Errorf("%w: no show name for %q", ErrUnrecognised, filepath.Base(path))
+	}
+	return e, nil
+}
+
+// applyAnimeNumbering decides season/episode for anime files.
+//
+//	"season" (default): keep SxxEyy; absolute-only files go to the folder's
+//	season (or 1) with episode = absolute, for plan 1E to remap.
+//	"absolute": every non-special episode is season 1, episode = absolute
+//	number when one is known.
+func applyAnimeNumbering(e *Entry, mode string, folderSeason *int) {
+	special := (e.Season != nil && *e.Season == 0) || (folderSeason != nil && *folderSeason == 0)
+	if special {
+		e.Season = ptr(0)
+		if e.Episode == nil && e.Absolute != nil {
+			e.Episode, e.Absolute = e.Absolute, nil
+		}
+		return
+	}
+	if mode == "absolute" && e.Absolute != nil {
+		e.Season, e.Episode, e.EpisodeEnd = ptr(1), ptr(*e.Absolute), nil
+		return
+	}
+	if e.Episode == nil && e.Absolute != nil {
+		if e.Season == nil {
+			e.Season = ptr(1)
+		}
+		e.Episode = ptr(*e.Absolute)
+	}
+}
+
+var episodeJunkRe = regexp.MustCompile(`(?i)\s+-?(?:proper|repack)\b.*$`)
+
+// episodeTitle extracts "Title" from " - Title -GROUP" (brackets already removed).
+func episodeTitle(rest string) string {
+	t := strings.TrimSpace(rest)
+	t = strings.TrimLeft(t, "-. ")
+	if loc := qualityRe.FindStringSubmatchIndex(" " + t); loc != nil {
+		t = t[:max(0, loc[2]-1)]
+	}
+	t = strings.TrimSpace(t)
+	t = strings.TrimSpace(releaseGroupRe.ReplaceAllString(t, ""))
+	t = episodeJunkRe.ReplaceAllString(t, "")
+	return cleanTitle(t)
+}
+
+// episodeVersion labels duplicate files of one episode by resolution.
+func episodeVersion(stem string) string {
+	if m := resRe.FindStringSubmatch(stem); m != nil {
+		r := strings.ToLower(m[1])
+		if r == "4k" || r == "uhd" {
+			return "2160p"
+		}
+		return r
+	}
+	return ""
+}
+```
+
+- [ ] **Step 4: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/scanner` (about 70 subtests)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add server/internal/scanner
+git commit -m "feat(scanner): classify movie, TV, anime and home video files incl. extras and versions"
+```
+
+---
+
+### Task 10: NFO ID reading
+
+**Files:**
+- Create: `server/internal/scanner/nfo.go`
+- Create: `server/internal/scanner/testdata/nfo/movie.nfo`, `tvshow.nfo`, `episode.nfo`, `url-only.nfo`, `broken.nfo`
+- Test: `server/internal/scanner/nfo_test.go`
+
+**Interfaces:**
+- Consumes: `normalizeID` (Task 8)
+- Produces: `scanner.ReadNFOIDs(path string) (map[string]string, error)`: top-level `<uniqueid type>`, `<tmdbid>`, `<imdbid>`/`<imdb_id>`, `<tvdbid>`, `<anidbid>`, IMDb `<id>`, and provider URLs; first value wins; missing file → empty map, nil; malformed XML → what was read. Full NFO metadata is plan 1D.
+
+- [ ] **Step 1: Add the NFO fixtures**
+
+`server/internal/scanner/testdata/nfo/movie.nfo`:
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<movie>
+    <title>The Matrix</title>
+    <year>1999</year>
+    <actor>
+        <name>Keanu Reeves</name>
+        <tmdbid>6384</tmdbid>
+    </actor>
+    <uniqueid type="imdb" default="true">tt0133093</uniqueid>
+    <uniqueid type="tmdb">603</uniqueid>
+</movie>
+```
+
+`server/internal/scanner/testdata/nfo/tvshow.nfo`:
+```xml
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<tvshow>
+    <title>Frieren</title>
+    <tvdbid>424536</tvdbid>
+    <uniqueid type="tvdb" default="true">424536</uniqueid>
+    <uniqueid type="anidb">17617</uniqueid>
+    <episodeguide>{"tvdb": "424536"}</episodeguide>
+</tvshow>
+```
+
+`server/internal/scanner/testdata/nfo/episode.nfo`:
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<episodedetails>
+    <title>Pilot</title>
+    <season>1</season>
+    <episode>1</episode>
+    <uniqueid type="tvdb" default="true">7121401</uniqueid>
+    <uniqueid type="imdb">tt9999999</uniqueid>
+</episodedetails>
+```
+
+`server/internal/scanner/testdata/nfo/url-only.nfo`:
+```xml
+https://www.imdb.com/title/tt0113277/
+```
+
+`server/internal/scanner/testdata/nfo/broken.nfo`:
+```xml
+<movie><imdbid>tt0110912</imdbid><title>Pulp & Fiction</title><uniqueid type="tmdb">680
+```
+
+- [ ] **Step 2: Write the failing test**
+
+`server/internal/scanner/nfo_test.go`:
+```go
+package scanner
+
+import (
+	"path/filepath"
+	"reflect"
+	"testing"
+)
+
+func TestReadNFOIDs(t *testing.T) {
+	cases := map[string]map[string]string{
+		// The actor's <tmdbid> must not replace the movie's own tmdb uniqueid.
+		"movie.nfo":    {"imdb": "tt0133093", "tmdb": "603"},
+		"tvshow.nfo":   {"tvdb": "424536", "anidb": "17617"},
+		"episode.nfo":  {"tvdb": "7121401", "imdb": "tt9999999"},
+		"url-only.nfo": {"imdb": "tt0113277"},
+		"broken.nfo":   {"imdb": "tt0110912"},
+		"missing.nfo":  {},
+	}
+	for name, want := range cases {
+		got, err := ReadNFOIDs(filepath.Join("testdata", "nfo", name))
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: got %v want %v", name, got, want)
+		}
+	}
+}
+```
+
+- [ ] **Step 3: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: ReadNFOIDs`
+
+- [ ] **Step 4: Implement**
+
+`server/internal/scanner/nfo.go`:
+```go
+package scanner
+
+import (
+	"bytes"
+	"encoding/xml"
+	"errors"
+	"io"
+	"io/fs"
+	"os"
+	"regexp"
+	"strings"
+)
+
+var nfoURLRes = []struct {
+	provider string
+	re       *regexp.Regexp
+}{
+	{"imdb", regexp.MustCompile(`imdb\.com/title/(tt\d+)`)},
+	{"tmdb", regexp.MustCompile(`themoviedb\.org/(?:movie|tv)/(\d+)`)},
+	{"tvdb", regexp.MustCompile(`thetvdb\.com/\?tab=series&id=(\d+)`)},
+	{"anidb", regexp.MustCompile(`anidb\.net/(?:anime/|a)(\d+)`)},
+}
+
+// ReadNFOIDs returns the external IDs in a Kodi-style .nfo file (movie.nfo,
+// tvshow.nfo, <episode>.nfo): <uniqueid type="...">, <tmdbid>, <imdbid>,
+// <tvdbid>, <anidbid>, an IMDb-style <id>, or bare provider URLs. Only IDs are
+// read here; full NFO metadata belongs to plan 1D. A missing file returns an
+// empty map and no error. Malformed XML returns whatever was read before the error.
+func ReadNFOIDs(path string) (map[string]string, error) {
+	ids := map[string]string{}
+	f, err := os.Open(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return ids, nil
+	}
+	if err != nil {
+		return ids, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, 1<<20))
+	if err != nil {
+		return ids, err
+	}
+
+	dec := xml.NewDecoder(bytes.NewReader(data))
+	dec.Strict = false
+	dec.CharsetReader = func(_ string, r io.Reader) (io.Reader, error) { return r, nil }
+	depth := 0 // only direct children of <movie>/<tvshow>/<episodedetails> count, not <actor><tmdbid>
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break // io.EOF or malformed XML: keep what we have
+		}
+		if _, ok := tok.(xml.EndElement); ok {
+			depth--
+			continue
+		}
+		se, ok := tok.(xml.StartElement)
+		if !ok {
+			continue
+		}
+		if depth != 1 {
+			depth++
+			continue
+		}
+		name := strings.ToLower(se.Name.Local)
+		var provider string
+		switch name {
+		case "uniqueid":
+			for _, a := range se.Attr {
+				if strings.EqualFold(a.Name.Local, "type") {
+					provider = a.Value
+				}
+			}
+		case "tmdbid":
+			provider = "tmdb"
+		case "imdbid", "imdb_id":
+			provider = "imdb"
+		case "tvdbid":
+			provider = "tvdb"
+		case "anidbid":
+			provider = "anidb"
+		case "id":
+			provider = "imdb" // Kodi movie.nfo <id> is the IMDb ID; normalizeID rejects anything else
+		default:
+			depth++
+			continue
+		}
+		var text string // DecodeElement consumes the end tag, so depth stays 1
+		if err := dec.DecodeElement(&text, &se); err != nil {
+			break
+		}
+		if k, v, ok := normalizeID(provider, text); ok {
+			if _, exists := ids[k]; !exists {
+				ids[k] = v
+			}
+		}
+	}
+	for _, u := range nfoURLRes {
+		if m := u.re.FindSubmatch(data); m != nil {
+			if _, exists := ids[u.provider]; !exists {
+				ids[u.provider] = strings.ToLower(string(m[1]))
+			}
+		}
+	}
+	return ids, nil
+}
+```
+
+- [ ] **Step 5: Run tests, expect PASS**
+
+Run: `make test`
+Expected: `ok  .../internal/scanner`
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add server/internal/scanner
+git commit -m "feat(scanner): read external IDs from movie, show and episode NFO files"
+```
+
+---
+
+### Task 11: Scan engine, file watcher and run loop
+
+**Files:**
+- Create: `server/internal/scanner/scanner.go`, `scan.go`, `run.go`, `watch.go`
+- Test: `server/internal/scanner/scan_test.go`, `server/internal/scanner/run_test.go`
+- Modify: `server/go.mod`, `server/go.sum` (adds `github.com/fsnotify/fsnotify v1.9.0`)
+
+**Interfaces:**
+- Consumes: `library.Store` (`Get`, `List`), `library.ScanStatus/ScanError/ErrScanRunning`, `media.Store` scanner methods (Task 6), `probe.Run/Result`, `Classify`, `ReadNFOIDs`, `skipFile`, `skipDir`, `isTempName`
+- Produces:
+  - `scanner.Prober` interface `Probe(ctx, path) (probe.Result, error)`; `scanner.FFprobe{Path}` (real one).
+  - `scanner.ScanListener` interface `ItemsChanged(ctx, libraryID int64, itemIDs []int64)` (contract); called after every `BatchSize` stored files and at the end, with the sorted IDs of items created or updated (movie/show/season/episode/extra/video).
+  - `scanner.Options{Concurrency (2), FullScanEvery (6h; <0 off), Debounce (10s), SettleWindow (2m), SettleDelay (5s), BatchSize (25), MaxErrors (200)}`.
+  - `scanner.New(libs *library.Store, items *media.Store, p Prober, log *slog.Logger, opt Options) *Scanner`; `(*Scanner) AddListener(l ScanListener)` (contract); `ScanLibrary(ctx, id) error` (blocking full scan); `Run(ctx) error` (watchers + initial scan + periodic scans + debounced rescans; returns after ctx is cancelled and scans stop); `Trigger(ctx, id) error`, `Status(id) library.ScanStatus`, `Reload(ctx) error` (so `*Scanner` satisfies `library.ScanController`).
+- Behaviour: missing/unmounted root → scan `failed`, nothing deleted; unchanged path+size+mtime → not re-probed (unless its last probe failed); probing bounded by `Concurrency`, results written by one goroutine; files modified within `SettleWindow` must keep size+mtime for `SettleDelay` or are left for a debounced retry; vanished files' rows deleted, empty items pruned; broken files stored with `probe_error` and listed in status.
+
+- [ ] **Step 1: Add the fsnotify dependency**
+
+```bash
+docker run --rm -v "$PWD/server":/src -w /src -v lisimflix-gomod:/go/pkg/mod golang:1.27-trixie \
+  go get github.com/fsnotify/fsnotify@v1.9.0
+```
+
+- [ ] **Step 2: Write the failing engine tests** (fake prober, fake trees in `t.TempDir()`)
+
+`server/internal/scanner/scan_test.go`:
+```go
+package scanner
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/db/dbtest"
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/media"
+	"github.com/Lisimflix/lisimflix/server/internal/probe"
+)
+
+// fakeProber returns a one-stream result, fails for paths containing
+// "broken", and records calls and peak concurrency.
+type fakeProber struct {
+	mu       sync.Mutex
+	calls    map[string]int
+	inFlight atomic.Int32
+	peak     atomic.Int32
+	delay    time.Duration
+	gate     chan struct{} // if set, every Probe waits for a receive
+}
+
+func (f *fakeProber) Probe(ctx context.Context, path string) (probe.Result, error) {
+	n := f.inFlight.Add(1)
+	defer f.inFlight.Add(-1)
+	for {
+		p := f.peak.Load()
+		if n <= p || f.peak.CompareAndSwap(p, n) {
+			break
+		}
+	}
+	if f.gate != nil {
+		select {
+		case <-f.gate:
+		case <-ctx.Done():
+			return probe.Result{}, ctx.Err()
+		}
+	}
+	time.Sleep(f.delay)
+	f.mu.Lock()
+	if f.calls == nil {
+		f.calls = map[string]int{}
+	}
+	f.calls[path]++
+	f.mu.Unlock()
+	if strings.Contains(path, "broken") {
+		return probe.Result{}, errors.New("invalid data found when processing input")
+	}
+	return probe.Result{Container: "matroska,webm", DurationMs: 1000, Video: []probe.VideoStream{{Codec: "h264"}}}, nil
+}
+
+func (f *fakeProber) count(path string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls[path]
+}
+
+type recorder struct {
+	mu  sync.Mutex
+	ids []int64
+}
+
+func (r *recorder) ItemsChanged(_ context.Context, _ int64, ids []int64) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ids = append(r.ids, ids...)
+}
+
+type env struct {
+	t      *testing.T
+	root   string
+	lib    library.Library
+	libs   *library.Store
+	items  *media.Store
+	prober *fakeProber
+	sc     *Scanner
+	rec    *recorder
+}
+
+// newEnv creates an empty library folder in a temp media root and a scanner over it.
+func newEnv(t *testing.T, typ library.Type, opt Options) *env {
+	t.Helper()
+	tmp, _ := filepath.EvalSymlinks(t.TempDir())
+	root := filepath.Join(tmp, "media", string(typ))
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	d := dbtest.Open(t)
+	e := &env{t: t, root: root, libs: library.NewStore(d), items: media.NewStore(d), prober: &fakeProber{}, rec: &recorder{}}
+	lib, err := e.libs.Create(context.Background(), library.Library{Name: string(typ), Type: typ, Paths: []string{root},
+		Options: library.Options{AnimeNumbering: "season"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.lib = lib
+	if opt.SettleDelay == 0 {
+		opt.SettleDelay = time.Millisecond
+	}
+	e.sc = New(e.libs, e.items, e.prober, slog.New(slog.NewTextHandler(io.Discard, nil)), opt)
+	e.sc.AddListener(e.rec)
+	return e
+}
+
+// write creates rel under the library root with size bytes and an old mtime.
+func (e *env) write(rel string, size int) string {
+	e.t.Helper()
+	p := filepath.Join(e.root, rel)
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		e.t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte(strings.Repeat("x", size)), 0o644); err != nil {
+		e.t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(p, old, old); err != nil {
+		e.t.Fatal(err)
+	}
+	return p
+}
+
+func (e *env) scan() {
+	e.t.Helper()
+	if err := e.sc.ScanLibrary(context.Background(), e.lib.ID); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+func (e *env) top() []media.Item {
+	e.t.Helper()
+	items, err := e.items.ListTopLevel(context.Background(), e.lib.ID)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return items
+}
+
+func (e *env) children(id int64) []media.Item {
+	e.t.Helper()
+	items, err := e.items.Children(context.Background(), id)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return items
+}
+
+func (e *env) files(id int64) []media.File {
+	e.t.Helper()
+	fs, err := e.items.Files(context.Background(), id)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return fs
+}
+
+func TestScanMoviesBuildsItems(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{})
+	e.write("Movie (2010)/Movie (2010) - 1080p.mkv", 10)
+	e.write("Movie (2010)/Movie (2010) - Director's Cut.mkv", 10)
+	e.write("Movie (2010)/Featurettes/Making Of.mkv", 5)
+	os.WriteFile(filepath.Join(e.root, "Movie (2010)/movie.nfo"), []byte(`<movie><uniqueid type="tmdb">42</uniqueid></movie>`), 0o644)
+	e.write("Movie (2010)/sample.mkv", 5)
+	e.write("broken (2001)/broken (2001).mkv", 10)
+	e.write("Other (2020)/Other (2020).mkv.partial", 10)
+	e.write(".hidden/Hidden (2000).mkv", 10)
+	e.write("@eaDir/Thumb (2000).mkv", 10)
+	e.write("notes.txt", 10)
+	e.scan()
+
+	top := e.top()
+	if len(top) != 2 || top[0].Title != "broken" || top[1].Title != "Movie" {
+		t.Fatalf("top level: %+v", top)
+	}
+	movie := top[1]
+	if movie.Year != 2010 || movie.ExternalIDs["tmdb"] != "42" || movie.Kind != media.KindMovie {
+		t.Fatalf("movie: %+v", movie)
+	}
+	files := e.files(movie.ID)
+	if len(files) != 2 || files[0].Version != "1080p" || files[1].Version != "Director's Cut" || files[0].Probe.Video[0].Codec != "h264" {
+		t.Fatalf("versions: %+v", files)
+	}
+	extras := e.children(movie.ID)
+	if len(extras) != 1 || extras[0].ExtraType != media.ExtraFeaturette || extras[0].Title != "Making Of" {
+		t.Fatalf("extras: %+v", extras)
+	}
+	bf := e.files(top[0].ID)
+	if len(bf) != 1 || !strings.Contains(bf[0].ProbeError, "invalid data") {
+		t.Fatalf("broken file must be stored with its probe error: %+v", bf)
+	}
+	st := e.sc.Status(e.lib.ID)
+	if st.State != "done" || st.FilesFound != 4 || st.FilesProbed != 4 || st.FinishedAt == nil {
+		t.Fatalf("status: %+v", st)
+	}
+	if len(st.Errors) != 1 || !strings.HasSuffix(st.Errors[0].Path, "broken (2001).mkv") || !strings.HasPrefix(st.Errors[0].Reason, "probe:") {
+		t.Fatalf("errors: %+v", st.Errors)
+	}
+	if !slices.Contains(e.rec.ids, movie.ID) || !slices.Contains(e.rec.ids, extras[0].ID) {
+		t.Fatalf("listener got %v", e.rec.ids)
+	}
+}
+
+func TestRescanOnlyProbesChangedFiles(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{})
+	a := e.write("A (2001)/A (2001).mkv", 10)
+	b := e.write("B (2002)/B (2002).mkv", 10)
+	broken := e.write("broken (2003)/broken (2003).mkv", 10)
+	e.scan()
+	e.rec.ids = nil
+	e.scan()
+	if e.prober.count(a) != 1 || e.prober.count(b) != 1 {
+		t.Fatalf("unchanged files were re-probed: %v", e.prober.calls)
+	}
+	if e.prober.count(broken) != 2 {
+		t.Fatalf("broken files are retried every scan: %d", e.prober.count(broken))
+	}
+	e.write("B (2002)/B (2002).mkv", 20) // new size
+	e.scan()
+	if e.prober.count(b) != 2 || e.prober.count(a) != 1 {
+		t.Fatalf("changed file not re-probed: %v", e.prober.calls)
+	}
+}
+
+func TestRemovedFilesArePruned(t *testing.T) {
+	e := newEnv(t, library.TypeTV, Options{})
+	e1 := e.write("Show (2019)/Season 01/Show - S01E01.mkv", 10)
+	e.write("Show (2019)/Season 01/Show - S01E02.mkv", 10)
+	e.write("Keep (2018)/Season 01/Keep - S01E01.mkv", 10)
+	e.scan()
+	if len(e.top()) != 2 {
+		t.Fatalf("top %+v", e.top())
+	}
+	os.Remove(e1)
+	e.scan()
+	show := e.top()[1]
+	season := e.children(show.ID)[0]
+	if eps := e.children(season.ID); len(eps) != 1 || *eps[0].EpisodeNumber != 2 {
+		t.Fatalf("episode 1 must be gone: %+v", eps)
+	}
+	if st := e.sc.Status(e.lib.ID); st.FilesRemoved != 1 {
+		t.Fatalf("status %+v", st)
+	}
+	os.RemoveAll(filepath.Join(e.root, "Show (2019)"))
+	e.scan()
+	if top := e.top(); len(top) != 1 || top[0].Title != "Keep" {
+		t.Fatalf("show, season and episodes must be pruned: %+v", top)
+	}
+}
+
+func TestMissingOrUnmountedRootDeletesNothing(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{})
+	e.write("A (2001)/A (2001).mkv", 10)
+	e.scan()
+
+	// Unmounted share: the folder exists but is empty.
+	moved := e.root + "-away"
+	if err := os.Rename(e.root, moved); err != nil {
+		t.Fatal(err)
+	}
+	os.Mkdir(e.root, 0o755)
+	err := e.sc.ScanLibrary(context.Background(), e.lib.ID)
+	if err == nil || !strings.Contains(err.Error(), "unmounted") {
+		t.Fatalf("want unmounted error, got %v", err)
+	}
+	if st := e.sc.Status(e.lib.ID); st.State != "failed" || !strings.Contains(st.Message, "nothing was removed") {
+		t.Fatalf("status %+v", st)
+	}
+	if len(e.top()) != 1 {
+		t.Fatal("items were deleted while the root was unmounted")
+	}
+
+	// Missing folder.
+	os.Remove(e.root)
+	if err := e.sc.ScanLibrary(context.Background(), e.lib.ID); err == nil || !strings.Contains(err.Error(), "unavailable") {
+		t.Fatalf("want unavailable error, got %v", err)
+	}
+	if len(e.top()) != 1 {
+		t.Fatal("items were deleted while the root was missing")
+	}
+
+	// Back again: scan succeeds and nothing was re-added twice.
+	os.Rename(moved, e.root)
+	e.scan()
+	if len(e.top()) != 1 {
+		t.Fatalf("top %+v", e.top())
+	}
+}
+
+func TestScanTVAndAnimeTree(t *testing.T) {
+	e := newEnv(t, library.TypeAnime, Options{})
+	e.write("Frieren (2023) [anidb-17617]/Season 01/Frieren - S01E01 - 001 - The Journey's End [Bluray-1080p].mkv", 10)
+	e.write("Frieren (2023) [anidb-17617]/Season 01/Frieren - S01E02 - 002 - It Didn't Have to Be Magic [Bluray-1080p].mkv", 10)
+	e.write("Frieren (2023) [anidb-17617]/Season 01/Frieren - S01E02 - 002 - It Didn't Have to Be Magic [Bluray-2160p].mkv", 10)
+	e.write("Frieren (2023) [anidb-17617]/Specials/Frieren - S00E01 - Recap.mkv", 10)
+	// Episode NFO: same name as the video, .nfo extension.
+	os.WriteFile(filepath.Join(e.root, "Frieren (2023) [anidb-17617]/Season 01/Frieren - S01E01 - 001 - The Journey's End [Bluray-1080p].nfo"),
+		[]byte(`<episodedetails><uniqueid type="tvdb">9001</uniqueid></episodedetails>`), 0o644)
+	e.write("Frieren (2023) [anidb-17617]/Season 01/Frieren - Behind the Story.mkv", 10) // no number
+	e.write("Your Name (2016)/Your Name (2016).mkv", 10)
+	e.scan()
+
+	top := e.top()
+	if len(top) != 2 || top[0].Kind != media.KindShow || top[0].ExternalIDs["anidb"] != "17617" || top[1].Kind != media.KindMovie {
+		t.Fatalf("top: %+v", top)
+	}
+	seasons := e.children(top[0].ID)
+	if len(seasons) != 2 || *seasons[0].SeasonNumber != 0 || seasons[0].Title != "Specials" || *seasons[1].SeasonNumber != 1 {
+		t.Fatalf("seasons: %+v", seasons)
+	}
+	eps := e.children(seasons[1].ID)
+	if len(eps) != 2 || eps[0].Title != "The Journey's End" || *eps[0].AbsoluteNumber != 1 || eps[0].ExternalIDs["tvdb"] != "9001" {
+		t.Fatalf("episodes: %+v", eps)
+	}
+	if fs := e.files(eps[1].ID); len(fs) != 2 || fs[0].Version != "1080p" || fs[1].Version != "2160p" {
+		t.Fatalf("two versions of episode 2: %+v", fs)
+	}
+	st := e.sc.Status(e.lib.ID)
+	if len(st.Errors) != 1 || !strings.Contains(st.Errors[0].Reason, "unrecognised") {
+		t.Fatalf("unnumbered file must be reported: %+v", st.Errors)
+	}
+}
+
+func TestProbeConcurrencyIsBounded(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{Concurrency: 2})
+	e.prober.delay = 20 * time.Millisecond
+	for _, name := range []string{"A", "B", "C", "D", "E", "F"} {
+		e.write(name+" (2000)/"+name+" (2000).mkv", 10)
+	}
+	e.scan()
+	if p := e.prober.peak.Load(); p != 2 {
+		t.Fatalf("peak concurrent probes = %d, want 2", p)
+	}
+}
+
+func TestSecondScanWhileRunningIsRejected(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{})
+	e.prober.gate = make(chan struct{})
+	e.write("A (2001)/A (2001).mkv", 10)
+	done := make(chan error, 1)
+	go func() { done <- e.sc.ScanLibrary(context.Background(), e.lib.ID) }()
+	for e.prober.inFlight.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	if err := e.sc.ScanLibrary(context.Background(), e.lib.ID); !errors.Is(err, library.ErrScanRunning) {
+		t.Fatalf("want ErrScanRunning, got %v", err)
+	}
+	if st := e.sc.Status(e.lib.ID); st.State != "running" || st.FilesToProbe != 1 {
+		t.Fatalf("status while running: %+v", st)
+	}
+	close(e.prober.gate)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSettledDetectsGrowingFile(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{SettleDelay: 50 * time.Millisecond})
+	p := filepath.Join(e.root, "growing.mkv")
+	os.WriteFile(p, []byte("abc"), 0o644)
+	st, _ := os.Stat(p)
+	j := job{entry: Entry{Path: p}, size: st.Size(), mtime: st.ModTime()}
+	go func() {
+		time.Sleep(10 * time.Millisecond)
+		f, _ := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+		f.Write([]byte("more"))
+		f.Close()
+	}()
+	if e.sc.settled(context.Background(), j) {
+		t.Fatal("a file that grew during the check is not settled")
+	}
+	st, _ = os.Stat(p)
+	j.size, j.mtime = st.Size(), st.ModTime()
+	if !e.sc.settled(context.Background(), j) {
+		t.Fatal("an unchanged file is settled")
+	}
+}
+
+func TestHomeVideosAreFlatVideos(t *testing.T) {
+	e := newEnv(t, library.TypeHomeVideos, Options{})
+	e.write("2019/Birthday/Cake.mp4", 10)
+	e.write("2019/Beach.mov", 10)
+	e.scan()
+	top := e.top()
+	if len(top) != 2 || top[0].Title != "Beach" || top[1].Title != "Cake" || top[0].Kind != media.KindVideo {
+		t.Fatalf("home videos: %+v", top)
+	}
+}
+```
+
+- [ ] **Step 3: Write the failing run-loop tests** (real fsnotify on a temp folder, 50 ms debounce)
+
+`server/internal/scanner/run_test.go`:
+```go
+package scanner
+
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+)
+
+// eventually polls cond every 10ms until it is true or 5s pass.
+func eventually(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestRunWatchesFoldersAndRescans(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{Debounce: 50 * time.Millisecond, FullScanEvery: -1})
+	e.write("A (2001)/A (2001).mkv", 10)
+	ctx, cancel := context.WithCancel(context.Background())
+	stopped := make(chan error, 1)
+	go func() { stopped <- e.sc.Run(ctx) }()
+
+	eventually(t, "initial scan", func() bool { return len(e.top()) == 1 })
+
+	// A new folder with a file inside: the watcher sees it, waits for the debounce, scans.
+	e.write("B (2002)/B (2002).mkv", 10)
+	eventually(t, "new movie from watcher", func() bool { return len(e.top()) == 2 })
+
+	// A download still in progress is ignored until renamed.
+	part := e.write("C (2003)/C (2003).mkv.partial", 10)
+	time.Sleep(200 * time.Millisecond)
+	if len(e.top()) != 2 {
+		t.Fatal("partial download was indexed")
+	}
+	if err := os.Rename(part, part[:len(part)-len(".partial")]); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "renamed download", func() bool { return len(e.top()) == 3 })
+
+	cancel()
+	select {
+	case err := <-stopped:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not stop")
+	}
+	if err := e.sc.Trigger(context.Background(), e.lib.ID); err == nil {
+		t.Fatal("Trigger after Run stopped must fail")
+	}
+}
+
+func TestTriggerRunsInBackground(t *testing.T) {
+	e := newEnv(t, library.TypeMovies, Options{})
+	e.write("A (2001)/A (2001).mkv", 10)
+	if err := e.sc.Trigger(context.Background(), e.lib.ID); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "triggered scan", func() bool { return e.sc.Status(e.lib.ID).State == "done" })
+	if len(e.top()) != 1 {
+		t.Fatalf("top %+v", e.top())
+	}
+	if err := e.sc.Trigger(context.Background(), 999); err == nil {
+		t.Fatal("unknown library must fail")
+	}
+	if st := e.sc.Status(42); st.State != "idle" || st.Errors == nil {
+		t.Fatalf("never-scanned status: %+v", st)
+	}
+}
+```
+
+- [ ] **Step 4: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: New` / `undefined: Options` / `undefined: job`
+
+- [ ] **Step 5: Implement the scanner type, options and status helpers**
+
+`server/internal/scanner/scanner.go`:
+```go
+package scanner
+
+import (
+	"context"
+	"log/slog"
+	"slices"
+	"sync"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/media"
+	"github.com/Lisimflix/lisimflix/server/internal/probe"
+)
+
+// Prober analyses one file. FFprobe is the real one; tests use fakes.
+type Prober interface {
+	Probe(ctx context.Context, path string) (probe.Result, error)
+}
+
+// FFprobe runs the ffprobe binary at Path.
+type FFprobe struct{ Path string }
+
+// Probe implements Prober.
+func (f FFprobe) Probe(ctx context.Context, path string) (probe.Result, error) {
+	return probe.Run(ctx, f.Path, path)
+}
+
+// ScanListener is told which items a scan created or updated (plan 1D uses it
+// to queue metadata matching). It is called from the scan goroutine after each
+// batch, so implementations should return quickly.
+type ScanListener interface {
+	ItemsChanged(ctx context.Context, libraryID int64, itemIDs []int64)
+}
+
+// Options tune the scanner. Zero values take the defaults shown.
+type Options struct {
+	Concurrency   int           // parallel ffprobe runs; default 2
+	FullScanEvery time.Duration // periodic full scan of every library; default 6h, negative disables
+	Debounce      time.Duration // quiet time after the last file event before scanning; default 10s
+	SettleWindow  time.Duration // files modified this recently get a size-stability check; default 2m
+	SettleDelay   time.Duration // wait between the two size checks; default 5s
+	BatchSize     int           // files per listener notification; default 25
+	MaxErrors     int           // errors kept in a scan status; default 200
+}
+
+func (o Options) withDefaults() Options {
+	if o.Concurrency <= 0 {
+		o.Concurrency = 2
+	}
+	if o.FullScanEvery == 0 {
+		o.FullScanEvery = 6 * time.Hour
+	}
+	if o.Debounce <= 0 {
+		o.Debounce = 10 * time.Second
+	}
+	if o.SettleWindow <= 0 {
+		o.SettleWindow = 2 * time.Minute
+	}
+	if o.SettleDelay <= 0 {
+		o.SettleDelay = 5 * time.Second
+	}
+	if o.BatchSize <= 0 {
+		o.BatchSize = 25
+	}
+	if o.MaxErrors <= 0 {
+		o.MaxErrors = 200
+	}
+	return o
+}
+
+// Scanner keeps the items/files tables in step with the library folders.
+type Scanner struct {
+	libs   *library.Store
+	items  *media.Store
+	prober Prober
+	log    *slog.Logger
+	opt    Options
+
+	mu        sync.Mutex
+	listeners []ScanListener
+	status    map[int64]*library.ScanStatus
+	running   map[int64]bool
+	pending   map[int64]time.Time // library -> scan due time (debounced file events)
+	roots     map[string]int64    // library folder -> library ID
+	baseCtx   context.Context     // context for background scans; Run's ctx once running
+	active    bool                // Run is running (watchers allowed)
+	closed    bool                // Run has returned; no new goroutines
+	watch     *watcher
+	wake      chan struct{}
+	wg        sync.WaitGroup
+}
+
+// New returns a Scanner. Call Run to start watching and periodic scans;
+// ScanLibrary and Trigger also work without Run.
+func New(libs *library.Store, items *media.Store, p Prober, log *slog.Logger, opt Options) *Scanner {
+	return &Scanner{
+		libs: libs, items: items, prober: p, log: log, opt: opt.withDefaults(),
+		status:  map[int64]*library.ScanStatus{},
+		running: map[int64]bool{},
+		pending: map[int64]time.Time{},
+		roots:   map[string]int64{},
+		baseCtx: context.Background(),
+		wake:    make(chan struct{}, 1),
+	}
+}
+
+// AddListener registers l for ItemsChanged notifications.
+func (s *Scanner) AddListener(l ScanListener) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.listeners = append(s.listeners, l)
+}
+
+// Status returns a copy of the latest scan status of a library.
+func (s *Scanner) Status(libraryID int64) library.ScanStatus {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st, ok := s.status[libraryID]
+	if !ok {
+		return library.ScanStatus{LibraryID: libraryID, State: "idle", Errors: []library.ScanError{}}
+	}
+	out := *st
+	out.Errors = slices.Clone(st.Errors)
+	return out
+}
+
+// update runs f on the library's status under the lock.
+func (s *Scanner) update(id int64, f func(st *library.ScanStatus)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if st, ok := s.status[id]; ok {
+		f(st)
+	}
+}
+
+func (s *Scanner) addError(id int64, path, reason string) {
+	s.update(id, func(st *library.ScanStatus) {
+		if len(st.Errors) >= s.opt.MaxErrors {
+			st.ErrorsDropped++
+			return
+		}
+		st.Errors = append(st.Errors, library.ScanError{Path: path, Reason: reason})
+	})
+}
+
+// begin marks a library as scanning. It returns false if a scan is already running.
+func (s *Scanner) begin(id int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.running[id] {
+		return false
+	}
+	s.running[id] = true
+	now := time.Now().UTC()
+	s.status[id] = &library.ScanStatus{LibraryID: id, State: "running", StartedAt: &now, Errors: []library.ScanError{}}
+	return true
+}
+
+func (s *Scanner) end(id int64, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.running, id)
+	st := s.status[id]
+	now := time.Now().UTC()
+	st.FinishedAt = &now
+	if err != nil {
+		st.State, st.Message = "failed", err.Error()
+		return
+	}
+	st.State = "done"
+}
+
+// goTracked runs f in a goroutine that Run waits for on shutdown.
+func (s *Scanner) goTracked(f func()) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		f()
+	}()
+	return true
+}
+```
+
+- [ ] **Step 6: Implement the scan**
+
+`server/internal/scanner/scan.go`:
+```go
+package scanner
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/media"
+	"github.com/Lisimflix/lisimflix/server/internal/probe"
+)
+
+// job is one new or changed file waiting to be probed and stored.
+type job struct {
+	entry Entry
+	size  int64
+	mtime time.Time
+	fresh bool // modified within SettleWindow: check the size is stable first
+}
+
+type result struct {
+	job      job
+	res      probe.Result
+	err      error
+	unstable bool
+}
+
+// ScanLibrary runs a full scan of one library and blocks until it finishes.
+// It returns library.ErrScanRunning if a scan of that library is in progress.
+func (s *Scanner) ScanLibrary(ctx context.Context, id int64) error {
+	if !s.begin(id) {
+		return library.ErrScanRunning
+	}
+	err := s.scan(ctx, id)
+	s.end(id, err)
+	if err != nil {
+		s.log.Warn("library scan failed", "library", id, "err", err)
+	} else {
+		st := s.Status(id)
+		s.log.Info("library scan done", "library", id, "files", st.FilesFound, "probed", st.FilesProbed,
+			"removed", st.FilesRemoved, "errors", len(st.Errors)+st.ErrorsDropped)
+	}
+	return err
+}
+
+func (s *Scanner) scan(ctx context.Context, id int64) error {
+	lib, err := s.libs.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	// A missing or unmounted folder must never look like "everything was deleted".
+	for _, root := range lib.Paths {
+		if err := s.checkRoot(ctx, lib.ID, root); err != nil {
+			return err
+		}
+	}
+	known, err := s.items.FileIndex(ctx, lib.ID)
+	if err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	var jobs []job
+	now := time.Now()
+	for _, root := range lib.Paths {
+		err := filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
+			if werr != nil {
+				if path == root {
+					return werr
+				}
+				s.addError(lib.ID, path, werr.Error())
+				if d != nil && d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if d.IsDir() {
+				if path != root && skipDir(d.Name()) {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if !d.Type().IsRegular() {
+				return nil // symlinks and devices are not followed: they could leave the media root
+			}
+			info, err := d.Info()
+			if err != nil {
+				s.addError(lib.ID, path, err.Error())
+				return nil
+			}
+			if skipFile(d.Name(), info.Size()) {
+				return nil
+			}
+			entry, err := Classify(lib, root, path)
+			if err != nil {
+				s.addError(lib.ID, path, err.Error())
+				return nil
+			}
+			seen[path] = true
+			s.update(lib.ID, func(st *library.ScanStatus) { st.FilesFound++ })
+			old, ok := known[path]
+			if ok && old.Size == info.Size() && old.ModTime.Equal(info.ModTime()) && old.ProbeError == "" {
+				return nil // unchanged
+			}
+			jobs = append(jobs, job{entry: entry, size: info.Size(), mtime: info.ModTime(),
+				fresh: now.Sub(info.ModTime()) < s.opt.SettleWindow})
+			return nil
+		})
+		if err != nil {
+			return fmt.Errorf("walk %s: %w", root, err)
+		}
+	}
+	s.update(lib.ID, func(st *library.ScanStatus) { st.FilesToProbe = len(jobs) })
+
+	retry, err := s.process(ctx, lib, jobs)
+	if err != nil {
+		return err
+	}
+
+	var gone []int64
+	for p, st := range known {
+		if !seen[p] {
+			gone = append(gone, st.ID)
+		}
+	}
+	if len(gone) > 0 {
+		if err := s.items.DeleteFiles(ctx, gone); err != nil {
+			return err
+		}
+		s.update(lib.ID, func(st *library.ScanStatus) { st.FilesRemoved = len(gone) })
+	}
+	if _, err := s.items.PruneEmpty(ctx, lib.ID); err != nil {
+		return err
+	}
+	if retry {
+		s.schedule(lib.ID) // files still being written: look again after the debounce
+	}
+	return nil
+}
+
+// checkRoot fails when a library folder is missing, or is empty while the
+// database still has files under it (the usual sign of an unmounted share).
+func (s *Scanner) checkRoot(ctx context.Context, libID int64, root string) error {
+	st, err := os.Stat(root)
+	if err != nil {
+		return fmt.Errorf("library folder %s is unavailable (%v); nothing was removed", root, err)
+	}
+	if !st.IsDir() {
+		return fmt.Errorf("library folder %s is not a directory; nothing was removed", root)
+	}
+	f, err := os.Open(root)
+	if err != nil {
+		return fmt.Errorf("library folder %s cannot be read (%v); nothing was removed", root, err)
+	}
+	_, err = f.Readdirnames(1)
+	f.Close()
+	if errors.Is(err, io.EOF) {
+		n, cerr := s.items.CountFiles(ctx, libID, root)
+		if cerr != nil {
+			return cerr
+		}
+		if n > 0 {
+			return fmt.Errorf("library folder %s is empty but %d files are indexed; treating it as unmounted, nothing was removed", root, n)
+		}
+	}
+	return nil
+}
+
+// process probes jobs with bounded concurrency and stores results from this
+// goroutine only (one SQLite writer). Broken files are recorded, never fatal.
+func (s *Scanner) process(ctx context.Context, lib library.Library, jobs []job) (retry bool, err error) {
+	in := make(chan job)
+	out := make(chan result)
+	var wg sync.WaitGroup
+	for range s.opt.Concurrency {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range in {
+				r := result{job: j}
+				if j.fresh && !s.settled(ctx, j) {
+					r.unstable = true
+				} else {
+					r.res, r.err = s.prober.Probe(ctx, j.entry.Path)
+				}
+				select {
+				case out <- r:
+				case <-ctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		defer close(in)
+		for _, j := range jobs {
+			select {
+			case in <- j:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+
+	nfo := map[string]map[string]string{}
+	batch := map[int64]bool{}
+	done := 0
+	for r := range out {
+		if ctx.Err() != nil {
+			continue // shutting down: drain without writing
+		}
+		if r.unstable {
+			retry = true
+			continue
+		}
+		path := r.job.entry.Path
+		if r.err != nil {
+			s.addError(lib.ID, path, "probe: "+r.err.Error())
+			s.log.Warn("probe failed", "path", path, "err", r.err)
+		}
+		ids, err := s.store(ctx, lib, r, nfo)
+		if err != nil {
+			s.addError(lib.ID, path, "save: "+err.Error())
+			continue
+		}
+		s.update(lib.ID, func(st *library.ScanStatus) { st.FilesProbed++ })
+		for _, id := range ids {
+			batch[id] = true
+		}
+		done++
+		if done%s.opt.BatchSize == 0 {
+			s.notify(ctx, lib.ID, batch)
+			batch = map[int64]bool{}
+		}
+	}
+	s.notify(ctx, lib.ID, batch)
+	return retry, ctx.Err()
+}
+
+// settled reports whether a recently written file kept its size and mtime
+// over SettleDelay (so half-copied files are not probed).
+func (s *Scanner) settled(ctx context.Context, j job) bool {
+	t := time.NewTimer(s.opt.SettleDelay)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+	}
+	st, err := os.Stat(j.entry.Path)
+	return err == nil && st.Size() == j.size && st.ModTime().Equal(j.mtime)
+}
+
+// store writes the item tree and file row for one probed file and returns the
+// IDs of every item it created or updated.
+func (s *Scanner) store(ctx context.Context, lib library.Library, r result, nfo map[string]map[string]string) ([]int64, error) {
+	e := r.job.entry
+	stemNFO := strings.TrimSuffix(e.Path, filepath.Ext(e.Path)) + ".nfo"
+	readNFO := func(p string) map[string]string {
+		if ids, ok := nfo[p]; ok {
+			return ids
+		}
+		ids, err := ReadNFOIDs(p)
+		if err != nil {
+			s.addError(lib.ID, p, "nfo: "+err.Error())
+		}
+		nfo[p] = ids
+		return ids
+	}
+	upsert := func(key string, it media.Item) (int64, error) {
+		return s.items.UpsertItem(ctx, lib.ID, key, it)
+	}
+
+	var ids []int64
+	var groupID int64
+	if e.GroupKind != "" {
+		gids := mergeIDs(nil, e.IDs)
+		if e.GroupDir != "" {
+			name := "movie.nfo"
+			if e.GroupKind == media.KindShow {
+				name = "tvshow.nfo"
+			}
+			gids = mergeIDs(gids, readNFO(filepath.Join(e.GroupDir, name)))
+		}
+		if e.Kind == media.KindMovie {
+			gids = mergeIDs(gids, readNFO(stemNFO))
+		}
+		id, err := upsert(string(e.GroupKind)+":"+e.GroupKey,
+			media.Item{Kind: e.GroupKind, Title: e.Title, SortTitle: media.SortTitle(e.Title), Year: e.Year})
+		if err != nil {
+			return nil, err
+		}
+		if err := s.items.SetExternalIDs(ctx, id, gids, false); err != nil {
+			return nil, err
+		}
+		groupID = id
+		ids = append(ids, id)
+	}
+
+	itemID := groupID
+	switch {
+	case e.ExtraType != "":
+		id, err := upsert("extra:"+e.Path, media.Item{Kind: media.KindVideo, ParentID: groupID,
+			Title: e.ItemTitle, SortTitle: media.SortTitle(e.ItemTitle), ExtraType: e.ExtraType})
+		if err != nil {
+			return nil, err
+		}
+		itemID = id
+		ids = append(ids, id)
+	case e.Kind == media.KindEpisode:
+		seasonTitle := fmt.Sprintf("Season %d", *e.Season)
+		if *e.Season == 0 {
+			seasonTitle = "Specials"
+		}
+		seasonID, err := upsert(fmt.Sprintf("season:%s|%d", e.GroupKey, *e.Season), media.Item{
+			Kind: media.KindSeason, ParentID: groupID, Title: seasonTitle, SortTitle: seasonTitle, SeasonNumber: e.Season})
+		if err != nil {
+			return nil, err
+		}
+		key := fmt.Sprintf("episode:%s|s%d|d%s", e.GroupKey, *e.Season, e.AirDate)
+		if e.Episode != nil {
+			key = fmt.Sprintf("episode:%s|s%d|e%d", e.GroupKey, *e.Season, *e.Episode)
+		}
+		epID, err := upsert(key, media.Item{Kind: media.KindEpisode, ParentID: seasonID, Title: e.ItemTitle,
+			SortTitle: e.ItemTitle, SeasonNumber: e.Season, EpisodeNumber: e.Episode, EpisodeNumberEnd: e.EpisodeEnd,
+			AbsoluteNumber: e.Absolute, AirDate: e.AirDate})
+		if err != nil {
+			return nil, err
+		}
+		if err := s.items.SetExternalIDs(ctx, epID, readNFO(stemNFO), false); err != nil {
+			return nil, err
+		}
+		itemID = epID
+		ids = append(ids, seasonID, epID)
+	case e.Kind == media.KindVideo:
+		id, err := upsert("video:"+e.Path, media.Item{Kind: media.KindVideo, Title: e.ItemTitle, SortTitle: e.SortTitle})
+		if err != nil {
+			return nil, err
+		}
+		itemID = id
+		ids = append(ids, id)
+	}
+
+	f := media.File{ItemID: itemID, Path: e.Path, Size: r.job.size, ModTime: r.job.mtime, Probe: r.res, Version: e.Version}
+	if r.err != nil {
+		f.ProbeError = r.err.Error()
+	}
+	if _, err := s.items.PutFile(ctx, lib.ID, f); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// mergeIDs adds keys from add that dst does not have yet.
+func mergeIDs(dst, add map[string]string) map[string]string {
+	if dst == nil {
+		dst = map[string]string{}
+	}
+	for k, v := range add {
+		if _, ok := dst[k]; !ok {
+			dst[k] = v
+		}
+	}
+	return dst
+}
+
+func (s *Scanner) notify(ctx context.Context, libID int64, set map[int64]bool) {
+	if len(set) == 0 {
+		return
+	}
+	ids := make([]int64, 0, len(set))
+	for id := range set {
+		ids = append(ids, id)
+	}
+	slices.Sort(ids)
+	s.mu.Lock()
+	ls := slices.Clone(s.listeners)
+	s.mu.Unlock()
+	s.update(libID, func(st *library.ScanStatus) { st.ItemsChanged += len(ids) })
+	for _, l := range ls {
+		l.ItemsChanged(ctx, libID, ids)
+	}
+}
+```
+
+- [ ] **Step 7: Implement the run loop**
+
+`server/internal/scanner/run.go`:
+```go
+package scanner
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+)
+
+// Run starts the file watchers, scans every library once, then rescans every
+// FullScanEvery and after debounced file events. It blocks until ctx is
+// cancelled and all scans have stopped.
+func (s *Scanner) Run(ctx context.Context) error {
+	s.mu.Lock()
+	s.baseCtx, s.active = ctx, true
+	s.mu.Unlock()
+	if err := s.Reload(ctx); err != nil {
+		s.log.Warn("scanner: could not start file watchers; periodic scans still run", "err", err)
+	}
+	s.goTracked(func() { s.debounceLoop(ctx) })
+	s.goTracked(func() { s.scanAll(ctx) })
+
+	var tick <-chan time.Time
+	if s.opt.FullScanEvery > 0 {
+		t := time.NewTicker(s.opt.FullScanEvery)
+		defer t.Stop()
+		tick = t.C
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			s.mu.Lock()
+			s.closed, s.active = true, false
+			w := s.watch
+			s.watch = nil
+			s.mu.Unlock()
+			if w != nil {
+				w.close()
+			}
+			s.wg.Wait()
+			return nil
+		case <-tick:
+			s.goTracked(func() { s.scanAll(ctx) })
+		}
+	}
+}
+
+// scanAll scans each library in turn, skipping ones that are already scanning.
+func (s *Scanner) scanAll(ctx context.Context) {
+	libs, err := s.libs.List(ctx)
+	if err != nil {
+		s.log.Warn("scanner: list libraries", "err", err)
+		return
+	}
+	for _, l := range libs {
+		if ctx.Err() != nil {
+			return
+		}
+		_ = s.ScanLibrary(ctx, l.ID) // errors are logged and kept in the status
+	}
+}
+
+// Trigger starts a background full scan (implements library.ScanController).
+func (s *Scanner) Trigger(ctx context.Context, id int64) error {
+	if _, err := s.libs.Get(ctx, id); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	running, base := s.running[id], s.baseCtx
+	s.mu.Unlock()
+	if running {
+		return library.ErrScanRunning
+	}
+	if !s.goTracked(func() { _ = s.ScanLibrary(base, id) }) {
+		return errors.New("scanner is stopped")
+	}
+	return nil
+}
+
+// Reload re-reads the library folders and, while Run is active, restarts the
+// file watchers on them (implements library.ScanController).
+func (s *Scanner) Reload(ctx context.Context) error {
+	libs, err := s.libs.List(ctx)
+	if err != nil {
+		return err
+	}
+	roots := map[string]int64{}
+	for _, l := range libs {
+		for _, p := range l.Paths {
+			roots[p] = l.ID
+		}
+	}
+	s.mu.Lock()
+	s.roots = roots
+	old := s.watch
+	s.watch = nil
+	active := s.active
+	s.mu.Unlock()
+	if old != nil {
+		old.close()
+	}
+	if !active {
+		return nil
+	}
+	w, err := s.startWatcher(roots)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.active {
+		s.watch, w = w, nil
+	}
+	s.mu.Unlock()
+	if w != nil { // Run stopped while we were starting
+		w.close()
+	}
+	return nil
+}
+
+// schedule asks for a scan of a library once no new events arrive for Debounce.
+func (s *Scanner) schedule(id int64) {
+	s.mu.Lock()
+	s.pending[id] = time.Now().Add(s.opt.Debounce)
+	s.mu.Unlock()
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+}
+
+// debounceLoop starts scans whose debounce deadline has passed. A library that
+// is still scanning is pushed back by another Debounce.
+func (s *Scanner) debounceLoop(ctx context.Context) {
+	timer := time.NewTimer(time.Hour)
+	timer.Stop()
+	for {
+		now := time.Now()
+		var next time.Time
+		var due []int64
+		s.mu.Lock()
+		for id, at := range s.pending {
+			if !at.After(now) {
+				if !s.running[id] {
+					due = append(due, id)
+					delete(s.pending, id)
+					continue
+				}
+				at = now.Add(s.opt.Debounce)
+				s.pending[id] = at
+			}
+			if next.IsZero() || at.Before(next) {
+				next = at
+			}
+		}
+		s.mu.Unlock()
+		for _, id := range due {
+			s.goTracked(func() { _ = s.ScanLibrary(ctx, id) })
+		}
+		var fire <-chan time.Time
+		if !next.IsZero() {
+			timer.Reset(time.Until(next))
+			fire = timer.C
+		}
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-s.wake:
+			timer.Stop()
+		case <-fire:
+		}
+	}
+}
+```
+
+- [ ] **Step 8: Implement the watcher**
+
+`server/internal/scanner/watch.go`:
+```go
+package scanner
+
+import (
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/fsnotify/fsnotify"
+)
+
+// watcher wraps one fsnotify watcher over every library folder (recursively;
+// inotify watches single directories, so each subfolder is added).
+type watcher struct {
+	w    *fsnotify.Watcher
+	done chan struct{}
+}
+
+func (w *watcher) close() {
+	w.w.Close()
+	<-w.done
+}
+
+func (s *Scanner) startWatcher(roots map[string]int64) (*watcher, error) {
+	fw, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, err
+	}
+	w := &watcher{w: fw, done: make(chan struct{})}
+	for root := range roots {
+		s.addTree(w, root)
+	}
+	go s.watchLoop(w)
+	return w, nil
+}
+
+// addTree watches dir and every folder below it the walker would visit.
+func (s *Scanner) addTree(w *watcher, dir string) {
+	_ = filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if path != dir && skipDir(d.Name()) {
+			return fs.SkipDir
+		}
+		if err := w.w.Add(path); err != nil {
+			// Usually ENOSPC: fs.inotify.max_user_watches is too low. Periodic scans still work.
+			s.log.Warn("scanner: cannot watch folder; raise fs.inotify.max_user_watches", "dir", path, "err", err)
+			return fs.SkipAll
+		}
+		return nil
+	})
+}
+
+func (s *Scanner) watchLoop(w *watcher) {
+	defer close(w.done)
+	for {
+		select {
+		case ev, ok := <-w.w.Events:
+			if !ok {
+				return
+			}
+			s.handleEvent(w, ev)
+		case err, ok := <-w.w.Errors:
+			if !ok {
+				return
+			}
+			s.log.Warn("scanner: file watcher error; periodic scans still run", "err", err)
+		}
+	}
+}
+
+func (s *Scanner) handleEvent(w *watcher, ev fsnotify.Event) {
+	if ev.Op == fsnotify.Chmod {
+		return
+	}
+	name := filepath.Base(ev.Name)
+	if ev.Has(fsnotify.Create) {
+		if st, err := os.Lstat(ev.Name); err == nil && st.IsDir() {
+			if skipDir(name) {
+				return
+			}
+			s.addTree(w, ev.Name) // new folder: watch it and anything already inside
+		}
+	}
+	if isTempName(name) && !ev.Has(fsnotify.Remove) && !ev.Has(fsnotify.Rename) {
+		return // downloads in progress; the rename to the final name triggers the scan
+	}
+	if id, ok := s.libraryFor(ev.Name); ok {
+		s.schedule(id)
+	}
+}
+
+func (s *Scanner) libraryFor(path string) (int64, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for root, id := range s.roots {
+		if path == root || strings.HasPrefix(path, root+string(filepath.Separator)) {
+			return id, true
+		}
+	}
+	return 0, false
+}
+```
+
+- [ ] **Step 9: Tidy, run tests, expect PASS**
+
+Run: `make tidy && make test && make vet`
+Expected: all PASS; `go.mod` lists `github.com/fsnotify/fsnotify v1.9.0`.
+CI runs with `-race`. To check locally:
+`docker run --rm -v "$PWD/server":/src -w /src -v lisimflix-gomod:/go/pkg/mod -e CGO_ENABLED=1 golang:1.27-trixie go test -race -count=3 ./internal/scanner/`
+Expected: `ok`. If `TestRunWatchesFoldersAndRescans` times out, check that `Run` calls `Reload` after setting `active = true`.
+
+- [ ] **Step 10: Commit**
+
+```bash
+git add server/go.mod server/go.sum server/internal/scanner
+git commit -m "feat(scanner): full and incremental scans with bounded ffprobe, fsnotify watcher and listeners"
+```
+
+---
+
+### Task 12: Wire stores, scanner and modules into the server
+
+**Files:**
+- Create: `server/cmd/lisimflix/library.go`
+- Test: `server/cmd/lisimflix/library_test.go`
+- Modify: `server/cmd/lisimflix/main.go` (the single `app.New` line in `run`)
+
+**Interfaces:**
+- Consumes: everything above, `config.Config`, `db.DB.GetSetting`, `app.Module`, `app.New`
+- Produces: `libraryModules(ctx, cfg, d, log) ([]app.Module, *scanner.Scanner, func())` in package `main`: builds both stores, reads server settings `scanner.full_scan_interval` (Go duration, `0` disables) and `scanner.probe_concurrency`, starts `scanner.Run` in a goroutine, and returns the library + media modules and a stop function (cancel + wait). Plan 1D adds its listener with `scan.AddListener(...)` on the returned scanner. When 1B merges, swap `library.AdminVisibility{Store: libs}` for the auth service.
+
+Plan 1B also edits `main.go` (it replaces `authctx.DenyAllGuard{}`). Keeping the edit to these three lines means a merge conflict, if any, is one obvious line.
+
+- [ ] **Step 1: Write the failing end-to-end test** (ffprobe path points at a missing binary on purpose: the file is still indexed and the probe error shows in the scan status)
+
+`server/cmd/lisimflix/library_test.go`:
+```go
+package main
+
+import (
+	"context"
+	"io"
+	"log/slog"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/app"
+	"github.com/Lisimflix/lisimflix/server/internal/authctx"
+	"github.com/Lisimflix/lisimflix/server/internal/config"
+	"github.com/Lisimflix/lisimflix/server/internal/db/dbtest"
+)
+
+func TestLibraryModulesEndToEnd(t *testing.T) {
+	tmp, _ := filepath.EvalSymlinks(t.TempDir())
+	media := filepath.Join(tmp, "media")
+	movie := filepath.Join(media, "movies", "Heat (1995)", "Heat (1995).mkv")
+	os.MkdirAll(filepath.Dir(movie), 0o755)
+	os.WriteFile(movie, []byte("not really a video"), 0o644)
+	old := time.Now().Add(-time.Hour)
+	os.Chtimes(movie, old, old)
+
+	d := dbtest.Open(t)
+	d.SetSetting(context.Background(), settingScanInterval, "0")
+	cfg := config.Config{MediaDir: media, FFprobePath: filepath.Join(tmp, "no-ffprobe")}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mods, scan, stop := libraryModules(context.Background(), cfg, d, log)
+	defer stop()
+	h := app.New(cfg, d, log, authctx.StaticGuard{P: authctx.Principal{UserID: 1, IsAdmin: true}}, mods...).Handler()
+
+	call := func(method, path, body string) (int, string) {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+		return rec.Code, rec.Body.String()
+	}
+	if code, body := call("POST", "/api/v1/libraries", `{"name":"Movies","type":"movies","paths":["`+media+`/movies"]}`); code != 201 {
+		t.Fatalf("create: %d %s", code, body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for scan.Status(1).State != "done" {
+		if time.Now().After(deadline) {
+			t.Fatalf("scan never finished: %+v", scan.Status(1))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// ffprobe is missing, so the file is indexed with a probe error and listed in the status.
+	if code, body := call("GET", "/api/v1/libraries/1/items", ""); code != 200 || !strings.Contains(body, `"title":"Heat"`) {
+		t.Fatalf("items: %d %s", code, body)
+	}
+	if code, body := call("GET", "/api/v1/libraries/1/scan", ""); code != 200 || !strings.Contains(body, "probe:") {
+		t.Fatalf("scan status: %d %s", code, body)
+	}
+}
+```
+
+- [ ] **Step 2: Run and confirm failure**
+
+Run: `make test`
+Expected: FAIL, `undefined: libraryModules` / `undefined: settingScanInterval`
+
+- [ ] **Step 3: Implement**
+
+`server/cmd/lisimflix/library.go`:
+```go
+package main
+
+import (
+	"context"
+	"log/slog"
+	"strconv"
+	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/app"
+	"github.com/Lisimflix/lisimflix/server/internal/config"
+	"github.com/Lisimflix/lisimflix/server/internal/db"
+	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/media"
+	"github.com/Lisimflix/lisimflix/server/internal/scanner"
+)
+
+// Server settings (server_settings table) read at startup.
+const (
+	settingScanInterval     = "scanner.full_scan_interval" // Go duration, e.g. "6h"; "0" or negative disables
+	settingProbeConcurrency = "scanner.probe_concurrency"  // integer, default 2
+)
+
+// libraryModules builds the library, media and scanner pieces, starts the
+// scanner, and returns the API modules plus a stop function that cancels the
+// scanner and waits for it. Kept out of run() so plans 1B/1D touch main.go
+// as little as possible.
+//
+// When plan 1B is merged, replace library.AdminVisibility{...} below with the
+// auth service (it has the same VisibleLibraryIDs method).
+func libraryModules(ctx context.Context, cfg config.Config, d *db.DB, log *slog.Logger) ([]app.Module, *scanner.Scanner, func()) {
+	libs := library.NewStore(d)
+	items := media.NewStore(d)
+	opt := scanner.Options{FullScanEvery: 6 * time.Hour}
+	if v, ok, err := d.GetSetting(ctx, settingScanInterval); err == nil && ok {
+		if dur, err := time.ParseDuration(v); err == nil {
+			opt.FullScanEvery = dur
+			if dur == 0 {
+				opt.FullScanEvery = -1
+			}
+		} else {
+			log.Warn("ignoring bad setting", "key", settingScanInterval, "value", v)
+		}
+	}
+	if v, ok, err := d.GetSetting(ctx, settingProbeConcurrency); err == nil && ok {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			opt.Concurrency = n
+		}
+	}
+	scan := scanner.New(libs, items, scanner.FFprobe{Path: cfg.FFprobePath}, log.With("module", "scanner"), opt)
+
+	sctx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = scan.Run(sctx)
+	}()
+	stop := func() {
+		cancel()
+		<-done
+	}
+
+	vis := library.AdminVisibility{Store: libs}
+	mods := []app.Module{
+		library.NewModule(libs, cfg.MediaDir, scan, vis),
+		media.NewModule(items, vis),
+	}
+	return mods, scan, stop
+}
+```
+
+- [ ] **Step 4: Edit `main.go`**
+
+In `run`, replace:
+```go
+	a := app.New(cfg, d, log, authctx.DenyAllGuard{})
+```
+with:
+```go
+	mods, _, stopScanner := libraryModules(ctx, cfg, d, log)
+	defer stopScanner()
+	a := app.New(cfg, d, log, authctx.DenyAllGuard{}, mods...)
+```
+`defer stopScanner()` is registered after `defer d.Close()`, so the scanner stops before the database closes. If 1B has already merged, keep its guard argument and only add `mods...` plus the two lines above it.
+
+- [ ] **Step 5: Run tests, expect PASS**
+
+Run: `make test && make vet`
+Expected: all packages PASS, including `cmd/lisimflix` (`TestServeHealthcheckAndShutdown` still shuts down cleanly with the scanner running).
+
+- [ ] **Step 6: Verify against real files on zraid** (read-only mount)
+
+```bash
+make image
+T=$(mktemp -d)
+docker run -d --name lisimflix-1c -p 8421:8420 -v $T/config:/config -v $T/cache:/cache \
+  -v /mnt/user/dataz/media:/media:ro lisimflix:dev
+```
+Until plan 1B is wired, every route except health answers 401, so this check needs 1B merged
+(or a 1B branch rebased on this one). Then: create Movies, TV and Anime libraries via
+`POST /api/v1/libraries` with paths under `/media`, wait for `GET /api/v1/libraries/{id}/scan`
+to report `"state":"done"`, and spot-check `GET /api/v1/libraries/{id}/items` and
+`GET /api/v1/items/{id}/children` for a few movies with versions/extras, shows and anime. Record any misparsed names as new rows in `classify_test.go` (Task 9) and fix them in a follow-up commit.
+Clean up: `docker rm -f lisimflix-1c && rm -rf $T`.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add server/cmd/lisimflix
+git commit -m "feat(scanner): start the scanner and mount library and media APIs"
+```
+
+- [ ] **Step 8: Push and open the PR**
+
+```bash
+git push -u origin feat/1c-scanner
+gh pr create --base main --title "feat(scanner): libraries, ffprobe analysis and media scanner" \
+  --body "$(printf '## What changed\nPlan 1C: library definitions and API, ffprobe wrapper, item/file model, filename parsing (movies/TV/anime/home videos, extras, versions, ID hints, NFO IDs), full + fsnotify incremental scans.\n\n## Source\nSpec §3.1 Libraries; plan docs/superpowers/plans/2026-10-24-phase1c-scanner.md\n\n## How it was tested\nmake test / make vet (unit tests with fake prober and temp trees), make test-integration (real ffmpeg), spot check on zraid (Task 12 step 6)\n')"
+gh pr checks --watch
+```
+Expected: CI `test` passes. Another member reviews (`/code-review` first pass, then reads it). After approval the **author** squash-merges. An AI agent never merges: it hands back to its human.
+
+---
+
+## Done when
+
+- `make test`, `make vet` and `make test-integration` pass; CI is green on the PR.
+- Libraries can be created, edited, deleted and scanned via the API; folders outside `/media`, symlink escapes and overlaps are rejected.
+- A scan of the real zraid Movies, TV and Anime folders builds the expected item trees (spot-checked), lists broken files instead of failing, and an unmounted share deletes nothing.
+- Plan 1D can call `scan.AddListener(...)` and `media.Store.ItemsNeedingMatch`.
+
+## Contract additions (for the phase index)
+
+Nothing in the 1C contract changes. Added:
+- Package `scanner`: `Scanner`, `New`, `Options`, `Prober`, `FFprobe`, `ScanListener` (contract), `AddListener` (contract), `ScanLibrary`, `Run`, `Trigger`, `Status`, `Reload`, `Classify`, `Entry`, `ReadNFOIDs`, `ErrUnrecognised`.
+- `library`: `Type.Valid`, `TypeMovies/TypeTV/TypeAnime/TypeHomeVideos`, `Store.Create/Update/Delete`, `Validate`, `Within`, `ValidationError`, `ErrNotFound`, `ErrNameTaken`, `ErrScanRunning`, `ScanStatus`, `ScanError`, `ScanController`, `Visibility`, `AdminVisibility`, `CanSee`, `NewModule`.
+- `media`: `Item.EpisodeNumberEnd`, `Item.AirDate`, `Item.ExtraType`, `File.ProbeError`, `FileStat`, `Kind*` and `Extra*` constants, `ErrNotFound`, `SortTitle`, `Store.UpsertItem/SetExternalIDs/FileIndex/PutFile/DeleteFiles/CountFiles/PruneEmpty`, `NewModule`.
+- `probe`: concrete `VideoStream`, `AudioStream`, `SubtitleStream`, `Chapter`, `HDRType`, `SubtitleKind`, `Parse`, `DefaultTimeout`; JSON tags on all of them.
+- Columns beyond the contract: `items.scan_key`, `items.extra_type`, `items.episode_number_end`, `items.air_date`, `files.library_id`, `files.probe_error`.
+
+## Self-review
+
+- **Spec 3.1 coverage:** library types (video ones; music/photos deferred per index) → Tasks 3–5; inotify + 6h periodic scan → Task 11 (`Run`, `watch.go`, `FullScanEvery`); ffprobe container/streams/codecs/profiles/levels/bit depth/HDR10/HDR10+/HLG/DV profile/audio channels+format/subtitle text|image|ASS/chapters/duration → Task 1; Sonarr/Radarr naming, `{tmdb-}`/`{tvdb-}`/`[anidb-]` hints, `.nfo` IDs → Tasks 8–10; versions grouped under one movie with labels → Tasks 8, 9, 11 (`File.Version`); Plex extras folders and suffixes → Task 9; broken files logged, listed, never abort → Task 11 (`probe_error`, status errors). "Missing episodes greyed out" depends on metadata: plan 1D/phase 3.
+- **Spec 7:** unit tests per package, fixtures in `testdata/`, a tagged integration test with real ffmpeg (Task 2); the generated test-media set is phase 2.
+- **Safety:** the only filesystem writes in this plan are in tests under `t.TempDir()`; production code only stats, reads and watches.
+- **Placeholders:** none; every code step is the complete file. All code in this plan was compiled and its tests run (`go vet`, `go test -race`) against plan 1A's code before the plan was written.
+- **Type consistency:** `media.Store.UpsertItem(ctx, libraryID, key, Item) (int64, error)` and `PutFile(ctx, libraryID, File) (int64, error)` are used with those signatures in `scan.go`; `library.ScanController` methods match `Scanner.Trigger/Status/Reload`; `library.Visibility` matches 1B's `VisibleLibraryIDs(ctx, authctx.Principal) ([]int64, error)`.
+
+## Open questions
+
+1. 1B's `VisibleLibraryIDs` must return **all** library IDs for admins (this plan's `AdminVisibility` does). Please confirm in 1B.
+2. The index lists `ScanListener`/`AddListener` without a package; this plan puts them in `scanner`. The index should say so.
+3. Should a library's own scan status (last result, broken-file list) persist across restarts now, or wait for the admin dashboard (phase 3)? This plan keeps it in memory; broken files persist via `files.probe_error`.
