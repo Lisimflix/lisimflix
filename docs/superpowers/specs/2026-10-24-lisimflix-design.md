@@ -77,7 +77,7 @@ Each has one job and a documented interface, so team members can own one at a ti
 | Package | Responsibility |
 |---|---|
 | `api` | HTTP routing, auth middleware, JSON API (versioned `/api/v1`), OpenAPI spec |
-| `auth` | Accounts, profiles, sessions/tokens, Argon2id, TOTP, OIDC, invites, rate limiting |
+| `auth` | Accounts, profiles, sessions/tokens, OAuth sign-in (Google, Microsoft, Apple, Facebook, generic OIDC), local admin fallback (Argon2id + TOTP), invites, rate limiting |
 | `library` | Library definitions, file scanning, filesystem watching, ffprobe analysis |
 | `metadata` | Provider interface and providers (TMDB, TVDB, AniList, AniDB, Jikan/MAL, Fanart.tv, MusicBrainz, NFO), ID mapping, artwork cache |
 | `media` | Items domain model: movies, shows/seasons/episodes, versions, extras, collections |
@@ -131,7 +131,8 @@ the contract and the TypeScript client is generated from it.
 ### 3.3 Accounts and profiles
 
 - **Admin:** full server control.
-- **Users:** own login. Created by admin or via invite link / sign-up page (admin-approved).
+- **Users:** sign in with Google, Microsoft, Apple or Facebook (see 6.1). Access is only by admin
+  invite link or an admin-approved sign-up request. A social login on its own never grants access.
 - **Home profiles** under an account ("Who's watching?") with optional 4-digit PIN.
 - Per user/profile policy:
   - visible libraries
@@ -278,7 +279,7 @@ Mockups are in `.superpowers/brainstorm/` (layout options; detail page and playe
 ### 5.3 Admin dashboard
 
 - **Activity:** live sessions with decision + reasons, GPU/CPU/bandwidth, kill stream, message user.
-- **Users & invites:** policies (3.3), sessions/devices, 2FA status.
+- **Users & invites:** policies (3.3), sessions/devices, linked sign-in providers, sign-up requests, OAuth provider setup.
 - **Libraries:** scan status, unmatched items, fix-match, bulk edit.
 - **System:** GPU self-test, logs, scheduled tasks, backups/restore, metadata provider keys, TLS.
 - **Plex import tool.**
@@ -300,8 +301,32 @@ Keyboard-complete, ARIA labels, focus management, readable subtitle defaults in 
 
 ## 6. Security
 
-- Passwords: Argon2id. Sessions: opaque tokens stored hashed, per-device, revocable, "sign out everywhere".
-- Optional TOTP 2FA (admin can require it). Optional OIDC SSO.
+### 6.1 Sign-in (OAuth)
+
+- **Primary sign-in is OAuth 2.0 / OpenID Connect** with **Google, Microsoft (personal +
+  work/school), Apple and Facebook**, plus a **generic OIDC** slot (e.g. Authentik/Keycloak).
+  Authorization Code flow with PKCE, `state` + `nonce` checks, ID-token signature validation
+  against each provider's JWKS. Facebook uses OAuth 2.0 + Graph `/me`, since it is not full OIDC.
+- Each provider is enabled in admin by entering its client ID/secret. A built-in setup guide per
+  provider shows the exact redirect URL (`https://<domain>/api/v1/auth/callback/<provider>`).
+  Unconfigured providers are hidden from the sign-in page, so a fresh install still works.
+- **Requirements:** a public HTTPS domain for redirect URLs (4.8). **Apple** needs an Apple
+  Developer account (US$99/yr), a Services ID and a signing key. **Facebook** needs a Meta developer
+  app with `email` + `public_profile`.
+- **Access control:** users can link several providers to one account. The first sign-in must come
+  through an invite link (which binds that provider identity to the invited account) or a sign-up
+  request the admin approves. Identities are matched on the provider's stable subject ID, never on
+  email alone, to prevent takeover via unverified emails.
+- **Local fallback:** the admin account (from the setup wizard) always keeps a local password
+  (Argon2id) with TOTP 2FA, so the server can still be managed if the internet or a provider is
+  down. Local passwords for other users are off by default (admin toggle).
+- Home profiles (3.3) sit under the signed-in account and use PINs, not OAuth.
+- TV sign-in uses the QR flow (5.4): the phone signs in with any provider and approves the TV.
+
+### 6.2 Sessions and hardening
+
+- Sessions: opaque tokens stored hashed, per-device, revocable, "sign out everywhere".
+  Unlinking a provider identity ends its sessions.
 - Login rate limiting and lockout with backoff. Admin alert on repeated failures.
 - Authorisation is enforced server-side on every item/stream request against library visibility and rating policy.
 - Signed, expiring, user-bound stream/segment URLs.
@@ -338,10 +363,10 @@ Keyboard-complete, ARIA labels, focus management, readable subtitle defaults in 
 
 | # | Phase | Done when |
 |---|---|---|
-| 1 | **Foundation:** container, DB, auth/accounts/profiles, scanner, metadata incl. anime, Plex import, API skeleton | Real zraid libraries scan and match accurately. Users/profiles work via API. |
+| 1 | **Foundation:** container, DB, auth (Google + Microsoft OAuth, invites, local admin)/accounts/profiles, scanner, metadata incl. anime, Plex import, API skeleton | Real zraid libraries scan and match accurately. Users/profiles work via API. |
 | 2 | **Streaming engine:** decision ladder, remux, GPU transcode, ABR HLS, subtitles, HDR tone-map, trickplay, intro detection | Every test-media file plays in all browsers at all throttle levels |
 | 3 | **Web app:** layout C complete, then A and B, TV mode, admin dashboard, PWA | Household can browse and play everything from PC, phone and PS/Hisense browsers |
-| 4 | **Hardening and trial:** 2FA/OIDC/invites, TLS + remote access, backups, bandwidth governance; trial with household + friends next to Plex | Two weeks' trial with no blocking issues |
+| 4 | **Hardening and trial:** Apple + Facebook + generic OIDC sign-in, sign-up requests, TLS + remote access, backups, bandwidth governance; trial with household + friends next to Plex | Two weeks' trial with no blocking issues |
 | 5 | **Android TV + phone app** (Kotlin, Media3), QR sign-in | Native app plays the test set directly where hardware allows |
 | 6 | **Offline downloads:** original or transcoded copies, per-user permission, batch download | A downloaded episode plays offline on Android and the PWA |
 
