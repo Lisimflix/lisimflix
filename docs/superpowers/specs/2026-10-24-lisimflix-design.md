@@ -352,7 +352,9 @@ Keyboard-complete, ARIA labels, focus management, readable subtitle defaults in 
 
 - Private repo `Lisimflix/lisimflix`, monorepo: `server/` (Go), `web/` (React), `docs/`,
   `deploy/` (compose, Unraid template), `testdata/`. Android goes in `Lisimflix/lisimflix-android` (phase 5).
-- `main` is protected: PR + 1 review + green CI required.
+- `main` is protected by team rule: PR + 1 review + green CI required. The org is on the free plan,
+  so a `.githooks/pre-push` hook blocks direct pushes instead of GitHub branch protection (see `CONTRIBUTING.md`).
+  Switch to a GitHub ruleset when the org upgrades.
 - GitHub Actions on PRs: lint, unit tests, web build, E2E (CPU). On merge to `main`: build and push
   `ghcr.io/lisimflix/lisimflix:edge`. Tags `vX.Y.Z` push versioned + `latest`.
 - Work is tracked as GitHub Issues on an org Project board, grouped by phase/milestone.
