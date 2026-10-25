@@ -320,6 +320,34 @@ Watcher events are hints. Overflow, remount and restart trigger reconciliation;
 periodic full scans cover missed events and network mounts. Duplicate work coalesces.
 Scans are resumable/idempotent. Cancel preserves completed work and stops owned probes.
 
+Discovery supports filesystem hints, scheduled reconciliation, manual **Scan now**
+and optional Sonarr/Radarr import notifications. These paths feed the same bounded
+scan pipeline. There is **no universal one-minute discovery deadline**: local/network
+storage, import method, mount visibility and stable-file checks affect availability.
+Measure discovery/probe/enrichment separately per deployment and show queued, waiting
+for source, scanning, metadata pending, completed and failed states with reasons.
+
+**LIB-4 — import-triggered scans:** an administrator can configure Sonarr/Radarr to
+notify Lisimflix after import/upgrade. A validated event queues only the affected
+file/folder/library, not a full-catalogue scan per imported file. Batch/season-pack
+events and duplicate notifications coalesce by source/revision. A successful receipt
+means queued, not that an item has already become playable or fully matched.
+
+Notifications are optional hints, not proof a file is stable or permission to accept
+arbitrary filesystem paths. Authenticate each source with revocable credentials
+limited to its configured scan roots; redact credentials and bound payload/event rates.
+Apply explicit remote-to-container path mappings before resolving within approved
+roots. Reject path escapes/unmapped roots; an absent/offline file is visible retryable
+work, never a reason to retire the whole library. Never execute payload commands.
+No callback can delete media, grant library access or bypass probe/stability checks.
+
+Adapters validate the supported Sonarr/Radarr version and event schema; setup includes
+a connection test. Connection-test events validate reachability/authentication without
+launching a full scan. Missed notifications are recovered by normal reconciliation.
+Both applications expose webhook notifications in their current official source:
+[Sonarr](https://github.com/Sonarr/Sonarr/blob/develop/src/NzbDrone.Core/Notifications/Webhook/Webhook.cs),
+[Radarr](https://github.com/Radarr/Radarr/blob/develop/src/NzbDrone.Core/Notifications/Webhook/Webhook.cs).
+
 ffprobe has bounded concurrency, deadlines and output. Proposed defaults: 2 probes,
 30 seconds each, 8 MiB captured JSON. Limit violations are visible failures, not
 silently truncated successful results. Admin can retry with an explicit override.
@@ -1208,6 +1236,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | LIB-1 | **Read-only discovery/probe:** stable-file checks, bounded jobs and source revisions | P0 / G1 | SAFE-01, 3.6; temporary-directory and probe fixtures | `area:library` |
 | LIB-2 | **Resilient catalogue:** resumable scans, watcher reconciliation and offline-root safety | P0 / G1 | SCAN-01, SCALE-01–02, PERF-05; temporary SQLite/root-disconnect fixtures plus actual-scale qualification | `area:library` |
 | LIB-3 | **Versions and extras:** stable logical identities, version choice and supplemental media | P1 / G2 | 3.1, 10.1; version/cut reconciliation fixtures | `area:media` |
+| LIB-4 | **Import-triggered scans:** optional authenticated Sonarr/Radarr notifications queue scoped, coalesced scans through the standard pipeline | P0 / G1 library milestone | SCAN-02, 3.6; import/upgrade/test, duplicate/batch, path-mapping and missed-event fixtures | `area:library`, `area:api` |
 | META-1 | **Basic matching:** NFO/provider hints, candidate matches, locks and permitted primary provider | P0 / G1 | 3.2, 3.7, SCALE-03, PERF-05; local/provider fake fixtures and actual-scale edits; offline playback unaffected | `area:metadata` |
 | META-2 | **Anime identity/order:** versioned mappings, alternate numbering and fix-match preservation | P1 / G2 | META-01, 3.7 | `area:metadata` |
 | META-3 | **Extended enrichment:** additional approved providers, art/ratings and language variants | P2 / G4 | 3.2, 3.7; provider terms and contract fixtures | `area:metadata` |
@@ -1254,7 +1283,7 @@ at once when only 2–3 people are available. Use feature plans to keep PRs smal
 | A · Platform | CTR-1 seed coordination, OPS-1–4; manifests/build/deploy/bootstrap wiring | Fresh image, DB/health and checks; contract/fixture work starts immediately | Consumer contributions to CTR-1; real player/media adapters for final image smoke | _unassigned_ |
 | B · Playback | PLY-1–4, SUB-1 and local LIB-1 probe boundary; playback/transcode/subtitle backend files | Sample descriptors + owned files + temporary cache; real ffmpeg and isolated HTTP tests after tiny contract/manifests seed | ACC-2 policy adapter, catalogue/source resolver and UI-1/3 for FIRSTPLAY integration | _unassigned_ |
 | C · Player | UI-1–3; player components and client adapter files | Browser fixture adapter and real test video, without Go server, DB, auth service or deployed skeleton | PLY/session API, SUB-1 subtitle producer and ACC-1/2 + DATA-1 adapters for integrated viewing | _unassigned_ |
-| D · Catalogue/identity | LIB-2, META-1, ACC-1/2, DATA-1/2 as separately claimed features | Temporary repositories, fake providers and contract fixtures; no running container/player needed | Route/schema migration coordination and real auth/catalogue wiring | _unassigned_ |
+| D · Catalogue/identity | LIB-2/4, META-1, ACC-1/2, DATA-1/2 as separately claimed features | Temporary repositories, fake providers and contract fixtures; no running container/player needed | Route/schema migration coordination and real auth/catalogue wiring; LIB-4 uses source-scoped authenticated ingress | _unassigned_ |
 | E · Integration/qualification | FIRSTPLAY evidence, OPS-4 and G2/G3 matrix | Shared fixture manifest, deployment instructions and harness design from day one | Real implementations of the journey being claimed; no mock-only Goal 1 sign-off | _unassigned_ |
 
 Track D is the next ready work pool when one of the initial three contributors frees
@@ -1421,7 +1450,7 @@ exact paths belong in the first API contract PR, not independent client guesses.
 | Family | Required operations / rules |
 |---|---|
 | Setup/auth/accounts/profiles | One-time bootstrap, login/logout, provider callback/link, invite redemption, profile grants, revocation |
-| Libraries/items/search | Paginated authorised queries, detail/versions/tracks, artwork, scan status and admin matching |
+| Libraries/items/search | Paginated authorised queries, detail/versions/tracks, artwork, scan jobs/status, admin matching and scoped optional import-notification ingestion |
 | User data | Progress events, watched overrides, history/watchlist/preferences, conflict/revision behaviour |
 | Playback | Prepare/start, heartbeat/progress, seek/quality generation, stop, authorised range/HLS/subtitle access |
 | Admin/jobs/recovery | Activity, safe cancellation, scan/import dry-run/apply, backup/restore, diagnostics |
@@ -1547,6 +1576,7 @@ is useful comparative evidence, not a guarantee inherited by this application.
 |---|---|---|
 | SAFE-01 | Source media stays unchanged | G1/G2: read-only mounts plus before/after source metadata checks during scan/import/play |
 | SCAN-01 | Offline roots never mass-retire data | G1: disconnect/empty-root/return fixtures and interrupted scan recovery |
+| SCAN-02 | Optional import events safely trigger scoped scans | G1 library milestone: authenticated import/upgrade/test events, deduped season packs, path escapes/mappings, unavailable roots, missed-event reconciliation and receipt-versus-completion status |
 | META-01 | Locks/mappings preserve user intent | G2: refresh/order/fix-match with watched episodes and conflicting providers |
 | AUTH-01 | Every resource observes policy | G1/G3: swapped account/profile IDs, art/fonts/subtitles/segments and revoked sessions |
 | PLAY-01 | Deterministic route and reasons | G1/G2: file × capability × policy table tests plus real subprocess output |
@@ -1589,7 +1619,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 |---|---|---|---|
 | D01 | Must first trial include all media types/providers/layouts? | Movies/TV/anime + layout C first; retain expansion ledger | G1/G2 scope approval |
 | D02 | Which deployment profiles and independent operators qualify the first release? | zraid is confirmed as Lammy's Unraid reference; select another independently configured installation, generic Linux-container + CPU-only coverage and per-profile capacity evidence | Published deployment/support claims |
-| D03 | Which client/device profiles qualify the first release? | Name browser/models/versions across independent installations; include representative TV/mobile/desktop journeys without limiting the product to one household | G0 matrix |
+| D03 | Which client/device profiles qualify beyond M1? | M1 approved: Chrome/Firefox on Linux/Windows/macOS; record tested versions. TV/mobile/additional client profiles still need qualification | Wider G2/G3 matrix; M1 platform selection settled |
 | D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
 | D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
 | D06 | Are AniList and mapping sources permitted/sufficient? | Validate API terms and dataset coverage; local matching survives provider outage | Specific providers and outbound sync |
@@ -1597,7 +1627,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 | D08 | Profile PIN / child-policy guarantees? | Server-enforced restricted profile grants; account controller remains privileged; deny unrated by default for kids | Policy UX and security tests |
 | D09 | Remote ingress and TLS ownership? | Existing reverse proxy first, explicit trusted-proxy settings; built-in ACME later | Remote deployment |
 | D10 | Plex access and import completeness? | Validate a read-only source method/user-state sample before promising full history | Import implementation |
-| D11 | Numeric defaults and performance targets? | Adopt provisional values only after G0 measurements and owner review | Acceptance sign-off |
+| D11 | Which remaining numeric defaults/targets are accepted? | Approved: actual-scale baseline and PERF-05 one-second browse/search target. Discovery has no universal one-minute deadline; remaining budgets/targets await measurement/review | Remaining acceptance sign-off |
 | D12 | Backup destination, recovery owner and key custody? | Owner names external copy target and tests restore before remote trial | Disaster-recovery claim |
 | D13 | Original mockups missing from tracked repo? | Supply versioned references or approve described layout C without them | Visual sign-off, not playback spike |
 | D14 | License and specialist fixture redistribution? | Pin builds; document notices/source and sample rights before publication | Image/test artifact distribution |
@@ -1625,6 +1655,7 @@ when implementing. External documents establish constraints, not local host read
 | [OAuth BCP RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html) | Provider adapter and authentication security requirements |
 | [AniList terms](https://docs.anilist.co/guide/terms-of-use), [limits](https://docs.anilist.co/guide/rate-limiting), [Anime-Lists](https://github.com/Anime-Lists/anime-lists) | Provider-use constraints, backoff and mapping verification |
 | [FFmpeg license guidance](https://www.ffmpeg.org/legal.html) | Distribution review for the actual bundled build |
+| [Sonarr webhook implementation](https://github.com/Sonarr/Sonarr/blob/develop/src/NzbDrone.Core/Notifications/Webhook/Webhook.cs), [Radarr webhook implementation](https://github.com/Radarr/Radarr/blob/develop/src/NzbDrone.Core/Notifications/Webhook/Webhook.cs) | Optional import/upgrade notification adapter contracts; supported installed versions still require fixtures |
 
 Not performed in this revision: reference-host access, GPU/codec benchmarks, real-device tests,
 provider app registration, API credential use, Plex extraction, legal clearance or
