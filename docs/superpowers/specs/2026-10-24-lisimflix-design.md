@@ -1052,6 +1052,40 @@ ordering. Foundation, playback packages and the player can progress in parallel 
 section 8. G0 experiments also run alongside them. Remaining release
 scope and numeric performance proposals still require maintainer review.
 
+#### M1 — one complete movie in a browser at original quality
+
+This is the first measurable playback milestone, confirmed by Pete. A complete
+browser-compatible movie plays through the real Lisimflix media endpoint and browser
+player at its original video and audio quality, without re-encoding or modifying the
+source. For this first proof use direct play: select a source whose container, video
+and audio are supported by the named browser. Universal codec support is not implied.
+
+| ID | Pass criterion | Required evidence |
+|---|---|---|
+| MOVIE-01 | The movie plays from beginning to end with video and audio | Record the source identity/duration and browser/OS version; an uninterrupted full-duration run reaches the actual end with advancing video and audible, synchronised audio. A short clip or a seek to the last frame is not end-to-end proof. |
+| MOVIE-02 | Original encoded video and audio are delivered unchanged | Route is direct play; source codec/profile, resolution, frame rate and selected audio stream are preserved. No video/audio encoder job runs, no lower-bitrate rendition substitutes for the source, and representative HTTP range bytes match the source. Browser decoding for display/audio output is expected. |
+| MOVIE-03 | Playback remains stable on a suitable connection | Record host, storage, connection and source bitrate. With enough sustained bandwidth and working storage, the full run has no crash, unhandled playback error or post-start buffering interruption. Record startup time separately; the initial M1 pass does not depend on the provisional p95 benchmarks. |
+| MOVIE-04 | Source media remains untouched | Media is mounted read-only and before/after source integrity checks match. Only application-owned config/cache paths may receive writes. |
+
+The test uses a complete movie the tester is authorised to use, with a known duration.
+Live server/player/media integration is required: a fixture-only UI, `file://` playback
+or opening the source outside Lisimflix cannot pass M1. Record the result with its
+limitations; one source/browser combination does not certify all movies or devices.
+
+M1 needs only enough safe runtime, media selection and player functionality to prove
+these four outcomes. A controlled local proof can use one authorised test account;
+production access remains protected under section 6. A completed foundation checklist,
+full scanner, external metadata, multi-user administration, subtitles, watch-progress
+persistence, transcoding and polished layouts are not M1 prerequisites. The real
+dependencies are the small source/delivery/player contracts and required safety checks.
+Other features continue in parallel against their agreed harnesses.
+
+M1 is a subset of G1, not a redefinition of all G1 completion criteria. Remux,
+software/hardware conversion, subtitles, seeking, persistent resume, failure recovery
+and additional browsers remain the broader FIRSTPLAY and later support-matrix work.
+Container-only remux may preserve encoded quality, but it is a separate proof from
+the direct-play baseline selected here.
+
 #### G1a — internal foundation work package
 
 The foundation provides the deployed runtime for the integrated playback loop.
@@ -1095,7 +1129,7 @@ run; removing a failing mandatory case does not count as passing it. Hardware de
 complex ASS/bitmap rendering, HDR/DV and seamless ABR expand the support matrix through
 their own later gates. Passing G1b does not imply universal format/device compatibility.
 
-The implementation plan decomposes BASE/FIRSTPLAY outcomes into files, interfaces,
+The implementation plan decomposes MOVIE/BASE/FIRSTPLAY outcomes into files, interfaces,
 ordered tasks and concrete tests. This spec defines the acceptance boundary; it does
 not prescribe a directory full of empty future modules as a deliverable.
 
@@ -1139,7 +1173,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
 |---|---|---|---|---|
 | PLY-1 | **Playback decisions:** deterministic route/track selection with policy and reasons | P0 / G1 | PLAY-01; table tests consume probe/capability/policy fixtures | `area:playback` |
-| PLY-2 | **Direct media delivery:** authorised range responses and remux playback | P0 / G1 | FIRSTPLAY-01–02, 4.1, 12; real sample bytes in isolated HTTP harness | `area:playback`, `area:transcode` |
+| PLY-2 | **Direct media delivery:** authorised range responses and remux playback | P0 / G1 | MOVIE-01–04 for initial direct play; FIRSTPLAY-01–02, 4.1, 12 for wider delivery; real sample bytes in isolated HTTP harness | `area:playback`, `area:transcode` |
 | PLY-3 | **Software conversion:** supervised bounded SDR conversion and manual quality | P0 / G1 | FIRSTPLAY-01–02, 4.9–4.10; real ffmpeg sample output | `area:transcode` |
 | PLY-4 | **Session lifecycle:** seek generations, pause/expiry/stop and job cleanup | P0 / G1 | FIRSTPLAY-03–04, PLAY-02; isolated supervisor/session tests | `area:playback`, `area:transcode` |
 | PLY-5 | **Qualified acceleration:** optional backend probes, admission and bounded fallback | P1 / G2 | 2.3, 4.6, PLAY-02; per-backend evidence | `area:transcode` |
@@ -1171,7 +1205,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | ACC-2 | **Content policy:** server-enforced account/profile/library/rating rules | P0 / G1 | AUTH-01; shared evaluator with deny/allow fixtures | `area:auth` |
 | ACC-3 | **Invites and initial social sign-in:** Google/Microsoft identity/linking and TV pairing | P1 / G3 | REMOTE-01, 6.4–6.5 | `area:auth` |
 | ACC-4 | **Additional sign-in:** remaining providers, generic OIDC and approved signup requests | P2 / G4 | 6.1, 6.4; provider-specific security fixtures | `area:auth` |
-| UI-1 | **Player surface:** transport controls, media events, tracks, quality and errors | P0 / G1 | FIRSTPLAY-01–04; fixture-backed real-video browser harness | `area:web` |
+| UI-1 | **Player surface:** transport controls, media events, tracks, quality and errors | P0 / G1 | MOVIE-01–03 for first integrated movie; FIRSTPLAY-01–04 for broader controls; fixture-backed real-video browser harness for module acceptance | `area:web` |
 | UI-2 | **Browse-to-play:** layout C, permitted library/detail selection and resume | P0 / G1 | 5.1–5.2, 5.7; API-fixture module acceptance then real API integration | `area:web` |
 | UI-3 | **Text subtitle player:** selected sidecars, offsets and seek resynchronisation | P0 / G1 | 4.4, FIRSTPLAY-02–03; real browser rendering; module harness consumes agreed subtitle fixtures, integration consumes SUB-1 | `area:web`, `area:subtitles` |
 | UI-4 | **Advanced subtitles:** ASS/fonts and bitmap burn-in/client support gates | P1 / G2 | TEXT-01, 4.11; renderer/device evidence | `area:subtitles`, `area:web`, `area:transcode` |
@@ -1476,6 +1510,7 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | UX-01 | Accessible viewing journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
 | REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
 | DEPLOY-01 | Independent installations require no contributor-specific configuration | G1/G2: fresh generic non-Unraid + CPU-only deployment, second independent configuration, remapped-root restore, distinct accounts/keys and absence of private host defaults |
+| MOVIE-01–04 | First measurable milestone is one complete original-quality movie in a browser | M1 within G1: the four direct-play criteria in 9.3; real full-duration playback and unchanged source/encoded delivery |
 | BASE-01–05 | Internal foundation enables a runnable, testable application | G1a: the five foundation acceptance rows in 9.3; skeleton completion alone is not Goal 1 completion |
 | FIRSTPLAY-01–05 | First product goal is demonstrated reliable playback | G1b: the five playback outcomes in 9.3 with declared fixtures, clients and PERF/PLAY/DATA evidence |
 
