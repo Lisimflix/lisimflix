@@ -1206,9 +1206,9 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
 |---|---|---|---|---|
 | LIB-1 | **Read-only discovery/probe:** stable-file checks, bounded jobs and source revisions | P0 / G1 | SAFE-01, 3.6; temporary-directory and probe fixtures | `area:library` |
-| LIB-2 | **Resilient catalogue:** resumable scans, watcher reconciliation and offline-root safety | P0 / G1 | SCAN-01; temporary SQLite/root-disconnect fixtures | `area:library` |
+| LIB-2 | **Resilient catalogue:** resumable scans, watcher reconciliation and offline-root safety | P0 / G1 | SCAN-01, SCALE-01–02, PERF-05; temporary SQLite/root-disconnect fixtures plus actual-scale qualification | `area:library` |
 | LIB-3 | **Versions and extras:** stable logical identities, version choice and supplemental media | P1 / G2 | 3.1, 10.1; version/cut reconciliation fixtures | `area:media` |
-| META-1 | **Basic matching:** NFO/provider hints, candidate matches, locks and permitted primary provider | P0 / G1 | 3.2, 3.7; local/provider fake fixtures; offline playback unaffected | `area:metadata` |
+| META-1 | **Basic matching:** NFO/provider hints, candidate matches, locks and permitted primary provider | P0 / G1 | 3.2, 3.7, SCALE-03, PERF-05; local/provider fake fixtures and actual-scale edits; offline playback unaffected | `area:metadata` |
 | META-2 | **Anime identity/order:** versioned mappings, alternate numbering and fix-match preservation | P1 / G2 | META-01, 3.7 | `area:metadata` |
 | META-3 | **Extended enrichment:** additional approved providers, art/ratings and language variants | P2 / G4 | 3.2, 3.7; provider terms and contract fixtures | `area:metadata` |
 | DATA-1 | **Personal progress:** ordered events, watched rules, resume and user overrides | P0 / G1 | DATA-01, PERF-06, 3.8; in-memory/temporary repository harness | `area:userdata` |
@@ -1225,7 +1225,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | ACC-3 | **Invites and initial social sign-in:** Google/Microsoft identity/linking and TV pairing | P1 / G3 | REMOTE-01, 6.4–6.5 | `area:auth` |
 | ACC-4 | **Additional sign-in:** remaining providers, generic OIDC and approved signup requests | P2 / G4 | 6.1, 6.4; provider-specific security fixtures | `area:auth` |
 | UI-1 | **Player surface:** transport controls, media events, tracks, quality and errors | P0 / G1 | MOVIE-01–03 for first integrated movie; FIRSTPLAY-01–04 for broader controls; fixture-backed real-video browser harness for module acceptance | `area:web` |
-| UI-2 | **Browse-to-play:** layout C, permitted library/detail selection and resume | P0 / G1 | 5.1–5.2, 5.7; API-fixture module acceptance then real API integration | `area:web` |
+| UI-2 | **Browse-to-play:** layout C, permitted library/detail selection and resume | P0 / G1 | 5.1–5.2, 5.7, PERF-05, SCALE-02; API-fixture module acceptance then actual-scale API/browser integration | `area:web` |
 | UI-3 | **Text subtitle player:** selected sidecars, offsets and seek resynchronisation | P0 / G1 | 4.4, FIRSTPLAY-02–03; real browser rendering; module harness consumes agreed subtitle fixtures, integration consumes SUB-1 | `area:web`, `area:subtitles` |
 | UI-4 | **Advanced subtitles:** ASS/fonts and bitmap burn-in/client support gates | P1 / G2 | TEXT-01, 4.11; renderer/device evidence | `area:subtitles`, `area:web`, `area:transcode` |
 | UI-5 | **Accessible TV/mobile journeys:** focus, D-pad, keyboard, touch and error states | P1 / G2 | UX-01, 5.8; basic accessible controls required from G1 | `area:web`, `accessibility` |
@@ -1448,7 +1448,8 @@ and source changes; response length/content type must match actual served media.
 
 ### 13.1 Proposed performance targets
 
-These are provisional targets for owner review, not claims of achieved performance.
+PERF-05 and the actual-scale workload below were approved by Pete; the other numeric
+targets remain provisional for owner review. None is a claim of achieved performance.
 Record host, dataset, network latency/loss, client versions, cache state, resolution,
 input bitrate, duration and test count. Measure at least 20 starts/seeks for p95 claims;
 small smoke runs report individual samples instead of misleading percentiles.
@@ -1459,7 +1460,7 @@ small smoke runs report individual samples instead of misleading percentiles.
 | PERF-02 | Seek to requested content | p95 ≤3s cached, ≤8s cold transcode; position within 1s after stabilising |
 | PERF-03 | Stability | Rebuffer ≤1% of played time in each 30-minute supported-path run with adequate sustained bandwidth |
 | PERF-04 | Capacity | Sustain the declared stream/conversion mix for each published deployment profile for 60 minutes; no unbounded queue/memory growth; deliberate excess load is rejected safely |
-| PERF-05 | Browsing | p95 server search/list response ≤500ms on owner-provided catalogue size; UI remains navigable while scanning |
+| PERF-05 | Interactive browsing and search | p95 ≤1 second from user action to usable, correct results visible in the browser on LAN at the actual-scale baseline below, including during scan and metadata-update workloads; report server/query timing separately |
 | PERF-06 | Progress | Resume within 15s after client crash; explicit watched override survives stale/replayed events |
 | PERF-07 | Recovery | Backup ≤24h RPO; restore rehearsal ≤30min under documented dataset conditions |
 
@@ -1473,6 +1474,34 @@ storage, catalogue, network and conversion mix. The legacy three-stream/two-tran
 observation may be a reference workload, never a universal minimum or maximum. Publish
 minimum tested resources separately from larger benchmark profiles. Limits are local
 configuration, and overload behaviour must pass even on the smallest supported profile.
+
+#### Actual-scale library acceptance
+
+Pete's reported collection is approximately **5,000 movies and 1,000 shows**, including
+their actual individual TV/anime episodes. This is the minimum large-library test
+workload for the early library/interface milestone, not a minimum installation size.
+Record exact film/show/episode/file totals, catalogue/artwork size, host resources and
+storage/network topology when qualifying it; show count alone does not measure cost.
+TV/Anime are separate configured types; do not duplicate the same series to inflate counts.
+
+Use this real collection or an authorised equivalent at its measured scale. No new
+media purchases or extra storage for a larger hypothetical library is required.
+Small/generated fixtures still test failures and contracts; they cannot replace the
+large-library acceptance run. Larger capacity claims need separate future evidence.
+
+| ID | Workload / outcome | Acceptance evidence |
+|---|---|---|
+| SCALE-01 | Initial and repeat scans remain bounded and observable | Full baseline scan records elapsed time, file/probe/provider counts, queue/DB waits and errors; repeat scans avoid re-probing unchanged file revisions. Progress/cancellation work and source media stays unchanged. Initial scan-duration target is set after measurement. |
+| SCALE-02 | Browse and search stay fast while library work runs | PERF-05 passes independently at idle, during a rescan and during metadata updates on the populated baseline. Include title/alternate-title searches, filters, sorting and deep browsing; results respect permissions and show real selectable items rather than empty acknowledgements/loading placeholders. |
+| SCALE-03 | Metadata correction preserves intent without freezing the catalogue | Correct a match, lock an edited field and run a representative bulk update at baseline scale; work reports progress/per-item failures, preserves manual changes through refresh/rescan, and concurrent browse/search meets PERF-05. Long work runs as bounded jobs rather than one unbounded write transaction. |
+| SCALE-04 | Performance failures have measured causes | Record representative query plans/durations, database busy/lock time, transaction duration, queue depth, filesystem/provider waits and resource use. Use evidence to distinguish database, scanner, provider and UI costs; no unmeasured database-engine replacement or claim of superiority to another product. |
+
+Measure each workload separately, including warm/cold cache observations and the
+documented browser/network conditions. For PERF-05 record enough representative
+interactions to report its percentile honestly, not only the fastest query. During
+an incomplete initial scan, clearly label partial results; the populated-catalogue
+load test must not silently shrink the indexed dataset to meet the timing target.
+Profiling adds bounded telemetry, not conversation/viewing data sent to third parties.
 
 ### 13.2 Required test dimensions
 
@@ -1530,6 +1559,7 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
 | DEPLOY-01 | Independent installations require no contributor-specific configuration | G1/G2: fresh generic non-Unraid + CPU-only deployment, second independent configuration, remapped-root restore, distinct accounts/keys and absence of private host defaults |
 | MOVIE-01–04 | First measurable milestone is one complete original-quality movie in a browser | M1 within G1: the four direct-play criteria in 9.3; real full-duration playback and unchanged source/encoded delivery |
+| SCALE-01–04 | Large-library scanning, browsing and metadata management qualify early | First library/interface milestone: actual-scale workload in 13.1 with PERF-05 and measured bottlenecks |
 | BASE-01–05 | Internal foundation enables a runnable, testable application | G1a: the five foundation acceptance rows in 9.3; skeleton completion alone is not Goal 1 completion |
 | FIRSTPLAY-01–05 | First product goal is demonstrated reliable playback | G1b: the five playback outcomes in 9.3 with declared fixtures, clients and PERF/PLAY/DATA evidence |
 
