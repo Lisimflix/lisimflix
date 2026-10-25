@@ -12,7 +12,9 @@ This is a product and engineering contract, not a claim that the application exi
 The repository currently contains design and team workflow documents, not a working server.
 The 2026-10-25 additions are proposals for review, including the release boundary,
 numeric defaults and performance targets. They must not be described as decisions
-already approved by either owner.
+already approved by either project maintainer. Pete confirmed on 2026-10-25 that
+zraid is Lammy's Unraid server and that the product must serve independent deployments;
+the original installation-specific design is not the product boundary.
 
 **MUST** means required within the feature's agreed release. **SHOULD** means the
 implementation can differ if its PR records the reason and user impact. **MAY** means
@@ -26,7 +28,7 @@ An unresolved item blocks the affected feature, not unrelated work.
 |---|---|---|---|
 | Editorial cleanup of the original scope | Small diff; preserves every original promise | Leaves hard playback assumptions and completion criteria unresolved | Insufficient for this review |
 | Detailed contract with a thin working playback slice first | Tests the reason for building early; retains later features explicitly | Changes delivery order; needs owner agreement on first-trial devices | Recommended in this draft |
-| Full feature parity before household testing | Broad first release | Delays real-device evidence and puts too many independent risks on the critical path | Not recommended |
+| Full feature parity before deployment testing | Broad first release | Delays real-device evidence and puts too many independent risks on the critical path | Not recommended |
 
 The recommended approach keeps Go, React, SQLite and a single container. It adds no
 microservices, plugin system, distributed workers or speculative Postgres implementation.
@@ -55,13 +57,16 @@ which section 14 proposals are accepted or changed before implementation plans a
 
 ### 0.4 Evidence and confidence
 
-The zraid paths, GPU, driver and usage counts below came from the original design.
-They have not been independently checked in this review. zraid is not identified in
-Pete's project notes; do not equate it with Gen2 or any other host. The deployment
-owner must provide the actual host, GPU/driver/runtime evidence, usable cache space,
-library counts, upload bandwidth and exact client models before capacity is signed off.
-The original play totals also leave three plays unclassified (283 versus 218 + 62);
-retain the raw report before making capacity decisions from those figures.
+Product requirements are deployment-neutral. A reference installation is evidence
+for its tested configuration, never the definition of all users, host paths, GPU
+vendors, library sizes or stream limits. Lammy's original setup is recorded separately
+in [Reference installations](../../testing/reference-installations.md). Its ownership
+is confirmed by Pete; its hardware, driver, usage and playback claims still need tests.
+
+Each test installation records OS/container runtime, CPU/RAM, optional accelerator and
+driver, writable storage, media mounts, catalogue size, network and client versions.
+Release claims name the configurations actually tested. Do not equate a contributor's
+host with another deployment or require access to their private library for release.
 
 External references in section 15 support technical constraints. Product limits and
 acceptance targets are proposals, not measurements obtained from those references.
@@ -71,18 +76,43 @@ acceptance targets are proposals, not measurements obtained from those reference
 Lisimflix is a self-hosted media server and player that covers what Plex and
 Jellyfin do as its own independent product. Core administration and local playback
 do not require a vendor account; external metadata and social sign-in are optional
-integrations with their own availability and terms. It runs next to the existing
-Plex server on zraid until the household is happy to switch.
+integrations with their own availability and terms. Anyone in the supported deployment
+matrix can run an independent instance for their own local and invited viewers.
+Existing Plex/Jellyfin users may trial it alongside their server; new installations
+do not need either product, its database or a contributor's infrastructure.
+
+### 1.1 Product audience and deployment independence
+
+The product serves individual self-hosters, households and administrators sharing
+their own libraries with invited remote users. One independently administered
+instance supports multiple accounts/profiles and libraries; different installations
+keep their own identities, configuration, metadata keys, media and user data.
+This is a reusable self-hosted application. Federation, hosted multi-tenant SaaS and
+distributed transcode clusters are outside this design's current scope.
+
+Hostnames, media paths, usernames, server names, domains and provider credentials
+are supplied at setup, never compiled into code, seed data or UI copy. Documentation
+uses placeholders and working generic deployment examples. A contributor's private
+services, Sonarr/Radarr tags, VPN, GPU, reverse proxy or network layout cannot be a
+hidden installation prerequisite. External integrations remain independently optional.
+
+The supported baseline is a Linux container with CPU-only direct play/remux and
+bounded software conversion. Hardware acceleration is an optional capability with
+separately qualified backends. NVIDIA is the initial candidate already described;
+Intel/AMD are additional backend candidates, not advertised support until proven.
+Non-Unraid deployments use the generic compose path. Architecture and resource limits
+are published per tested configuration rather than claiming every host can transcode
+every file. Build/version-specific capability evidence remains mandatory.
 
 ### Goals
 
-- Long-term coverage of the household's core Plex/Jellyfin functions: libraries, metadata (including anime), multiple
+- Long-term coverage of self-hosted media users' core Plex/Jellyfin functions: libraries, metadata (including anime), multiple
   accounts and profiles, personal home screens, watch progress, remote access.
 - Reliable playback for a published file/client/network matrix, with an explicit
   fallback or clear unsupported result outside it. Lag and unplayable formats were
   the reason the earlier Jellyfin attempt was abandoned; impossible bandwidth or
   hardware combinations must not be presented as guaranteed smooth streaming.
-- One Docker container. Simple to deploy, back up and replicate on any machine.
+- One Docker container. Simple to deploy, back up and migrate across supported hosts.
 - Built by an organisation team in parallel through PRs and CI.
 
 ### Non-goals
@@ -97,15 +127,25 @@ Plex server on zraid until the household is happy to switch.
   provide one. Casting and support for devices without a browser need a separate decision.
 - Streaming-service content, ads or "Discover" style promotion. These are never added.
 
-### Known context (zraid, Oct 2026)
+### 1.2 Supported environments and configuration
 
-- Media: `/mnt/user/dataz/media` (Sonarr/Radarr-managed, anime separated via tags).
-- GPU: NVIDIA GTX 1070 (Pascal), driver 580, `nvidia` Docker runtime already in use by Plex.
-  It decodes H.264/HEVC (incl. 10-bit)/VP9 and encodes H.264/HEVC. It **cannot decode AV1**.
-- CPU: 12 threads, 27 GB RAM.
-- Tautulli 90-day usage: 7 users, peak 3 concurrent streams / 2 transcodes, 283 plays
-  (218 direct play, 62 transcode). Platforms: Android 199, Windows 20, Opera 11,
-  iOS 11, PlayStation 8, VIDAA 7. VIDAA always transcoded and PlayStation half the time.
+| Environment | Product contract | Evidence needed |
+|---|---|---|
+| Generic Linux container, no GPU | Required baseline; browse, direct/remux, supported subtitles and bounded software conversion | Fresh deploy and restore, representative playback, overload behaviour on a declared CPU/RAM profile |
+| Generic Linux container, qualified accelerator | Same application/configuration with optional device access and tested pipeline | Per-backend codec/filter/driver tests and measured capacity; GPU absence/failure handled safely |
+| Unraid | Deployment adapter for the same image and public configuration contract | Template/mount/permissions checks; no separate Unraid-only product behaviour |
+| Untested OS/architecture/accelerator | Explicitly experimental until qualified | Versioned image, runtime, codec and recovery evidence before promotion |
+
+Settings include library roots, public URL/trusted ingress, account policies, job and
+stream budgets, cache/free-space limits, metadata providers and accelerator preference.
+Reject invalid settings with actionable validation. Show effective configuration and
+detected capabilities without exposing secrets. Backup/restore remains portable across
+supported hosts: remap mount roots, re-probe devices and preserve item/user identities.
+
+Library discovery works with manually organised files. Sonarr/Radarr naming and NFO
+are optional matching aids. Do not depend on a particular host folder, tag collection
+or a running Sonarr/Radarr service. Paths in API/config refer to container-visible
+roots, with host-to-container mappings documented per installation.
 
 ## 2. Architecture
 
@@ -134,9 +174,10 @@ ghcr.io/lisimflix/lisimflix
 - **No GPU:** direct play and remux remain available. CPU encoding (libx264) is a
   bounded fallback for profiles the host can sustain; unsupported real-time workloads
   are refused or offered a lower quality. CPU HDR/DV conversion requires separate proof.
-- Deploy: one `docker-compose.yml` and one Unraid template, 3 volumes and HTTP port
-  8420 behind an optional reverse proxy. GPU access and later built-in TLS are
-  explicitly configured; see 11.1 for listener/privilege requirements.
+- Deploy: one generic `docker-compose.yml` and one optional Unraid template, 3 volumes
+  and HTTP port 8420. Authenticated G1 access requires operator-configured HTTPS
+  ingress; until in-container TLS exists this is a reverse proxy. GPU access is
+  optional. See 11.1 for listener/privilege requirements.
 - First run opens a setup wizard: admin account, server name, libraries, metadata keys.
 - **Backup/restore:** use a consistent SQLite snapshot plus durable configuration;
   copying only a running WAL database file is not a backup procedure. A stopped,
@@ -166,6 +207,21 @@ Each has one job and a documented interface, so team members can own one at a ti
 
 API clients (web now, Android later) use only the public `/api/v1`. The OpenAPI spec is
 the contract and the TypeScript client is generated from it.
+
+### 2.3 Optional acceleration and portable configuration
+
+Playback selects a capability-backed execution plan, not a fixed vendor pipeline.
+The supervisor accepts software or qualified hardware decode/filter/encode stages
+and records their actual backend. Vendor-specific probing/arguments stay in the
+transcode implementation; account, library and client APIs do not expose NVIDIA-only
+assumptions. Do not add speculative backend frameworks before there are real consumers.
+
+CPU-only startup requires no GPU device nodes, driver libraries or NVIDIA runtime.
+An unavailable optional backend leaves supported software/direct paths usable. An
+explicit hardware-required operator setting may instead fail readiness with a clear
+reason. A different GPU never changes content permissions or source-file identity.
+Hardware support is published per backend/build/driver/profile after qualification;
+detecting a device is not equivalent to certifying every filter or real-time workload.
 
 ## 3. Libraries, metadata and accounts
 
@@ -414,7 +470,7 @@ shown in admin activity and the player's stats overlay.
 
 - HDR10/HLG/DV (profiles with an HDR10 base layer) are direct played on HDR-capable clients.
 - On SDR clients: use a tone-mapping filter present in the pinned jellyfin-ffmpeg
-  build and proven on the installed GPU. Do not assume CUDA decoding implies a
+  build and proven on the selected software or accelerator backend. Do not assume CUDA decoding implies a
   compatible CUDA tone-mapping filter. Record the complete filter graph in diagnostics.
 - DV profile 5 (no HDR10 fallback) needs a verified DV-aware conversion path; otherwise
   reject with a clear explanation. P7/P8 base-layer handling is also fixture-tested.
@@ -432,7 +488,8 @@ shown in admin activity and the player's stats overlay.
 
 ### 4.7 Trickplay, intros and credits
 
-- Seek thumbnails generated in the background (low priority, GPU-assisted) as tiled sprite sheets.
+- Seek thumbnails generated in the background (low priority, optionally accelerated)
+  as tiled sprite sheets; no GPU is required for the feature's software path.
 - Intro detection by audio fingerprint comparison across episodes of a season. Credits
   detection by fingerprint plus black-frame analysis. Chapter markers are used when present.
   Skip buttons, optional auto-skip.
@@ -471,9 +528,14 @@ real decoder and HLS/MSE verification per device.
 | Paused / recovering | No advancement or bounded fallback | Resume, replacement generation or end |
 | Ended / failed / expired | Terminal with reason and final progress | Release owned work; new playback needs a new request |
 
-Reservation/launch are atomic against capacity budgets. Proposed initial limits:
-3 streams total, 2 hardware video jobs, 1 software video job; weighted admission
-reduces these for expensive filters. These are test budgets, not host measurements.
+Reservation/launch are atomic against per-installation capacity budgets. Administrators
+configure total streams, hardware/software jobs and expensive-filter weights within
+their host's measured budget; no contributor's observed concurrency becomes a global
+product limit. Proposed safe uncalibrated start: one software video job and zero
+hardware jobs until a backend passes its probe; setup requires an explicit total
+stream budget and explains the evidence needed to raise it. No claim that one software
+job can convert every file in real time. Qualification runs record the selected limits,
+including headroom for other applications sharing the host/GPU.
 Direct play still uses disk/network and counts against account stream limits.
 Preloads and background work yield to foreground sessions.
 
@@ -814,14 +876,18 @@ traffic is disclosed in setup and can be disabled independently.
   are checked against the supported matrix. Playwright WebKit does not certify Safari,
   iOS or a TV. Proprietary codec availability depends on the actual browser build.
 - **API contract tests** against the OpenAPI spec.
-- **GPU tests** are tagged and run on zraid (self-hosted runner or manual). CI uses CPU paths.
-- Before each phase is called done, it is verified against real files from the zraid library
-  and known-problem files from the Jellyfin attempt.
+- **Accelerator tests** are tagged by backend and run on any qualifying test host
+  (self-hosted runner or manual). Normal CI uses CPU paths and needs no contributor's
+  private server, credentials or media.
+- Gate completion uses the shared fixture matrix plus documented owner-local regressions
+  on multiple independent installations. One contributor's problem files supplement
+  reproducible coverage; they cannot be the only evidence that a release works.
 
 ## 8. Team workflow (Lisimflix org)
 
 - Private repo `Lisimflix/lisimflix`, monorepo: `server/` (Go), `web/` (React), `docs/`,
-  `deploy/` (compose, Unraid template), `testdata/`. Android goes in `Lisimflix/lisimflix-android` (phase 5).
+  `deploy/` (generic compose, optional Unraid template), `testdata/`. Android goes in
+  `Lisimflix/lisimflix-android` (G4 expansion milestone).
 - `main` is protected by team rule: PR + 1 review + green CI required. The org is on the free plan,
   so a `.githooks/pre-push` hook blocks direct pushes instead of GitHub branch protection (see `CONTRIBUTING.md`).
   Switch to a GitHub ruleset when the org upgrades.
@@ -843,14 +909,16 @@ hardening phase. Build plans must reference requirement IDs in section 13.
 
 | Gate | Included | Exit evidence |
 |---|---|---|
-| G0 — prove the risky path | Named host/devices, fixture manifest, direct/remux and one GPU/CPU conversion spike, subtitle/HDR probes | Recorded capabilities and failures; unsupported cells explicit; no production cut-over |
+| G0 — prove the risky path | Deployment/client profiles, shared fixtures, CPU baseline and candidate accelerator conversion spikes, subtitle/HDR probes | Recorded capabilities and failures per profile; unsupported cells explicit; no private-host dependency or production cut-over |
 | G1 — local vertical slice | Container, migrations/backup, admin-created local users/profiles, HTTPS through configured proxy, one read-only movie/TV library, basic metadata, layout C browse/detail/player, progress, direct/remux plus bounded SDR H.264/AAC software transcode and manual quality changes | A second tester deploys fresh and restores a backup; representative files work end to end with permissions enforced |
-| G2 — household compatibility | Anime identity/preferences, tested subtitles/HDR, GPU admission/fallback, seek recovery, TV controls on agreed devices, diagnostics, Plex dry-run/import | Mandatory matrix passes; at least one real long-form session per target device; blocked cells accepted or fixed |
-| G3 — invited remote trial | Google/Microsoft sign-in + invites, remote HTTPS/proxy, upload caps, session revocation, QR pairing if TV trial needs it, operational runbooks | Security/failure tests pass; 14-day household/friends trial meets section 13 targets |
+| G2 — deployment and client compatibility | Anime identity/preferences, tested subtitles/HDR, accelerator admission/fallback, seek recovery, TV controls on agreed devices, diagnostics, optional Plex dry-run/import | Mandatory matrix passes across at least two independently configured installations, including generic non-Unraid and CPU-only coverage; one real long-form session per target client; blocked cells accepted or fixed |
+| G3 — invited remote trial | Google/Microsoft sign-in + invites, remote HTTPS/proxy, upload caps, session revocation, QR pairing if TV trial needs it, operational runbooks | Security/failure tests pass; 14-day trials on independently configured installations with local and invited remote users meet section 13 targets |
 | G4 — expansion | Remaining providers, layouts A/B, additional media types, ABR, trickplay/intro detection, external sync, native Android, offline | Each feature has its own approved contract, fixtures and acceptance evidence before being advertised |
 
-Plex stays running; only the owner chooses cut-over after G3 evidence. A new failure
-in a mandatory playback journey pauses cut-over regardless of feature completion.
+For migration trials, the existing media server stays running and each installation's
+administrator chooses its own cut-over after G3 evidence. New installations have no
+Plex/Jellyfin prerequisite. A failure in a mandatory playback journey pauses that
+installation's cut-over and blocks release claims for the affected support profile.
 
 ### 9.1 Feature placement ledger
 
@@ -930,12 +998,14 @@ independent of the selected driver's C/toolchain requirements.
 
 ### 11.1 Supported deployment contract
 
-First target is one Linux container on the agreed amd64 host. HTTPS may be terminated
-by the owner's existing reverse proxy; it is an explicit G1 deployment prerequisite
-until a supported in-container TLS path exists. Other architectures
-are unadvertised until images and ffmpeg support are tested. Publish a pinned image
-version/digest and compatible NVIDIA driver/runtime requirement. Go/Node build tools
-stay out of the runtime image. Include dependency versions, licenses and an SBOM.
+Initial platform target is Linux amd64 containers on supported runtimes, independently
+of a specific server/NAS distribution. Generic compose is the primary deployment
+example; Unraid is an additional adapter. HTTPS may be terminated by each operator's
+configured reverse proxy; it is an explicit G1 prerequisite until an in-container TLS
+path exists. Other architectures remain experimental until qualified. Publish a pinned
+image digest, tested runtime/CPU baseline and per-accelerator driver/device requirements;
+the CPU-only path has no NVIDIA prerequisite. Go/Node build tools stay out of the
+runtime image. Include dependency versions, licenses and an SBOM.
 
 Run with an effective non-root UID/GID able to write `/config` and `/cache` and read
 the approved `/media` roots. Explain how PUID/PGID is applied; do not recursively chown
@@ -948,7 +1018,9 @@ Authenticated LAN and remote deployments map it behind an HTTPS reverse proxy;
 optional built-in TLS uses a separately configured listener/port and
 validated ACME reachability. Resolve the original “one port plus optional 443” wording
 in the actual compose example; do not require root simply to bind a privileged port.
-Document public base URL, trusted proxies, volumes, GPU setup and secret injection.
+Document public base URL, trusted proxies, host/container volume mappings, optional
+accelerator setup and secret injection. Samples use placeholders rather than private
+hostnames, paths, user IDs or domain names from any contributor's installation.
 
 Startup validates writable paths/free space, media-root visibility, schema support
 and required binaries. GPU probe failure degrades supported paths; database migration
@@ -1065,14 +1137,21 @@ small smoke runs report individual samples instead of misleading percentiles.
 | PERF-01 | Time from Play to advancing media | p95 ≤3s direct/remux warm; ≤8s transcode; cold extraction shown separately |
 | PERF-02 | Seek to requested content | p95 ≤3s cached, ≤8s cold transcode; position within 1s after stabilising |
 | PERF-03 | Stability | Rebuffer ≤1% of played time in each 30-minute supported-path run with adequate sustained bandwidth |
-| PERF-04 | Capacity | 3 concurrent household streams including 2 agreed transcodes for 60 minutes on named host; no unbounded queue/memory growth |
+| PERF-04 | Capacity | Sustain the declared stream/conversion mix for each published deployment profile for 60 minutes; no unbounded queue/memory growth; deliberate excess load is rejected safely |
 | PERF-05 | Browsing | p95 server search/list response ≤500ms on owner-provided catalogue size; UI remains navigable while scanning |
 | PERF-06 | Progress | Resume within 15s after client crash; explicit watched override survives stale/replayed events |
 | PERF-07 | Recovery | Backup ≤24h RPO; restore rehearsal ≤30min under documented dataset conditions |
 
 Cold scan/probe/match throughput cannot have an honest target until the actual file
 count, storage latency and provider rate limits are recorded. G0 must establish a
-baseline and owners set the acceptable scan duration before G1 is signed off.
+baseline per deployment profile and maintainers set acceptable scan durations before
+G1 is signed off. An installation operator can set stricter local limits.
+
+Capacity results are attached to a declared profile: CPU/RAM, optional accelerator,
+storage, catalogue, network and conversion mix. The legacy three-stream/two-transcode
+observation may be a reference workload, never a universal minimum or maximum. Publish
+minimum tested resources separately from larger benchmark profiles. Limits are local
+configuration, and overload behaviour must pass even on the smallest supported profile.
 
 ### 13.2 Required test dimensions
 
@@ -1100,11 +1179,12 @@ Unsupported must never count as successful playback for a mandatory target cell.
 
 | Tier | Definition | Evidence |
 |---|---|---|
-| Mandatory household | Exact owner-approved PCs/phones/TVs and browser versions | Real-device start, seek, audio/subtitle, resume and 30-minute playback; TV D-pad journey |
+| Supported release clients | Maintainer-approved device/browser profiles representing local and remote viewers across independent installations | Real-device start, seek, audio/subtitle, resume and 30-minute playback; TV D-pad journey where TV support is claimed |
 | Automated regression | Pinned Playwright Chromium/Firefox/WebKit builds | Repeatable supported-codec scenarios and UI/API assertions; not hardware certification |
 | Experimental | Unverified devices, formats or display paths | Labelled as experimental; visible fallback/failure; no cut-over promise |
 
-G0 names exact household devices before support is promised. Native HLS and hls.js
+G0 names exact client/device profiles before support is promised. One household's
+devices seed testing without limiting the public support matrix. Native HLS and hls.js
 paths are tested independently; see [hls.js supported platforms](https://github.com/video-dev/hls.js).
 NVIDIA's [support matrix](https://developer.nvidia.com/video-encode-decode-support-matrix)
 guides codec capability, while actual host tests establish throughput. Browser codec
@@ -1125,8 +1205,9 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | HDR-01 | Correct display or explicit rejection | G2: reference colours and signalling on physical SDR/HDR devices |
 | DATA-01 | Progress/import cannot erase newer work | G1/G2: duplicate/out-of-order events, two sessions, import rerun and guarded undo |
 | OPS-01 | Recoverable deployment | G1/G3: fresh setup, backup, clean-instance restore, migration failure and documented rollback |
-| UX-01 | Accessible household journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
+| UX-01 | Accessible viewing journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
 | REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
+| DEPLOY-01 | Independent installations require no contributor-specific configuration | G1/G2: fresh generic non-Unraid + CPU-only deployment, second independent configuration, remapped-root restore, distinct accounts/keys and absence of private host defaults |
 
 ### 13.5 PR and trial completion rules
 
@@ -1136,11 +1217,14 @@ touches those paths. Deterministic unit tests do not replace real decoder/displa
 evidence. No blanket tests for every trivial helper; test invariants and failures.
 
 A gate records implemented requirement IDs, measured results, fixture/client versions,
-known limitations and owner sign-off. Trial lasts 14 consecutive days after mandatory
-journeys pass, includes household and invited remote viewers, and has no unresolved
-blocking playback, data-loss or access-control issue. Record actual sessions and
-feedback, not just uptime. Feature additions do not reset the trial unless they change
-a mandatory journey; regression in one does. Owner decides cut-over explicitly.
+known limitations and maintainer sign-off. Release qualification includes 14 consecutive
+days on at least two independently administered installations after mandatory journeys
+pass, with local and invited remote viewers represented. Include generic non-Unraid
+and CPU-only coverage (they may share one installation). No unresolved blocking playback,
+data-loss or access-control issue is allowed for a claimed support profile. Record
+actual sessions and feedback, not just uptime. Feature additions do not reset an
+installation's trial unless they change a mandatory journey; regression in one does.
+Maintainers decide release readiness; each operator separately decides migration.
 
 ## 14. Decision and challenge register
 
@@ -1150,8 +1234,8 @@ as approval. Record decision, owner/date and rationale here when settled.
 | ID | Challenge / decision | Proposed position | Blocks |
 |---|---|---|---|
 | D01 | Must first trial include all media types/providers/layouts? | Movies/TV/anime + layout C first; retain expansion ledger | G1/G2 scope approval |
-| D02 | Which actual host is zraid, and who supplies evidence? | Deployment owner records hardware/runtime/storage/network and corrected usage report | Capacity/GPU claims |
-| D03 | Exact PlayStation/Hisense/phone/desktop support? | Name models/versions; test usable browser before committing; no presumed Apple TV/Chromecast browser | G0 matrix |
+| D02 | Which deployment profiles and independent operators qualify the first release? | zraid is confirmed as Lammy's Unraid reference; select another independently configured installation, generic Linux-container + CPU-only coverage and per-profile capacity evidence | Published deployment/support claims |
+| D03 | Which client/device profiles qualify the first release? | Name browser/models/versions across independent installations; include representative TV/mobile/desktop journeys without limiting the product to one household | G0 matrix |
 | D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
 | D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
 | D06 | Are AniList and mapping sources permitted/sufficient? | Validate API terms and dataset coverage; local matching survives provider outage | Specific providers and outbound sync |
@@ -1188,7 +1272,7 @@ when implementing. External documents establish constraints, not local host read
 | [AniList terms](https://docs.anilist.co/guide/terms-of-use), [limits](https://docs.anilist.co/guide/rate-limiting), [Anime-Lists](https://github.com/Anime-Lists/anime-lists) | Provider-use constraints, backoff and mapping verification |
 | [FFmpeg license guidance](https://www.ffmpeg.org/legal.html) | Distribution review for the actual bundled build |
 
-Not performed in this revision: zraid access, GPU/codec benchmarks, real-device tests,
+Not performed in this revision: reference-host access, GPU/codec benchmarks, real-device tests,
 provider app registration, API credential use, Plex extraction, legal clearance or
 application implementation. These remain named evidence gates above; this document
 must not be used as a completed test report.
