@@ -53,7 +53,8 @@ which section 14 proposals are accepted or changed before implementation plans a
   services; social sign-in and external sync can remain unavailable during outages.
 - Work is bounded: requests, scanner queues, subprocesses, memory, disk and retries
   have limits. Exhaustion produces a controlled response, not an unbounded fallback.
-- Plex remains independent throughout the trial. Lisimflix never changes Plex state.
+- Existing Plex/Jellyfin systems remain independent throughout the trial. Optional
+  migration reads from them; Lisimflix never changes their source state.
 
 ### 0.4 Evidence and confidence
 
@@ -204,7 +205,7 @@ Each has one job and a documented interface, so team members can own one at a ti
 | `transcode` | ffmpeg job supervisor, HLS packaging, ABR ladder, HW accel probing, tone-mapping |
 | `subtitles` | Extraction, conversion (SRT/VTT), ASS/PGS delivery, burn-in fallback |
 | `trickplay` | Seek-bar thumbnails, intro/credits detection |
-| `importer` | One-time Plex watch-history/progress import (via the user's own Plex server API/DB) |
+| `importer` | Later optional Plex/Jellyfin watch-state migration through validated source adapters; no runtime dependency for basic development |
 | `admin` | Activity monitor, stream kill/message, tasks, logs, GPU self-test, backups |
 | `tls` | Optional built-in Let's Encrypt (autocert) |
 | `web` | Embedded SPA serving |
@@ -300,11 +301,18 @@ detecting a device is not equivalent to certifying every filter or real-time wor
 Progress, watched/unwatched, watch history, watchlist, personal ratings, per-show
 audio/subtitle choice, "remove from Continue Watching".
 
-### 3.5 Plex import
+### 3.5 Future Plex and Jellyfin imports
 
-One-time admin tool. Connects to the user's own Plex server with that server's admin token,
-reads per-user watch state and progress, matches items by GUID/TMDB/TVDB IDs and file path,
-and writes into Lisimflix profiles. Dry-run report first.
+Plex and Jellyfin migration are later optional features. Basic playback, library/
+interface development and Continue Watching use Lisimflix's own activity and never
+wait for either importer. Keep stable item/profile identities, provider mappings,
+progress units and timestamps suitable for future reconciliation from the beginning
+(10.3), without implementing migration adapters or source-specific scaffolding now.
+
+Each eventual admin tool reads authorised per-user watch state/progress, explicitly
+maps it to Lisimflix profiles and matches media using trusted IDs and confirmed path
+mappings. Validate the source/version's actual accessible fields before promising
+complete history. Preview changes in a dry-run; apply only after confirmation.
 
 ### 3.6 Scan lifecycle and filesystem safety
 
@@ -431,13 +439,13 @@ specify OAuth scopes, permitted usage, unlink/revocation, retry budget and mappi
 Proposed first version: outbound only, never reduce remote progress, preview initial
 reconciliation and exclude ambiguous/special mappings. Bidirectional sync is separate.
 
-### 3.9 Plex import safety
+### 3.9 Future import safety (Plex and Jellyfin)
 
 The source is read-only. Admin explicitly maps source users to destination profiles;
 display-name/email matches alone cannot merge histories. Validate which per-user
 state the chosen API/access method actually exposes before promising completeness.
 Any database-based option uses an owner-provided consistent snapshot with a supported
-schema, never writes to the live Plex database, and rejects unknown versions.
+schema, never writes to either source server's live database, and rejects unknown versions.
 
 Dry-run reports matched, ambiguous, unavailable, unsupported and conflicting records,
 target profiles and changed fields. Commit uses a batch ID and is idempotent on rerun.
@@ -699,7 +707,7 @@ attach versioned references; missing mockups are not an implementation dependenc
 - **Users & invites:** policies (3.3), sessions/devices, linked sign-in providers, sign-up requests, OAuth provider setup.
 - **Libraries:** scan status, unmatched items, fix-match, bulk edit.
 - **System:** GPU self-test, logs, scheduled tasks, backups/restore, metadata provider keys, TLS.
-- **Plex import tool.**
+- **Optional later Plex/Jellyfin import tools**, shown when those features are implemented.
 
 ### 5.4 TV mode
 
@@ -887,7 +895,7 @@ handling. Ignore forwarded client identity from untrusted peers. LAN detection u
 configured/trusted network information, not arbitrary client headers.
 
 Restrict provider fetching to approved schemes/hosts and validate redirects/IP targets
-to prevent SSRF. Private-network Plex import is a separate admin-only operation with
+to prevent SSRF. Private-network Plex/Jellyfin import is a separate admin-only operation with
 explicit destination approval, not an exception for all remote fetches. Treat NFO/XML,
 images, fonts, archives and probe output as untrusted: bound sizes/time, disable XML
 external entities and reject traversal paths. ffmpeg inputs use approved local files,
@@ -1034,9 +1042,9 @@ hardening phase. Build plans must reference requirement IDs in section 13.
 |---|---|---|
 | G0 — prove the risky path | Deployment/client profiles, shared fixtures and CPU direct-play baseline; conversion, accelerator and subtitle spikes can proceed independently for their later features | Recorded capabilities/failures per profile; M1 is not blocked by unneeded conversion/HDR work; no private-host dependency or production cut-over |
 | G1 — local vertical slice | First prove M1; next focus on Movies, TV and separate Anime libraries plus layout C browse/detail/play. Foundation, accounts/profiles, metadata/progress and broader direct/remux/SDR-conversion features retain their independent work packages | A second tester deploys fresh and restores a backup; required G1 features and playback cases work end to end with permissions enforced |
-| G2 — deployment and client compatibility | Anime identity/preferences, tested subtitles, accelerator admission/fallback, seek recovery, TV controls on agreed devices, diagnostics, optional Plex dry-run/import | Mandatory matrix passes across at least two independently configured installations, including generic non-Unraid and CPU-only coverage; one real long-form session per target client; blocked cells accepted or fixed |
+| G2 — deployment and client compatibility | Anime identity/preferences, tested subtitles, accelerator admission/fallback, seek recovery, TV controls on agreed devices and diagnostics | Mandatory matrix passes across at least two independently configured installations, including generic non-Unraid and CPU-only coverage; one real long-form session per target client; blocked cells accepted or fixed |
 | G3 — invited remote trial | Google/Microsoft sign-in + invites, remote HTTPS/proxy, upload caps, session revocation, QR pairing if TV trial needs it, operational runbooks | Security/failure tests pass; 14-day trials on independently configured installations with local and invited remote users meet section 13 targets |
-| G4 — expansion | HDR/DV playback and tone mapping, remaining providers, layouts A/B, additional media types, ABR, trickplay/intro detection, external sync, native Android, offline | Each feature has its own approved contract, fixtures and acceptance evidence before being advertised |
+| G4 — expansion | Optional Plex/Jellyfin imports, HDR/DV playback and tone mapping, remaining providers, layouts A/B, additional media types, ABR, trickplay/intro detection, external sync, native Android, offline | Each feature has its own approved contract, fixtures and acceptance evidence before being advertised |
 
 For migration trials, the existing media server stays running and each installation's
 administrator chooses its own cut-over after G3 evidence. New installations have no
@@ -1048,7 +1056,8 @@ installation's cut-over and blocks release claims for the affected support profi
 | Feature from original vision | Proposed placement / boundary |
 |---|---|
 | Movies, TV and separate Anime library options; basic metadata; local accounts/profiles; layout C; manual quality with bounded SDR software conversion | G1 baseline; library/interface focus follows M1, with other work progressing in parallel |
-| Advanced anime matching/order; core providers; audio/ASS/PGS; GPU; TV navigation; Plex import | G2, with unproven conversions visibly blocked |
+| Advanced anime matching/order; core providers; audio/ASS/PGS; GPU; TV navigation | G2, with unproven conversions visibly blocked |
+| Plex/Jellyfin watch-state migration | Later optional G4; core data compatibility is designed/tested earlier under 10.3, without blocking basic development |
 | HDR/DV playback and tone mapping | G4 later expansion; not a first-playback or initial library/interface prerequisite |
 | Google/Microsoft + invites; HTTPS remote delivery; QR pairing; bandwidth policy | G3, or earlier when required for real-device testing |
 | Apple/Facebook/generic OIDC; admin-approved signup requests; built-in ACME | G4; local fallback and secure remote deployment already exist |
@@ -1242,8 +1251,9 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | META-3 | **Extended enrichment:** additional approved providers, art/ratings and language variants | P2 / G4 | 3.2, 3.7; provider terms and contract fixtures | `area:metadata` |
 | DATA-1 | **Personal progress:** ordered events, watched rules, resume and user overrides | P0 / G1 | DATA-01, PERF-06, 3.8; in-memory/temporary repository harness | `area:userdata` |
 | DATA-2 | **Preferences and watchlist:** per-profile/show tracks and personal rows | P0 / G1 | 3.3–3.4, 3.8, 5.2 | `area:userdata` |
-| DATA-3 | **Plex migration:** optional read-only dry-run, apply, rerun and guarded undo | P1 / G2 | DATA-01, 3.9; source API/snapshot fixtures before optional live test | `area:importer` |
+| DATA-3 | **Plex migration:** optional read-only dry-run, apply, rerun and guarded undo | P2 / G4 | DATA-01, 3.9, 10.3; source API/snapshot fixtures before optional live test | `area:importer` |
 | DATA-4 | **External list sync:** opt-in permitted outbound updates with conflict protection | P2 / G4 | 3.8; mapping, revocation and retry fixtures | `area:userdata`, `area:metadata` |
+| DATA-5 | **Jellyfin migration:** optional read-only dry-run, explicit profile/media mapping, rerun and guarded undo | P2 / G4 | DATA-01, 3.9, 10.3; validate source/version fields and source-specific fixtures before live claims | `area:importer` |
 
 #### Accounts, player and discovery
 
@@ -1343,6 +1353,29 @@ contention and surface busy/timeout failures; WAL still permits only one writer 
 time. See [SQLite WAL](https://www.sqlite.org/wal.html). Pin/test the chosen SQLite/Go
 driver versions. A static Go binary is a build target to verify, not an assumption
 independent of the selected driver's C/toolchain requirements.
+
+### 10.3 Import-compatible core data without early import implementation
+
+Plex/Jellyfin import must not become a dependency for M1, the first home screen or
+basic library development. Their shared concern now is preserving meaningful data,
+not building an importer framework, placeholder endpoints or source-specific tables.
+Use core records already needed by the application and allow additive migrations
+for future source mappings/import batches.
+
+| Core concern | Required data semantics |
+|---|---|
+| Stable media identity | Local movie/show/episode/version IDs survive path/provider/order changes; provider IDs retain namespaces and provenance. Future source item IDs are additionally scoped by source system and server instance, never treated as local primary keys. |
+| Stable viewing identity | Profile/account identity is separate from display names; imports explicitly map source users to profiles rather than joining by email/name. Native progress is profile + logical item, with source/version duration retained. |
+| Progress and watched state | Position/duration have explicit units, watched is separate from resume position, and manual overrides retain their revision/origin. Unknown values remain unknown rather than invented zeros or false watched/unwatched assertions. |
+| Time and provenance | Preserve UTC event instants, source-reported time where available, local receipt/update time, origin and revision as distinct meanings. Import arrival cannot automatically make old progress newer than local activity; unknown source dates remain nullable. |
+| Safe reconciliation | Item/profile mappings, conflict policy and eventual batch/source record identity support dry-run, idempotent reruns and guarded undo. Ambiguous matches require review; unrelated cuts/episode orders cannot share progress blindly. |
+
+**MIGRATE-01** is early contract/persistence proof: native profile/item/progress records
+round-trip without losing identity, units, timestamps, unknown values or manual override
+semantics. Minimal neutral fixtures demonstrate that namespaced external IDs can map
+to stable local IDs without collisions or overwriting newer local progress. These
+are compatibility fixtures, not a functioning Plex/Jellyfin importer. Each source
+adapter's extraction details and completeness are planned and tested at G4.
 
 ## 11. Deployment, operations and recovery
 
@@ -1583,7 +1616,8 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | PLAY-02 | Bounded work and recovery | G2: overload, killed encoder, GPU failure, heartbeat expiry, rapid seek and job reaping |
 | TEXT-01 | Selected subtitles remain usable | G2: ASS/bitmap/sidecar with seeks, fonts, fullscreen and PiP/fallback |
 | HDR-01 | Correct display or explicit rejection | G4: reference colours and signalling on physical SDR/HDR devices; earlier releases reject unqualified HDR paths explicitly |
-| DATA-01 | Progress/import cannot erase newer work | G1/G2: duplicate/out-of-order events, two sessions, import rerun and guarded undo |
+| DATA-01 | Progress/import cannot erase newer work | G1: duplicate/out-of-order events and two sessions; G4: source import rerun/conflicts and guarded undo |
+| MIGRATE-01 | Core viewing data remains compatible with future imports | G1 contract/persistence tests in 10.3; no live source server or importer implementation required |
 | OPS-01 | Recoverable deployment | G1/G3: fresh setup, backup, clean-instance restore, migration failure and documented rollback |
 | UX-01 | Accessible viewing journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
 | REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
@@ -1626,7 +1660,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 | D07 | Social versus local user sign-in during trial? | Local login for G1/G2, Google/Microsoft + invites for G3; remaining providers later | Account rollout |
 | D08 | Profile PIN / child-policy guarantees? | Server-enforced restricted profile grants; account controller remains privileged; deny unrated by default for kids | Policy UX and security tests |
 | D09 | Remote ingress and TLS ownership? | Existing reverse proxy first, explicit trusted-proxy settings; built-in ACME later | Remote deployment |
-| D10 | Plex access and import completeness? | Validate a read-only source method/user-state sample before promising full history | Import implementation |
+| D10 | Plex/Jellyfin source access and import completeness? | Approved as later optional G4 features; validate read-only source/version data before promising complete history. Core compatibility is required under 10.3 now | Source adapters only; not basic development |
 | D11 | Which remaining numeric defaults/targets are accepted? | Approved: actual-scale baseline and PERF-05 one-second browse/search target. Discovery has no universal one-minute deadline; remaining budgets/targets await measurement/review | Remaining acceptance sign-off |
 | D12 | Backup destination, recovery owner and key custody? | Owner names external copy target and tests restore before remote trial | Disaster-recovery claim |
 | D13 | Original mockups missing from tracked repo? | Supply versioned references or approve described layout C without them | Visual sign-off, not playback spike |
