@@ -1,23 +1,87 @@
 # Lisimflix: Design Spec
 
 - **Date:** 2026-10-24
-- **Status:** Approved in brainstorming, pending written-spec review
+- **Status:** Expanded review draft; original vision retained, revised scope and defaults require Pete/Lammy approval
+- **Revision:** 2026-10-25 — requirements, failure behaviour, contracts and acceptance gates
 - **Repo:** `Lisimflix/lisimflix` (private, GitHub org `Lisimflix`)
 - **Image:** `ghcr.io/lisimflix/lisimflix`
+
+## 0. How to read and approve this spec
+
+This is a product and engineering contract, not a claim that the application exists.
+The repository currently contains design and team workflow documents, not a working server.
+The 2026-10-25 additions are proposals for review, including the release boundary,
+numeric defaults and performance targets. They must not be described as decisions
+already approved by either owner.
+
+**MUST** means required within the feature's agreed release. **SHOULD** means the
+implementation can differ if its PR records the reason and user impact. **MAY** means
+optional. A feature described here is not automatically required for the first trial.
+Section 9 assigns proposed delivery gates; section 14 records decisions still needed.
+An unresolved item blocks the affected feature, not unrelated work.
+
+### 0.1 Approaches and recommendation
+
+| Approach | Benefit | Cost / risk | Review position |
+|---|---|---|---|
+| Editorial cleanup of the original scope | Small diff; preserves every original promise | Leaves hard playback assumptions and completion criteria unresolved | Insufficient for this review |
+| Detailed contract with a thin working playback slice first | Tests the reason for building early; retains later features explicitly | Changes delivery order; needs owner agreement on first-trial devices | Recommended in this draft |
+| Full feature parity before household testing | Broad first release | Delays real-device evidence and puts too many independent risks on the critical path | Not recommended |
+
+The recommended approach keeps Go, React, SQLite and a single container. It adds no
+microservices, plugin system, distributed workers or speculative Postgres implementation.
+Scope is clarified rather than silently deleted. Approval of this draft should name
+which section 14 proposals are accepted or changed before implementation plans are written.
+
+### 0.2 User outcomes and critical journeys
+
+| User | Journey | Required outcome |
+|---|---|---|
+| Owner | Start an empty instance, create admin, add a read-only library | Can browse a sample without editing a database or exposing a public endpoint |
+| Household viewer | Choose profile, resume an episode, change tracks | Correct personal position and preferences, with no other profile's history |
+| Remote invited viewer | Accept invitation, sign in, select a permitted title | Only approved content and quality; understandable failures on weak networks |
+| Anime viewer | Choose Japanese audio and styled English subtitles | Episode identity, ordering, signs, fonts and timing remain correct |
+| Administrator | Diagnose a failed play or restore a backup | Sees the decision and failure reason; can recover without modifying media |
+
+### 0.3 Invariants
+
+- Source media is never deleted, renamed, modified, tagged or written to by Lisimflix.
+- Access rules apply to discovery, metadata, artwork, subtitles, streams and downloads.
+- Local accounts, cached browsing and supported local playback work without metadata
+  services; social sign-in and external sync can remain unavailable during outages.
+- Work is bounded: requests, scanner queues, subprocesses, memory, disk and retries
+  have limits. Exhaustion produces a controlled response, not an unbounded fallback.
+- Plex remains independent throughout the trial. Lisimflix never changes Plex state.
+
+### 0.4 Evidence and confidence
+
+The zraid paths, GPU, driver and usage counts below came from the original design.
+They have not been independently checked in this review. zraid is not identified in
+Pete's project notes; do not equate it with Gen2 or any other host. The deployment
+owner must provide the actual host, GPU/driver/runtime evidence, usable cache space,
+library counts, upload bandwidth and exact client models before capacity is signed off.
+The original play totals also leave three plays unclassified (283 versus 218 + 62);
+retain the raw report before making capacity decisions from those figures.
+
+External references in section 15 support technical constraints. Product limits and
+acceptance targets are proposals, not measurements obtained from those references.
 
 ## 1. Purpose
 
 Lisimflix is a self-hosted media server and player that covers what Plex and
-Jellyfin do as its own independent product, with no dependence on any outside
-company's accounts or services. It runs next to the existing Plex server on
-zraid until the household is happy to switch.
+Jellyfin do as its own independent product. Core administration and local playback
+do not require a vendor account; external metadata and social sign-in are optional
+integrations with their own availability and terms. It runs next to the existing
+Plex server on zraid until the household is happy to switch.
 
 ### Goals
 
-- Every core Plex/Jellyfin function: libraries, metadata (including anime), multiple
+- Long-term coverage of the household's core Plex/Jellyfin functions: libraries, metadata (including anime), multiple
   accounts and profiles, personal home screens, watch progress, remote access.
-- Smooth streaming regardless of codec, resolution or network speed. This is the main
-  reason the earlier Jellyfin attempt was abandoned (lag, unplayable formats).
+- Reliable playback for a published file/client/network matrix, with an explicit
+  fallback or clear unsupported result outside it. Lag and unplayable formats were
+  the reason the earlier Jellyfin attempt was abandoned; impossible bandwidth or
+  hardware combinations must not be presented as guaranteed smooth streaming.
 - One Docker container. Simple to deploy, back up and replicate on any machine.
 - Built by an organisation team in parallel through PRs and CI.
 
@@ -28,8 +92,9 @@ zraid until the household is happy to switch.
   from open standards, public APIs and observed product behaviour.
 - Watch Together, Live TV/IPTV/DVR, and books/comics/audiobooks (Komga and
   Audiobookshelf already cover these). They may be revisited later and are not in this spec.
-- Native PlayStation, Hisense VIDAA, Apple TV, Chromecast or iOS apps. These devices use
-  the web app (TV mode in their built-in browsers on PlayStation/Hisense).
+- Native PlayStation, Hisense VIDAA, Apple TV, Chromecast or iOS apps. Web playback
+  targets devices with a usable browser; Apple TV/Chromecast must not be assumed to
+  provide one. Casting and support for devices without a browser need a separate decision.
 - Streaming-service content, ads or "Discover" style promotion. These are never added.
 
 ### Known context (zraid, Oct 2026)
@@ -58,17 +123,25 @@ ghcr.io/lisimflix/lisimflix
 
 - **Language: Go.** Single static binary. The web app's built assets are embedded via
   `embed`. Good concurrency for many streams and ffmpeg process supervision.
-- **Database: SQLite** (WAL mode) behind a repository interface so Postgres can be added
-  later without touching handlers. Migrations are versioned and run on startup.
+- **Database: SQLite** (WAL mode) on local storage. Modules own their SQL; handlers do
+  not access tables directly. Add interfaces where consumers need a stable contract,
+  rather than implementing a hypothetical Postgres backend. Versioned migrations run
+  on startup; incompatible databases fail closed with a recovery instruction.
 - **ffmpeg: jellyfin-ffmpeg**, a separate open-source GPU-tuned ffmpeg build. It is used
   only as an external process and Jellyfin server code is not used.
 - **Web app: React + TypeScript (Vite)**, built to static files and embedded in the binary.
 - **Runs as non-root** (PUID/PGID env). `/media` is always read-only.
-- **No GPU** works too: it falls back to CPU (libx264) encoding automatically.
-- Deploy: one `docker-compose.yml` and one Unraid template. 3 volumes, 1 port (8420
-  default, HTTP; optional 443 for built-in TLS), optional `--runtime=nvidia`.
+- **No GPU:** direct play and remux remain available. CPU encoding (libx264) is a
+  bounded fallback for profiles the host can sustain; unsupported real-time workloads
+  are refused or offered a lower quality. CPU HDR/DV conversion requires separate proof.
+- Deploy: one `docker-compose.yml` and one Unraid template, 3 volumes and HTTP port
+  8420 behind an optional reverse proxy. GPU access and later built-in TLS are
+  explicitly configured; see 11.1 for listener/privilege requirements.
 - First run opens a setup wizard: admin account, server name, libraries, metadata keys.
-- **Backup/restore:** copy `/config`. Nightly automatic DB snapshot (keep 7) with restore from admin UI.
+- **Backup/restore:** use a consistent SQLite snapshot plus durable configuration;
+  copying only a running WAL database file is not a backup procedure. A stopped,
+  complete `/config` copy is also supported. Nightly snapshots keep the last 7
+  successful backups; restore and upgrade behaviour is specified in section 11.
 
 ### 2.2 Internal modules (Go packages)
 
@@ -114,14 +187,17 @@ the contract and the TypeScript client is generated from it.
 
 - Provider interface: `Search`, `Lookup(ids)`, `Images`, `Episodes`. Results are merged
   by field priority per library type. Artwork is downloaded and cached locally (resized variants).
-- **General:** TMDB (primary, free key), TVDB (optional), IMDb/Rotten Tomatoes ratings
-  where available, Fanart.tv (logos, clearart, backdrops), MusicBrainz (music), local NFO.
+- **General:** candidate providers are TMDB (primary), TVDB (optional), licensed/
+  permitted IMDb/Rotten Tomatoes ratings where available, Fanart.tv (logos, clearart,
+  backdrops), MusicBrainz (music), and local NFO. Keys, costs and usage permissions
+  are validated per provider before implementation; no scraping is implied.
 - **Anime:**
-  - AniList (primary: descriptions, art, genres, studios, relations, airing status)
+  - AniList (candidate primary, subject to 3.7: descriptions, art, genres, studios, relations, airing status)
   - AniDB (episode lists, specials/OVAs/episode types; strict rate limiting plus aggressive caching, client registration required)
   - Jikan/MyAnimeList (scores, fallback)
   - TMDB/TVDB (fallback artwork)
-  - ID mapping via the community anime-lists datasets (AniDB ↔ TVDB ↔ TMDB ↔ AniList ↔ MAL), refreshed weekly
+  - Versioned cross-provider ID/episode mapping, with source coverage and update
+    permissions validated under 3.7; no single dataset is assumed to cover all IDs.
   - Absolute and seasonal numbering both supported and cross-mapped. Specials/OVAs are placed correctly.
   - Alternate orders: TVDB orders and TMDB episode groups selectable per show.
 - Title display language per profile: English / Romaji / Native. Search matches all alternate titles.
@@ -131,8 +207,9 @@ the contract and the TypeScript client is generated from it.
 ### 3.3 Accounts and profiles
 
 - **Admin:** full server control.
-- **Users:** sign in with Google, Microsoft, Apple or Facebook (see 6.1). Access is only by admin
-  invite link or an admin-approved sign-up request. A social login on its own never grants access.
+- **Users:** sign in locally when enabled, or with configured providers (6.1), phased
+  under section 9. Access requires admin creation, invitation or approved sign-up
+  request. A social login on its own never grants access.
 - **Home profiles** under an account ("Who's watching?") with optional 4-digit PIN.
 - Per user/profile policy:
   - visible libraries
@@ -149,7 +226,9 @@ the contract and the TypeScript client is generated from it.
   - skip lengths
   - auto-skip intro/credits
   - AniList/MAL account link
-- AniList/MAL sync: marking an episode watched updates the linked list.
+- AniList/MAL sync is an explicitly enabled later feature. Linking, episode mapping,
+  conflict resolution and provider permission must be validated before outbound writes
+  are enabled (3.8). A local watched update never waits for an external provider.
 
 ### 3.4 Per-profile user data
 
@@ -162,6 +241,118 @@ One-time admin tool. Connects to the user's own Plex server with that server's a
 reads per-user watch state and progress, matches items by GUID/TMDB/TVDB IDs and file path,
 and writes into Lisimflix profiles. Dry-run report first.
 
+### 3.6 Scan lifecycle and filesystem safety
+
+Each library has an internal ID, type, display name, roots, metadata language/order,
+provider settings and scan status. Each root is tracked separately: available,
+scanning, degraded or offline. An offline root MUST NOT remove its catalogue entries.
+
+The pipeline is discovery → stable-file check → probe → identity/match → enrichment
+→ publish. Local browsing does not wait for remote metadata. Growing/replaced files
+are retried after a quiet period (proposed 30 seconds). A size/mtime change invalidates
+the probe. Jobs carry a source revision; stale results cannot overwrite newer data.
+Watcher events are hints. Overflow, remount and restart trigger reconciliation;
+periodic full scans cover missed events and network mounts. Duplicate work coalesces.
+Scans are resumable/idempotent. Cancel preserves completed work and stops owned probes.
+
+ffprobe has bounded concurrency, deadlines and output. Proposed defaults: 2 probes,
+30 seconds each, 8 MiB captured JSON. Limit violations are visible failures, not
+silently truncated successful results. Admin can retry with an explicit override.
+Paths resolve within configured roots; symlink escapes are rejected. HTTP requests
+use item IDs, never arbitrary host paths. Subprocess arguments never pass through a
+shell. Removing a library removes catalogue associations only, after confirmation.
+
+Missing files become unavailable only after successful enumeration of an online root.
+Proposed automatic retirement requires two successful scans at least 24 hours apart,
+with an admin preview; outages suspend it. Retain identity and user data for returning
+files. Moves preserve identity where trusted evidence exists; ambiguous renames go
+to review rather than being guessed from size alone. Empty/offline mounts are tested.
+
+### 3.7 Matching, provenance and anime ordering
+
+Matching precedence: explicit user selection/locks → validated provider IDs/NFO →
+deterministic provider match → review queue. Conflicting IDs raise a conflict instead
+of overwriting a lock. Imported fields retain provider, provider ID, fetch time and
+lock status. Refreshing art or language cannot unlock manually edited fields.
+
+Provider outages preserve existing metadata and playable local entries. Calls have
+timeouts, shared per-provider rate limits, bounded retries/jitter, caching and
+provider-directed backoff. Configuration/auth errors pause a provider. Initial scans
+fetch only relevant records, not provider-wide catalogues. Clients never receive keys.
+Check attribution, redistribution, caching and commercial-use conditions before shipping
+each provider. AniList prohibits mass collection and constrains competing services;
+it is not an unrestricted catalogue. See its [terms](https://docs.anilist.co/guide/terms-of-use)
+and [rate-limit documentation](https://docs.anilist.co/guide/rate-limiting).
+
+Separate local show, provider series, season/order, logical episode and physical file
+identities. A file may contain several episodes; specials may have multiple mappings.
+Mapping edges retain source revision, confidence and manual overrides. Equal numeric
+episode positions across providers do not prove equal content.
+
+The original all-provider mapping claim needs validation: inspect the selected
+[Anime-Lists revision](https://github.com/Anime-Lists/anime-lists) and its actual schema;
+additional sources may be required for AniList/MAL IDs. Proposed weekly updates are
+subject to permissions. Validate and preview the diff before applying it; keep the
+last valid dataset on failure. Never overwrite manual mappings/progress automatically.
+
+Fixtures cover absolute numbering, split cours, offsets, OVAs, recaps, specials,
+multi-episode files, alternate cuts and conflicting IDs. Fix-match previews affected
+episodes and user data. Changing presentation order does not change watched identity.
+
+### 3.8 Progress, preferences and external sync
+
+Progress belongs to profile + logical item, retaining source/version identity for
+different cuts. Proposed watched rule: unique acknowledged media-time intervals cover
+90% of the playable duration, or cover 50% and playback advances naturally into a
+verified credits marker. Seeking over an interval does not count it; replay counts
+only once, and playback speed changes elapsed wall time rather than media coverage.
+Record advancing intervals from bounded progress events, excluding explicit seeks
+and implausible jumps. Seeking directly to credits cannot mark an item watched.
+Explicit mark watched/unwatched overrides automation. Different timelines require
+confirmation before copying a resume position between versions.
+
+For multi-episode files, automatic per-episode watched state requires known timeline
+boundaries. Without them, retain file resume state and ask for explicit episode-level
+watched actions instead of assuming equal-length episodes. This behaviour and the
+coverage thresholds are provisional defaults under D11.
+
+Clients send progress every 10 seconds and on pause/seek/stop/exit when possible.
+Session ID, monotonic event sequence and source revision reject stale/duplicate events.
+A late heartbeat cannot undo an explicit user action. Backwards progress within one
+session requires a seek event. For concurrent sessions, latest server-accepted active
+session event wins; retain both histories. Client wall clocks are not authoritative.
+Proposed crash-resume accuracy: within 15 seconds of the last viewed position.
+
+Continue Watching includes items played at least 30 seconds and not watched.
+Remove-from-row hides without deleting history; playing again restores eligibility.
+Next Up follows the selected order; unavailable episodes are labelled and specials
+are not silently inserted into autoplay. Autoplay still checks current permissions.
+
+Track precedence: session choice → saved show choice → library preference → profile
+languages/forced rules → valid default. Save semantic choices (language, role,
+commentary/forced/signs), not only indexes that change on replacement. Explain missing
+track fallbacks. Heuristics suggest signs/SDH/forced roles without asserting certainty.
+
+External sync is off by default and cannot block local progress. Before delivery,
+specify OAuth scopes, permitted usage, unlink/revocation, retry budget and mappings.
+Proposed first version: outbound only, never reduce remote progress, preview initial
+reconciliation and exclude ambiguous/special mappings. Bidirectional sync is separate.
+
+### 3.9 Plex import safety
+
+The source is read-only. Admin explicitly maps source users to destination profiles;
+display-name/email matches alone cannot merge histories. Validate which per-user
+state the chosen API/access method actually exposes before promising completeness.
+Any database-based option uses an owner-provided consistent snapshot with a supported
+schema, never writes to the live Plex database, and rejects unknown versions.
+
+Dry-run reports matched, ambiguous, unavailable, unsupported and conflicting records,
+target profiles and changed fields. Commit uses a batch ID and is idempotent on rerun.
+Newer Lisimflix activity wins unless admin selects another policy. Record before-state
+so undo restores only unchanged imported values, preserving subsequent local activity.
+Retry partial failures without duplicates. Import tokens never appear in logs/exports
+and are discarded when the job ends unless separately authorised for retention.
+
 ## 4. Streaming engine
 
 ### 4.1 Decision ladder (per play request)
@@ -171,8 +362,10 @@ Inputs: file analysis (3.1), client capability profile, user/profile limits, mea
 1. **Direct play:** the file is served as-is via HTTP range requests.
 2. **Remux:** compatible streams, incompatible container. Repackaged to fMP4/HLS with `-c copy`.
 3. **Audio transcode only:** video copied, audio converted (TrueHD/DTS/FLAC → EAC3/AAC as client supports).
-4. **Full transcode:** GPU decode (NVDEC/CUVID) → scale/tone-map (CUDA) → NVENC
-   H.264 or HEVC, packaged as HLS fMP4. CPU fallback where the GPU can't decode (AV1 on Pascal) or fails.
+4. **Full transcode:** select a tested decode → filter → encode pipeline, packaged as
+   HLS fMP4. Prefer hardware paths where actually supported. Software decode plus
+   hardware encode is valid; filter compatibility and frame transfers are explicit.
+   CPU fallback is subject to admission limits and sustainable output speed.
 
 Every decision is recorded with **reasons** (e.g. "audio TrueHD unsupported by client") and
 shown in admin activity and the player's stats overlay.
@@ -185,15 +378,20 @@ shown in admin activity and the player's stats overlay.
   - Android (later): `MediaCodecList`/Media3.
 - Server-side **quirks table** keyed by user-agent/platform (PlayStation browser, Hisense
   VIDAA browser, Safari, etc.) that overrides known false positives.
-- If a direct play/remux fails to start or stalls repeatedly, the player reports it, the server
-  moves one rung down the ladder and remembers it for that device + codec.
+- If direct play/remux fails, the client reports evidence. The server distinguishes
+  compatibility from network/capacity faults, then selects a bounded alternative
+  under 4.9. Only appropriate failures become expiring device overrides.
 
 ### 4.3 Adaptive streaming
 
-- HLS with fMP4 segments (4s), multi-variant ladder generated **on demand** (only the
-  variants actually requested are encoded):
+- HLS with fMP4 segments (nominal 4s), with the following candidate quality presets:
   source/4K, 1080p 20, 1080p 8, 720p 4, 480p 1.5, 360p 0.7 Mbps, each capped by user policy.
-- Player: hls.js (web) with ABR, starting from a bandwidth estimate taken at session start.
+- Start with one selected rendition per session and controlled quality changes.
+  Seamless ABR is a later playback gate: renditions need aligned timestamps/keyframes
+  and an explicit encoding/cache strategy. Do not advertise variants that cannot be
+  made available within the measured switching budget (4.9).
+- Player: hls.js where supported; native HLS where required and verified. A bandwidth
+  estimate is a hint, constrained by policy and observed playback performance.
 - Seeking: segments are generated just-in-time. A seek outside the generated window restarts
   ffmpeg at that position (keyframe-aligned) and reuses finished segments.
 - Next-episode preloading: the first segments of the next episode are prepared near the end.
@@ -203,24 +401,34 @@ shown in admin activity and the player's stats overlay.
 
 ### 4.4 Subtitles
 
-- Text (SRT, VTT, embedded mov_text): extracted and served as WebVTT sidecars. They never force a transcode.
+- Text (SRT, VTT, embedded mov_text): prefer extraction to WebVTT sidecars. Verified
+  clients avoid video transcode; clients unable to render the selected track need an
+  explicit burn-in fallback or unsupported result. Conversion can lose formatting.
 - ASS/SSA: served raw and rendered client-side with **JASSUB** (libass/WASM) so styling
   and typesetting are preserved during direct play. Fonts are extracted from MKV attachments.
-- PGS/VobSub: client-side rendering (PGS renderer in web) where possible, burn-in during transcode as a last resort.
+- PGS/VobSub: proven burn-in first; client rendering is a later optimisation with
+  its own renderer/device evidence (4.11).
 - Subtitle offset adjustment, appearance settings, "signs & songs" track detection.
 
 ### 4.5 HDR
 
 - HDR10/HLG/DV (profiles with an HDR10 base layer) are direct played on HDR-capable clients.
-- On SDR clients: GPU tone-mapping (`tonemap_cuda` / OpenCL in jellyfin-ffmpeg) to BT.709 SDR.
-- DV profile 5 (no fallback layer) is tone-mapped with correct handling, never shown in wrong colours.
+- On SDR clients: use a tone-mapping filter present in the pinned jellyfin-ffmpeg
+  build and proven on the installed GPU. Do not assume CUDA decoding implies a
+  compatible CUDA tone-mapping filter. Record the complete filter graph in diagnostics.
+- DV profile 5 (no HDR10 fallback) needs a verified DV-aware conversion path; otherwise
+  reject with a clear explanation. P7/P8 base-layer handling is also fixture-tested.
+  Wrong-colour output is a failure, not an acceptable fallback.
 
 ### 4.6 GPU management
 
 - Startup self-test encodes/decodes short samples for each codec/profile and records
   what the hardware actually supports. Shown in admin ("HEVC 10-bit decode ✓, AV1 decode ✗").
-- Concurrency limit for NVENC sessions (default 8, configurable). Overflow falls back to CPU.
-- GPU failure at runtime → CPU fallback, with an admin warning.
+- Concurrency is bounded by a configurable application budget and measured hardware/
+  driver support. There is no assumption of 8 useful simultaneous sessions. Encoder
+  session limits do not establish real-time capacity for scaling, filters or subtitle burn-in.
+- GPU failure opens a temporary circuit breaker. Retry a tested CPU/hybrid path only
+  if capacity permits; otherwise report overload without spawning more work.
 
 ### 4.7 Trickplay, intros and credits
 
@@ -231,13 +439,123 @@ shown in admin activity and the player's stats overlay.
 
 ### 4.8 Remote delivery
 
-- Built-in HTTPS via Let's Encrypt (autocert) on the owner's domain and one forwarded port,
-  **or** Tailscale. Cloudflare may front the web app/API, but video bypasses it.
+- Remote HTTPS through an explicitly configured reverse proxy first; optional
+  built-in Let's Encrypt (autocert) later, or a documented Tailscale deployment.
+  If Cloudflare fronts the UI/API, video uses a separate verified delivery route;
+  routing, cookies, origin/CORS and URL expiry must be tested together.
 - Stream URLs are signed, user-bound and short-lived.
+
+### 4.9 Playback contract, admission and lifecycle
+
+A play request includes item/version ID, profile, capability revision, position,
+tracks and desired quality. Server authorises, resolves paths/tracks, selects a route,
+reserves capacity and returns session ID, effective quality/tracks, delivery URL,
+expiry, heartbeat instructions and reasons. Repeating an idempotency key cannot
+launch duplicate encoders. Client capability claims never override access policy.
+
+Outcomes: `direct`, `remux`, `audio_transcode`, `video_transcode`, `unsupported`,
+`capacity_unavailable`. Reason codes include `container_unsupported`,
+`video_profile_unsupported`, `audio_unsupported`, `subtitle_burnin_required`,
+`hdr_conversion_required`, `bitrate_policy`, `bandwidth_insufficient`,
+`device_failure_override`, `capacity_exhausted`. Tests assert all applicable reasons.
+
+Check profile/level, bit depth, chroma, resolution/framerate, HDR, audio channels,
+subtitle renderer and container. An H.264 probe does not prove Hi10P or every level.
+SDR H.264 8-bit 4:2:0 + AAC stereo is a candidate compatibility output, requiring
+real decoder and HLS/MSE verification per device.
+
+| State | Meaning | Recovery / exit |
+|---|---|---|
+| Requested / preparing | Authorisation, validation and reservation | Ready, bounded timeout or explicit rejection |
+| Ready / playing | Media available and client consuming | Pause, seek, quality change, stall, stop or expiry |
+| Paused / recovering | No advancement or bounded fallback | Resume, replacement generation or end |
+| Ended / failed / expired | Terminal with reason and final progress | Release owned work; new playback needs a new request |
+
+Reservation/launch are atomic against capacity budgets. Proposed initial limits:
+3 streams total, 2 hardware video jobs, 1 software video job; weighted admission
+reduces these for expensive filters. These are test budgets, not host measurements.
+Direct play still uses disk/network and counts against account stream limits.
+Preloads and background work yield to foreground sessions.
+
+Proposed preparation timeout: 20 seconds, visible progress after 2 seconds. If encoding
+cannot sustain real time, try one lower permitted quality, then fail clearly. Repeated
+GPU-specific failures open a 5-minute circuit breaker until a successful probe; one
+corrupt file must not disable the GPU. Maximum two automatic route changes per session;
+record each, preserve position and tracks, and never enter an infinite fallback loop.
+
+Capabilities combine runtime probes and a versioned quirks table. Cache negative
+results by device/browser version + codec/delivery profile (proposed expiry 7 days),
+with reset/retest. Network stalls alone cannot permanently blacklist a codec.
+Clients heartbeat every 10 seconds; release jobs/capacity after 60 seconds absent.
+A connected paused session can retain bounded cache, not an encoder indefinitely.
+Stop/admin kill is idempotent: signal the owned process group, wait a bounded grace
+period, terminate if necessary and reap it. Restart marks sessions interrupted;
+clients create new sessions at saved positions rather than attaching to stale jobs.
+
+### 4.10 HLS timeline, seeks, quality changes and cache
+
+The server owns the timeline. Init segments, timestamps, sequence numbers, durations
+and discontinuities remain coherent. Transcoded switchable renditions align keyframes.
+Copy remux uses existing keyframes: segment lengths can differ from the 4-second target.
+Use Apple's [HLS authoring specification](https://developer.apple.com/streaming/hls-authoring-specification-for-apple-devices.html)
+as a compatibility reference; test non-Apple clients too.
+
+Seeking outside prepared media supersedes old work and starts a generation at a
+decodable boundary. Discard pre-target frames; keep audio/subtitles on the logical
+timeline. Stale responses cannot attach to a new generation. Rapid scrubs coalesce.
+Test long GOPs, nonzero/negative source timestamps and track changes after seeks.
+
+First delivery supports manual quality changes with controlled restart at the current
+position. Before seamless ABR, choose and measure concurrent aligned encodes versus a
+bounded just-in-time scheduler. Record switch latency, resource cost and cache effects.
+Only advertise variants deliverable under that strategy. No claim of seamless ABR
+until switching tests pass on target devices.
+
+Presets are capped by source dimensions/framerate, device, policy and server budget.
+No default upscaling. Include audio/transport headroom; a 1 Mbps link cannot sustain
+a 1.5 Mbps video preset. Proposed starting selector uses at most 70% of the estimated
+bandwidth. If no preset fits, return `bandwidth_insufficient`. Fixed quality is still
+policy-bound. LAN classification never bypasses content or account stream limits.
+
+Cache identity includes source revision, streams, conversion parameters, ffmpeg build,
+subtitle/font revision, tone-map settings, rendition and generation. Publish complete
+segments atomically. Active readers pin media/init segments. Shared transforms still
+require authorisation for each consumer. Never put bearer tokens in cache filenames.
+
+Proposed cache cap: 20 GiB, preserving 5 GiB filesystem free, validated against the
+actual volume during setup. Evict unpinned entries, cancel speculative work, then
+refuse new work when thresholds cannot be met. Restart removes incomplete owned files
+safely. Durable user data never lives in `/cache`. Preload uses spare capacity and
+never marks the next episode played.
+
+### 4.11 Subtitle and HDR gates
+
+ASS needs a verified [JASSUB](https://github.com/ThaUnknown/jassub) WASM/worker path
+under the application's CSP on each target device. Upstream renderer support does
+not establish TV-browser performance. Bound attachment size/extraction time and never
+execute attachments. Subtitle text cannot become active HTML. Test font fallback,
+karaoke, overlapping events, positioning, right-to-left text, offsets and seek resync.
+
+Native/PiP video can omit DOM overlays. Where selected subtitles cannot appear, offer
+burn-in or disable that mode visibly; never silently drop subtitles. Bitmap subtitles
+start with proven burn-in. Client PGS/VobSub is a later renderer project, not an assumed
+built-in browser feature. Burn-in track changes restart at the same logical position.
+Extraction may require substantial reads: display preparation, honour cancellation
+and allow another track or supported fallback.
+
+HDR acceptance records input/output transfer, primaries, matrix and actual display
+mode. HDR queries alone are insufficient. Verify HDR10, HLG and DV separately against
+reference visuals on real SDR/HDR screens. SDR output removes stale HDR signalling.
+Automated moving-pixel tests cannot establish correct tone mapping or colour.
+Inspect the pinned build's filters and [FFmpeg documentation](https://ffmpeg.org/ffmpeg-filters.html);
+the original blanket `tonemap_cuda` assumption is withdrawn. Unproven DV conversion
+remains a blocked support-matrix cell.
 
 ## 5. Web app (UI/UX)
 
-Mockups are in `.superpowers/brainstorm/` (layout options; detail page and player).
+Mockups were referenced at `.superpowers/brainstorm/` in the original design but are
+not tracked in this checkout. Treat visual directions as descriptions until owners
+attach versioned references; missing mockups are not an implementation dependency.
 
 ### 5.1 Layouts and themes
 
@@ -286,7 +604,8 @@ Mockups are in `.superpowers/brainstorm/` (layout options; detail page and playe
 
 ### 5.4 TV mode
 
-- Auto-enabled on large screens or on detecting arrow-key/gamepad input. Can be toggled manually.
+- Explicit TV-mode toggle, remembered per device. Detected TV platforms can suggest
+  it; screen size or arrow-key use alone must not change a desktop user's layout.
 - Full spatial (D-pad) navigation with visible focus rings, larger targets, no hover-only controls.
 - QR-code sign-in: the TV shows a code, the phone approves it.
 - Targets: PlayStation browser, Hisense VIDAA browser, Android TV browser (until the native app ships).
@@ -299,6 +618,51 @@ PWA (installable), bottom tab bar, touch gestures in the player (double-tap seek
 
 Keyboard-complete, ARIA labels, focus management, readable subtitle defaults in every theme. WCAG 2.2 AA target.
 
+### 5.7 Interaction states and navigation
+
+Every browse/detail/settings screen defines loading, empty, partial, offline and
+error states. An unmatched file is browsable with a filename and manual match action.
+An unavailable source is labelled; Play explains the failure instead of spinning.
+Destructive catalogue/config actions show what changes and explicitly state that
+source files remain untouched. Save failures retain unsaved form values.
+
+Home rows only include authorised items. Search filters before totals/facets are
+calculated, so restricted titles do not leak through counts, autocomplete or artwork.
+Search and library queries use server pagination even when the UI scrolls infinitely;
+restore scroll/focus after opening a detail page. TV mode has explicit next/previous
+loading controls if virtualised scrolling breaks D-pad navigation.
+
+Playback exposes Preparing, Buffering, Reconnecting and Failed separately. Recoverable
+errors offer retry or lower quality; terminal errors show a short message and diagnostic
+ID. Audio/subtitle menus name language, role, codec and selected fallback. Stats show
+effective quality and conversion reasons without exposing filesystem paths to viewers.
+
+Profile/device settings have documented scope: layout/theme/languages are profile
+preferences; volume/TV mode/device quirks are device-specific. Changing profiles stops
+the old playback context and clears cached private results. Admin routes cannot appear
+through stale navigation after privilege changes.
+
+### 5.8 TV, mobile and accessibility acceptance
+
+Every TV journey (sign in, choose profile, browse, search, play, switch track, exit)
+must work with D-pad + select + back, with no keyboard/mouse assumption. Focus survives
+row loading, modal close, episode change and error retry. A back action closes the
+nearest overlay before leaving playback; no focus trap or inaccessible exit is allowed.
+Record actual PlayStation generation and Hisense model/firmware before committing to
+support; missing browser/MSE/native HLS cannot be fixed by a different CSS layout.
+
+Mobile tests cover rotation, notches/safe areas, touch target sizing, fullscreen exit,
+interrupted connections, returning from the background and autoplay restrictions.
+Installability does not imply offline media. The initial PWA caches only versioned
+application assets; authenticated catalogue, artwork and video must not be cached
+indefinitely by a generic service-worker route. Clear user-specific client state on
+logout. Offline downloads require section 9's separate gate and storage/revocation policy.
+
+WCAG 2.2 AA is evaluated with automated checks plus keyboard, zoom and screen-reader
+checks on critical journeys. Include contrast in every theme, reduced motion, visible
+focus, accessible status/error announcements, labelled controls and subtitle usability.
+No essential action depends on hover, colour alone, gestures or auto-playing audio.
+
 ## 6. Security
 
 ### 6.1 Sign-in (OAuth)
@@ -310,18 +674,22 @@ Keyboard-complete, ARIA labels, focus management, readable subtitle defaults in 
 - Each provider is enabled in admin by entering its client ID/secret. A built-in setup guide per
   provider shows the exact redirect URL (`https://<domain>/api/v1/auth/callback/<provider>`).
   Unconfigured providers are hidden from the sign-in page, so a fresh install still works.
-- **Requirements:** a public HTTPS domain for redirect URLs (4.8). **Apple** needs an Apple
-  Developer account (US$99/yr), a Services ID and a signing key. **Facebook** needs a Meta developer
-  app with `email` + `public_profile`.
+- **Requirements:** provider-approved HTTPS redirect URLs for deployed social sign-in;
+  supported development exceptions are provider-specific. Local sign-in does not
+  require a public domain. Apple/Facebook eligibility, keys, review requirements and
+  current fees must be checked against their official documentation before that phase.
 - **Access control:** users can link several providers to one account. The first sign-in must come
   through an invite link (which binds that provider identity to the invited account) or a sign-up
   request the admin approves. Identities are matched on the provider's stable subject ID, never on
   email alone, to prevent takeover via unverified emails.
 - **Local fallback:** the admin account (from the setup wizard) always keeps a local password
   (Argon2id) with TOTP 2FA, so the server can still be managed if the internet or a provider is
-  down. Local passwords for other users are off by default (admin toggle).
+  down. Local passwords for other users are an admin toggle; proposed G1/G2 deployments
+  explicitly enable them until social sign-in is delivered. Production default is
+  reviewed with D07 rather than leaving trial users unable to sign in.
 - Home profiles (3.3) sit under the signed-in account and use PINs, not OAuth.
-- TV sign-in uses the QR flow (5.4): the phone signs in with any provider and approves the TV.
+- TV sign-in uses the QR flow (5.4): an authenticated phone session (local or provider)
+  approves the TV with restricted authority as specified in 6.5.
 
 ### 6.2 Sessions and hardening
 
@@ -331,18 +699,120 @@ Keyboard-complete, ARIA labels, focus management, readable subtitle defaults in 
 - Authorisation is enforced server-side on every item/stream request against library visibility and rating policy.
 - Signed, expiring, user-bound stream/segment URLs.
 - Non-root process, read-only media mount, strict CSP on the web app, no third-party analytics.
-- Secrets (metadata API keys, TLS) are kept only in `/config` and never logged.
+- Secrets use restricted server-side storage under `/config` or explicitly mounted
+  secret files. They are never sent to the web client or logged. Backups containing
+  them are sensitive; deployment instructions cover access and encryption at rest.
+
+### 6.3 Account, profile and policy boundaries
+
+An account is an authenticated principal; a profile is a viewing identity under it;
+an administrator is an explicit account role. A profile PIN is not equivalent to an
+account password or a strong isolation boundary from someone controlling the account.
+Kids restrictions must be enforced server-side, including profile-switch grants;
+never accept an arbitrary profile ID just because the account can name it.
+
+Proposed account policy is the ceiling and profile policy can only narrow it.
+Library grants intersect; bitrate/resolution/concurrency use the stricter applicable
+limit; downloads require permission at both levels. Age restrictions include a defined
+rating region and explicit handling for unrated/unknown content. Proposed child default
+denies unrated items. Missing policy/rating data never silently expands access.
+Record how a parent exits a locked profile, rate-limit PIN attempts and expire grants.
+
+Admin can disable accounts, revoke sessions and remove grants immediately. Existing
+playback, artwork and subtitle requests recheck effective permission. Public errors
+avoid confirming that a forbidden item exists. Security tests cover guessed IDs,
+swapped profile/session IDs, stale grants and shared cached resources.
+
+### 6.4 Bootstrap, OAuth linking and recovery
+
+Bootstrap is available only on an uninitialised server through a local deployment
+channel or single-use random setup token printed to the owner's local console.
+The first web visitor cannot claim an internet-exposed installation. Completing setup
+atomically disables bootstrap. Local admin credentials work with providers disabled;
+TOTP enrolment includes tested recovery codes stored hashed, shown once.
+Specify an owner-only local recovery command before remote deployment; recovery must
+not expose a permanent unauthenticated HTTP bypass.
+
+Invites are random, stored hashed, single-use and expiring (proposed 48 hours), with
+explicit account/library policy. A social callback alone never grants access. Bind
+OAuth state to the initiating browser and intended invite/link action. Linking requires
+recent authentication to the existing account and proof of the new identity; identical
+email addresses never automatically link accounts. Unlink cannot remove the last
+usable administrator login. Disable provider login without deleting local history.
+
+Use maintained libraries for OAuth/OIDC and password/TOTP primitives. Validate issuer,
+audience, signatures and expiry; use nonce for OIDC and PKCE where supported, following
+[OAuth security BCP](https://www.rfc-editor.org/rfc/rfc9700.html). Provider-specific
+adapters handle differences; Facebook is not treated as generic OIDC. Provider tokens
+remain server-side, with minimum scopes and explicit retention. Do not log callback
+query strings, auth codes, invitation tokens, cookies or device authorisation secrets.
+
+Browser sessions use Secure/HttpOnly cookies with a documented SameSite and CSRF
+strategy. Rotate the session on sign-in/privilege change. Proposed lifetimes: 7 days
+idle, 30 days absolute; sensitive admin changes require reauthentication within 10
+minutes. Native apps later use revocable secure token storage, not web localStorage.
+Rate limits apply per account/action plus network, with bounded lockout so an attacker
+cannot permanently deny the administrator access.
+
+### 6.5 Stream authorisation and TV pairing
+
+Signing a URL does not by itself make it user-bound. Same-origin web streams require
+the authenticated session plus a playback-scoped grant; native HLS cookie delivery
+must be tested. Future clients without cookies need an explicit scoped delivery-token
+design. Proposed URL grant expiry is 5 minutes, refreshable by the live authorised
+session; bind to session/profile/item/transform and revoke when its parent is revoked.
+Do not bind solely to IP, which changes on mobile and can be shared behind NAT.
+
+Check every range, playlist, init/media segment, font, thumbnail and subtitle request;
+knowing an object/cache key cannot bypass permission. Expiry during playback refreshes
+without restarting the video where the client supports it. Access logs redact query
+tokens, and referrer policy prevents leaks. Private responses cannot enter public CDN
+caches. CORS is denied by default except explicitly configured origins.
+
+TV pairing creates a high-entropy polling secret and a separate short human code.
+Proposed validity: 5 minutes, one approval and one redemption, polling no faster than
+5 seconds with server backoff. The phone displays the server and requesting device
+before approval. Pairing cannot transfer admin authority by default. Rate-limit
+guessing, permit cancellation, and test expired/replayed/parallel redemption attempts.
+The TV never receives the approving phone's password or provider access token.
+
+### 6.6 Network and untrusted-input boundaries
+
+Authenticated browser access requires HTTPS, including on LAN, to retain Secure
+session cookies. A trusted reverse proxy with an owner-configured certificate can
+provide it from G1; it does not require exposing the service publicly. Direct LAN
+HTTP is limited to unauthenticated health and protected initial setup, with no
+reusable login session or provider secret entry. Built-in ACME is optional later.
+Define public base URL, trusted proxy CIDRs and forwarded-header
+handling. Ignore forwarded client identity from untrusted peers. LAN detection uses
+configured/trusted network information, not arbitrary client headers.
+
+Restrict provider fetching to approved schemes/hosts and validate redirects/IP targets
+to prevent SSRF. Private-network Plex import is a separate admin-only operation with
+explicit destination approval, not an exception for all remote fetches. Treat NFO/XML,
+images, fonts, archives and probe output as untrusted: bound sizes/time, disable XML
+external entities and reject traversal paths. ffmpeg inputs use approved local files,
+never an arbitrary user-provided URL or playlist protocol.
+
+Log security events with actor/action/result and correlation ID, redacting secrets
+and private viewing detail from unauthorised viewers. Proposed retention is 14 days,
+configurable with a size cap. No third-party analytics; external metadata/OAuth/sync
+traffic is disclosed in setup and can be disabled independently.
 
 ## 7. Testing
 
 - **Go unit tests** for every package. The playback decision engine gets a table-driven
   matrix of device profiles × file profiles × policies → expected rung and reasons.
-- **Test media set** (`testdata/media/`, generated by a script with ffmpeg, so no
-  copyrighted content): H.264/HEVC 8/10-bit, HDR10, HLG, DV (P5/P8), AV1, VP9, TrueHD,
-  DTS-HD, EAC3 Atmos, FLAC, ASS with fonts, PGS, SRT, MKV/MP4/AVI/TS, odd framerates, interlaced.
-- **End-to-end tests:** Playwright (`mcr.microsoft.com/playwright` image) runs every test file in
-  Chromium/Firefox/WebKit, asserts playback starts, seeks work and subtitles render, under
-  throttled networks of 1, 3, 10 Mbps and unthrottled.
+- **Test media set:** generated owned samples where possible, plus explicitly
+  redistributable specialist fixtures or owner-local files. A script cannot be assumed
+  to generate valid DV, DTS-HD, TrueHD or Atmos merely by selecting an encoder. The
+  manifest records codec/profile, provenance, redistribution rights and expected result.
+  Coverage includes H.264/HEVC 8/10-bit, HDR10/HLG/DV P5/P7/P8, AV1, VP9, lossless/
+  multichannel audio, ASS/fonts, PGS, SRT, common containers, odd framerates and interlace.
+- **End-to-end tests:** local Playwright runs under Chromium/Firefox/WebKit with
+  documented browser/codec builds. Playback, seeks, subtitles and network profiles
+  are checked against the supported matrix. Playwright WebKit does not certify Safari,
+  iOS or a TV. Proprietary codec availability depends on the actual browser build.
 - **API contract tests** against the OpenAPI spec.
 - **GPU tests** are tagged and run on zraid (self-hosted runner or manual). CI uses CPU paths.
 - Before each phase is called done, it is verified against real files from the zraid library
@@ -355,21 +825,370 @@ Keyboard-complete, ARIA labels, focus management, readable subtitle defaults in 
 - `main` is protected by team rule: PR + 1 review + green CI required. The org is on the free plan,
   so a `.githooks/pre-push` hook blocks direct pushes instead of GitHub branch protection (see `CONTRIBUTING.md`).
   Switch to a GitHub ruleset when the org upgrades.
-- GitHub Actions on PRs: lint, unit tests, web build, E2E (CPU). On merge to `main`: build and push
+- GitHub Actions on PRs: lint, unit tests, web build through `make check`.
+  E2E and real-device/GPU checks remain local per `CONTRIBUTING.md`; attach evidence
+  to relevant PRs. On merge to `main`: build and push
   `ghcr.io/lisimflix/lisimflix:edge`. Tags `vX.Y.Z` push versioned + `latest`.
 - Work is tracked as GitHub Issues on an org Project board, grouped by phase/milestone.
   Module boundaries (2.2) map to issue labels (`area:transcode`, `area:web`, ...).
 - `CONTRIBUTING.md` and `CLAUDE.md` define conventions for humans and AI agents alike.
 
-## 9. Phases
+## 9. Proposed delivery gates and retained roadmap
 
-| # | Phase | Done when |
+This revises delivery order for review; it does not claim owners have approved dropping
+features. The original broad phases delayed UI testing until after a large streaming
+engine. Ship a minimal browse/player slice early so real devices constrain the design.
+Security, consistent backups and policy enforcement start with foundation, not a final
+hardening phase. Build plans must reference requirement IDs in section 13.
+
+| Gate | Included | Exit evidence |
 |---|---|---|
-| 1 | **Foundation:** container, DB, auth (Google + Microsoft OAuth, invites, local admin)/accounts/profiles, scanner, metadata incl. anime, Plex import, API skeleton | Real zraid libraries scan and match accurately. Users/profiles work via API. |
-| 2 | **Streaming engine:** decision ladder, remux, GPU transcode, ABR HLS, subtitles, HDR tone-map, trickplay, intro detection | Every test-media file plays in all browsers at all throttle levels |
-| 3 | **Web app:** layout C complete, then A and B, TV mode, admin dashboard, PWA | Household can browse and play everything from PC, phone and PS/Hisense browsers |
-| 4 | **Hardening and trial:** Apple + Facebook + generic OIDC sign-in, sign-up requests, TLS + remote access, backups, bandwidth governance; trial with household + friends next to Plex | Two weeks' trial with no blocking issues |
-| 5 | **Android TV + phone app** (Kotlin, Media3), QR sign-in | Native app plays the test set directly where hardware allows |
-| 6 | **Offline downloads:** original or transcoded copies, per-user permission, batch download | A downloaded episode plays offline on Android and the PWA |
+| G0 — prove the risky path | Named host/devices, fixture manifest, direct/remux and one GPU/CPU conversion spike, subtitle/HDR probes | Recorded capabilities and failures; unsupported cells explicit; no production cut-over |
+| G1 — local vertical slice | Container, migrations/backup, admin-created local users/profiles, HTTPS through configured proxy, one read-only movie/TV library, basic metadata, layout C browse/detail/player, progress, direct/remux plus bounded SDR H.264/AAC software transcode and manual quality changes | A second tester deploys fresh and restores a backup; representative files work end to end with permissions enforced |
+| G2 — household compatibility | Anime identity/preferences, tested subtitles/HDR, GPU admission/fallback, seek recovery, TV controls on agreed devices, diagnostics, Plex dry-run/import | Mandatory matrix passes; at least one real long-form session per target device; blocked cells accepted or fixed |
+| G3 — invited remote trial | Google/Microsoft sign-in + invites, remote HTTPS/proxy, upload caps, session revocation, QR pairing if TV trial needs it, operational runbooks | Security/failure tests pass; 14-day household/friends trial meets section 13 targets |
+| G4 — expansion | Remaining providers, layouts A/B, additional media types, ABR, trickplay/intro detection, external sync, native Android, offline | Each feature has its own approved contract, fixtures and acceptance evidence before being advertised |
 
-Plex keeps running throughout. The cut-over is the owner's decision after phase 4.
+Plex stays running; only the owner chooses cut-over after G3 evidence. A new failure
+in a mandatory playback journey pauses cut-over regardless of feature completion.
+
+### 9.1 Feature placement ledger
+
+| Feature from original vision | Proposed placement / boundary |
+|---|---|
+| Movies, TV, basic TMDB/NFO; local accounts/profiles; layout C; manual quality with bounded SDR software conversion | G1 baseline |
+| Anime matching/order; core providers; audio/ASS/PGS; GPU/HDR; TV navigation; Plex import | G2, with unproven conversions visibly blocked |
+| Google/Microsoft + invites; HTTPS remote delivery; QR pairing; bandwidth policy | G3, or earlier when required for real-device testing |
+| Apple/Facebook/generic OIDC; admin-approved signup requests; built-in ACME | G4; local fallback and secure remote deployment already exist |
+| Music, photos, home videos | Retained G4 scope; need domain/player contracts before implementation |
+| Layouts A/B, nested collections, smart playlists, advanced shared rows | G4; basic authorised rows/watchlist remain part of baseline UI |
+| Missing episode display, richer ratings/artwork providers, alternative order UI | G4 except ordering needed to identify the G2 anime fixture set correctly |
+| Seamless ABR, seek thumbnails, automatic intro/credits, speculative next preload | G4 optimisations; manual seeks/next episode work earlier |
+| Native Android phone/TV (Kotlin/Media3), offline originals/transcodes/batches | G4 separate milestones; browser offline capability is independently proven |
+| AniList/MAL outbound sync | G4 after terms, scopes and mapping verification |
+
+### 9.2 Contracts required before expansion features start
+
+Music needs album/artist/disc/track identity, gapless/queue behaviour and tag precedence.
+Photos need EXIF orientation/privacy, thumbnails and supported formats. Home videos
+need local titles/dates without forced movie matching. Collections/playlists need
+authorisation for every member and cycle prevention for nesting.
+
+Intro/credits detection needs confidence, manual override, false-positive evaluation
+and background budgets; fingerprint agreement is evidence, not proof of an intro.
+Skip ranges cannot hide unwatched narrative without an undo action. Trickplay must
+remain within resource/cache budgets and use the same item permissions.
+
+Offline needs per-device storage quotas, job cancellation, partial download recovery,
+manifest integrity, track selection, app upgrade handling and a clear revocation model.
+Already downloaded unencrypted files cannot be remotely erased with certainty. PWA
+storage/eviction/background restrictions need real-platform tests. Do not advertise
+offline support simply because a service worker installs successfully.
+
+## 10. Domain model, persistence and module contracts
+
+### 10.1 Stable identities and relationships
+
+| Entity | Minimum identity / invariant |
+|---|---|
+| Account, external identity, profile | Account owns identities `(issuer, subject)`; profile owns viewing data; admin role belongs to account |
+| Library, root, scan run | Library type/config separate from root availability; scan has revision, counters and terminal status |
+| Movie/show/season/episode | Stable local IDs independent of provider IDs, filenames and chosen episode order |
+| Media file, playable version, stream | File revision + probe; version/cut maps to logical items; streams retain original index and semantic role |
+| Provider match, mapping edge, field lock | Provenance/revision/confidence; explicit overrides survive refresh |
+| Progress, history, preference, watchlist | Profile-scoped; manual actions cannot be undone by stale automated events |
+| Playback session, job, cache entry | Owned lifecycle, generation, capacity reservation, transform identity and terminal reason |
+| Invite, pairing request, session, audit event | Hashed secrets, expiry/revocation and explicit actor/target; secrets excluded from event payloads |
+| Import batch, backup, migration | Source/version manifest, status and verifiable recovery boundary |
+
+Names are descriptive, not a prescribed SQL schema. Final table/JSON names belong in
+the implementation plan and OpenAPI. IDs are opaque to clients; filesystem paths and
+provider ordering are never primary public identity. Store UTC instants; preserve
+media times in an explicit unit and distinguish duration from wall time.
+
+### 10.2 Ownership and transactions
+
+Module boundaries in 2.2 are ownership areas, not a demand for fourteen frameworks.
+Keep related code together initially; split when a stable interface has real callers.
+`library` owns discovery/probe updates; `metadata` owns provider results/mappings;
+`userdata` owns progress; `playback` chooses/routes/reserves; `transcode` executes only
+validated plans. `api` handles transport/auth context, not independent policy rules.
+
+Use one shared policy evaluator for discovery and media access. Multi-row changes
+(identity remap, import application, invite redemption, reservation) are transactional.
+Do not hold database transactions across network calls or ffmpeg execution. Background
+jobs persist intent/status and have idempotent retry semantics; no external message
+broker is required. Crashes between DB update and side effect must reconcile on restart.
+
+SQLite WAL lives on local disk, never SMB/NFS. Keep transactions short, bound write
+contention and surface busy/timeout failures; WAL still permits only one writer at a
+time. See [SQLite WAL](https://www.sqlite.org/wal.html). Pin/test the chosen SQLite/Go
+driver versions. A static Go binary is a build target to verify, not an assumption
+independent of the selected driver's C/toolchain requirements.
+
+## 11. Deployment, operations and recovery
+
+### 11.1 Supported deployment contract
+
+First target is one Linux container on the agreed amd64 host. HTTPS may be terminated
+by the owner's existing reverse proxy; it is an explicit G1 deployment prerequisite
+until a supported in-container TLS path exists. Other architectures
+are unadvertised until images and ffmpeg support are tested. Publish a pinned image
+version/digest and compatible NVIDIA driver/runtime requirement. Go/Node build tools
+stay out of the runtime image. Include dependency versions, licenses and an SBOM.
+
+Run with an effective non-root UID/GID able to write `/config` and `/cache` and read
+the approved `/media` roots. Explain how PUID/PGID is applied; do not recursively chown
+media or assume arbitrary mounts have appropriate ownership. No privileged container,
+Docker socket or unnecessary capabilities. GPU access is optional and explicitly
+configured using the supported container runtime mechanism.
+
+HTTP listens on 8420 in the container, reachable only by trusted ingress/admin paths.
+Authenticated LAN and remote deployments map it behind an HTTPS reverse proxy;
+optional built-in TLS uses a separately configured listener/port and
+validated ACME reachability. Resolve the original “one port plus optional 443” wording
+in the actual compose example; do not require root simply to bind a privileged port.
+Document public base URL, trusted proxies, volumes, GPU setup and secret injection.
+
+Startup validates writable paths/free space, media-root visibility, schema support
+and required binaries. GPU probe failure degrades supported paths; database migration
+failure blocks readiness. Root unavailability marks that library offline. Health
+endpoints separate process liveness from usable readiness; metadata outages alone do
+not make the server unready. Readiness never leaks secrets or full host paths.
+
+### 11.2 Resource budgets and observability
+
+All queues have capacity/backpressure. Playback has priority over scans, thumbnails,
+fingerprints and speculative preloads. Proposed background defaults are 2 probes and
+1 enrichment worker per provider; shared provider limits still apply across libraries.
+Operators can pause maintenance without interrupting active playback.
+
+Measure active/preparing sessions, route/reason counts, first-frame/seek latency,
+rebuffer duration, encoding speed, resource reservations, queue depth/age, scan counts,
+provider errors, database contention, cache/free space and backup freshness. Emit
+structured bounded logs with request/session/job correlation IDs and redaction.
+Diagnostic exports are explicit admin actions, show included fields and omit secrets.
+
+Disk full, provider throttling, probe crash, killed ffmpeg, GPU loss and process restart
+have tested behaviour. Existing playable sessions continue where safe; new work is
+refused clearly when resources are exhausted. No workload can grow indefinitely just
+because the container still has host memory available. Implementation plans name and
+test memory/process limits after G0 measurements.
+
+### 11.3 Backup and restore
+
+Use the [SQLite online backup API](https://www.sqlite.org/backup.html) or another
+documented consistent snapshot mechanism. A backup includes DB, durable settings,
+identity/provider secrets and a manifest with app/schema version and checksums.
+Artwork may be rebuildable; identify whether included. Source media and transcode cache
+are excluded. Avoid retaining plaintext secrets in temporary staging or public URLs.
+
+Nightly backup retains the last 7 successful snapshots; failed jobs never prune the
+last usable one. Proposed RPO is 24 hours, with visible warning after 26 hours without
+success. Owner provides a second location outside the container's data disk; a snapshot
+on the same failed disk is not disaster recovery. Encryption/key custody is documented
+before secrets-bearing backups leave the host.
+
+Restore requires admin reauthentication and explicit confirmation, enters maintenance,
+stops jobs, takes a pre-restore snapshot and validates archive paths, checksums, schema
+compatibility and database integrity before switching atomically. It never extracts
+outside staging or merges old/new database files. On validation failure keep the
+current installation. Revoke old sessions after successful restore. A separate clean
+instance restore rehearsal proves account access, library identity and progress.
+Proposed recovery target: service ready within 30 minutes on the documented sample
+dataset, excluding source-media recovery/artwork regeneration; measure before claiming it.
+
+### 11.4 Upgrade, shutdown and rollback
+
+Before migration, create a verified backup. One process performs migrations; startup
+refuses a newer schema it cannot understand. Do not promise binary-only downgrade after
+a destructive migration: rollback restores a compatible image plus its pre-upgrade
+snapshot. Release notes state compatibility and recovery steps.
+
+Shutdown stops admission, flushes accepted progress, cancels background jobs, signals
+and reaps children within the configured container grace period, and leaves incomplete
+cache entries unpublished. Restart reconciles interrupted jobs/reservations. Secret
+rotation and account disabling do not require deleting profiles or watch history.
+
+### 11.5 Dependency distribution
+
+Pin jellyfin-ffmpeg and web/WASM dependencies. Capture the actual ffmpeg build flags,
+license texts and corresponding-source/notice requirements before distributing images;
+external-process use does not remove obligations for bundled binaries. The
+[FFmpeg legal guidance](https://www.ffmpeg.org/legal.html) is the starting reference,
+not a claim that the proposed image has already passed a license review.
+
+## 12. Public API and client contract
+
+The OpenAPI document is versioned with the implementation and generates the web client.
+No endpoint is considered complete until auth, errors, pagination, resource limits
+and an integration example are defined. The following route families are proposed;
+exact paths belong in the first API contract PR, not independent client guesses.
+
+| Family | Required operations / rules |
+|---|---|
+| Setup/auth/accounts/profiles | One-time bootstrap, login/logout, provider callback/link, invite redemption, profile grants, revocation |
+| Libraries/items/search | Paginated authorised queries, detail/versions/tracks, artwork, scan status and admin matching |
+| User data | Progress events, watched overrides, history/watchlist/preferences, conflict/revision behaviour |
+| Playback | Prepare/start, heartbeat/progress, seek/quality generation, stop, authorised range/HLS/subtitle access |
+| Admin/jobs/recovery | Activity, safe cancellation, scan/import dry-run/apply, backup/restore, diagnostics |
+
+JSON uses stable field names, opaque IDs, RFC 3339 timestamps and explicitly named
+duration/position units. Paginated lists default to 50, max 200 (proposed), with stable
+ordering/cursors. Bound request bodies and search lengths. Unknown optional fields
+can be ignored; unknown enum values have a client fallback. Breaking changes need
+an explicit compatibility/version plan, especially after native clients ship.
+
+Errors include HTTP status, stable code, safe message, request ID and optional retry
+information. Distinguish unauthenticated, forbidden/not-found policy, conflict, invalid
+input, throttled, unsupported and capacity unavailable. Internal paths, SQL, ffmpeg
+commands and secrets are admin diagnostics, not public error payloads.
+
+Mutations with retryable side effects accept idempotency keys scoped to actor/action;
+reusing a key with a different request is a conflict. Editable metadata/policy uses
+revision preconditions to prevent lost updates. Long operations return a job ID/status
+with cancellation and per-item outcomes rather than holding a request open indefinitely.
+Range delivery tests include valid partial responses, invalid ranges, cancellation
+and source changes; response length/content type must match actual served media.
+
+## 13. Verification matrix and measurable acceptance
+
+### 13.1 Proposed performance targets
+
+These are provisional targets for owner review, not claims of achieved performance.
+Record host, dataset, network latency/loss, client versions, cache state, resolution,
+input bitrate, duration and test count. Measure at least 20 starts/seeks for p95 claims;
+small smoke runs report individual samples instead of misleading percentiles.
+
+| ID | Measurement | Proposed target / condition |
+|---|---|---|
+| PERF-01 | Time from Play to advancing media | p95 ≤3s direct/remux warm; ≤8s transcode; cold extraction shown separately |
+| PERF-02 | Seek to requested content | p95 ≤3s cached, ≤8s cold transcode; position within 1s after stabilising |
+| PERF-03 | Stability | Rebuffer ≤1% of played time in each 30-minute supported-path run with adequate sustained bandwidth |
+| PERF-04 | Capacity | 3 concurrent household streams including 2 agreed transcodes for 60 minutes on named host; no unbounded queue/memory growth |
+| PERF-05 | Browsing | p95 server search/list response ≤500ms on owner-provided catalogue size; UI remains navigable while scanning |
+| PERF-06 | Progress | Resume within 15s after client crash; explicit watched override survives stale/replayed events |
+| PERF-07 | Recovery | Backup ≤24h RPO; restore rehearsal ≤30min under documented dataset conditions |
+
+Cold scan/probe/match throughput cannot have an honest target until the actual file
+count, storage latency and provider rate limits are recorded. G0 must establish a
+baseline and owners set the acceptable scan duration before G1 is signed off.
+
+### 13.2 Required test dimensions
+
+Maintain `testdata` manifests in the implementation with fixture ID, provenance,
+probe summary, intended route, selected tracks, expected appearance and support tier.
+Generated fixtures contain original test content. Proprietary specialist samples stay
+owner-local unless redistribution rights are explicit. Missing samples are recorded
+as missing coverage, not represented by a different codec with a similar extension.
+
+| Dimension | Required cases |
+|---|---|
+| Delivery/video | Direct ranges, MKV remux, audio-only conversion, hardware/software/hybrid video, H.264 Hi10P, HEVC Main10, AV1/VP9, interlaced and variable framerate |
+| Audio/subtitles | Stereo/surround/downmix, commentary, forced/full/SDH/signs, ASS/fonts, PGS/VobSub, no audio, corrupt/missing selected stream |
+| Colour | SDR, HDR10, HLG, DV P5/P7/P8 on actual SDR/HDR screens; verified fallback or explicit unsupported |
+| Network/resources | 1/3/10 Mbps and LAN, latency/loss/reconnect, constrained CPU/GPU/cache, concurrent sessions, upload saturation |
+| Lifecycle/data | Rapid seeks, quality/track switches, pause/expiry, crash/restart, replaced file, offline root, provider 429/outage, partial import/restore failure |
+| Security | Cross-account/profile access, PIN bypass, stale signed URLs, revocation, invite/QR replay, CSRF, SSRF/path traversal, protected cache/art/subtitle access |
+
+For each cell, record supported route, owner-accepted limitation or unresolved blocker.
+A low-bandwidth case passes by playing an appropriate lower quality or correctly
+rejecting an impossible request; it does not require original 4K at 1 Mbps.
+Unsupported must never count as successful playback for a mandatory target cell.
+
+### 13.3 Client tiers and evidence
+
+| Tier | Definition | Evidence |
+|---|---|---|
+| Mandatory household | Exact owner-approved PCs/phones/TVs and browser versions | Real-device start, seek, audio/subtitle, resume and 30-minute playback; TV D-pad journey |
+| Automated regression | Pinned Playwright Chromium/Firefox/WebKit builds | Repeatable supported-codec scenarios and UI/API assertions; not hardware certification |
+| Experimental | Unverified devices, formats or display paths | Labelled as experimental; visible fallback/failure; no cut-over promise |
+
+G0 names exact household devices before support is promised. Native HLS and hls.js
+paths are tested independently; see [hls.js supported platforms](https://github.com/video-dev/hls.js).
+NVIDIA's [support matrix](https://developer.nvidia.com/video-encode-decode-support-matrix)
+guides codec capability, while actual host tests establish throughput. Browser codec
+support varies by platform; [Jellyfin's client documentation](https://jellyfin.org/docs/general/clients/codec-support/)
+is useful comparative evidence, not a guarantee inherited by this application.
+
+### 13.4 Requirement-to-test ledger
+
+| ID | Requirement | Gate / proving test |
+|---|---|---|
+| SAFE-01 | Source media stays unchanged | G1/G2: read-only mounts plus before/after source metadata checks during scan/import/play |
+| SCAN-01 | Offline roots never mass-retire data | G1: disconnect/empty-root/return fixtures and interrupted scan recovery |
+| META-01 | Locks/mappings preserve user intent | G2: refresh/order/fix-match with watched episodes and conflicting providers |
+| AUTH-01 | Every resource observes policy | G1/G3: swapped account/profile IDs, art/fonts/subtitles/segments and revoked sessions |
+| PLAY-01 | Deterministic route and reasons | G1/G2: file × capability × policy table tests plus real subprocess output |
+| PLAY-02 | Bounded work and recovery | G2: overload, killed encoder, GPU failure, heartbeat expiry, rapid seek and job reaping |
+| TEXT-01 | Selected subtitles remain usable | G2: ASS/bitmap/sidecar with seeks, fonts, fullscreen and PiP/fallback |
+| HDR-01 | Correct display or explicit rejection | G2: reference colours and signalling on physical SDR/HDR devices |
+| DATA-01 | Progress/import cannot erase newer work | G1/G2: duplicate/out-of-order events, two sessions, import rerun and guarded undo |
+| OPS-01 | Recoverable deployment | G1/G3: fresh setup, backup, clean-instance restore, migration failure and documented rollback |
+| UX-01 | Accessible household journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
+| REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
+
+### 13.5 PR and trial completion rules
+
+`make check` is the common local/CI gate: lint, unit tests, contract validation when
+present and web production build. Local E2E/GPU/device evidence is attached when a PR
+touches those paths. Deterministic unit tests do not replace real decoder/display
+evidence. No blanket tests for every trivial helper; test invariants and failures.
+
+A gate records implemented requirement IDs, measured results, fixture/client versions,
+known limitations and owner sign-off. Trial lasts 14 consecutive days after mandatory
+journeys pass, includes household and invited remote viewers, and has no unresolved
+blocking playback, data-loss or access-control issue. Record actual sessions and
+feedback, not just uptime. Feature additions do not reset the trial unless they change
+a mandatory journey; regression in one does. Owner decides cut-over explicitly.
+
+## 14. Decision and challenge register
+
+The following are proposals/questions for Pete and Lammy. No entry is silently treated
+as approval. Record decision, owner/date and rationale here when settled.
+
+| ID | Challenge / decision | Proposed position | Blocks |
+|---|---|---|---|
+| D01 | Must first trial include all media types/providers/layouts? | Movies/TV/anime + layout C first; retain expansion ledger | G1/G2 scope approval |
+| D02 | Which actual host is zraid, and who supplies evidence? | Deployment owner records hardware/runtime/storage/network and corrected usage report | Capacity/GPU claims |
+| D03 | Exact PlayStation/Hisense/phone/desktop support? | Name models/versions; test usable browser before committing; no presumed Apple TV/Chromecast browser | G0 matrix |
+| D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
+| D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
+| D06 | Are AniList and mapping sources permitted/sufficient? | Validate API terms and dataset coverage; local matching survives provider outage | Specific providers and outbound sync |
+| D07 | Social versus local user sign-in during trial? | Local login for G1/G2, Google/Microsoft + invites for G3; remaining providers later | Account rollout |
+| D08 | Profile PIN / child-policy guarantees? | Server-enforced restricted profile grants; account controller remains privileged; deny unrated by default for kids | Policy UX and security tests |
+| D09 | Remote ingress and TLS ownership? | Existing reverse proxy first, explicit trusted-proxy settings; built-in ACME later | Remote deployment |
+| D10 | Plex access and import completeness? | Validate a read-only source method/user-state sample before promising full history | Import implementation |
+| D11 | Numeric defaults and performance targets? | Adopt provisional values only after G0 measurements and owner review | Acceptance sign-off |
+| D12 | Backup destination, recovery owner and key custody? | Owner names external copy target and tests restore before remote trial | Disaster-recovery claim |
+| D13 | Original mockups missing from tracked repo? | Supply versioned references or approve described layout C without them | Visual sign-off, not playback spike |
+| D14 | License and specialist fixture redistribution? | Pin builds; document notices/source and sample rights before publication | Image/test artifact distribution |
+
+### 14.1 Resolved documentation contradictions in this draft
+
+- E2E is local, matching `CONTRIBUTING.md`; core CI is `make check`.
+- SQLite backup is consistent snapshot or stopped full copy, not a live main-file copy.
+- Tone mapping and GPU session budgets are measured paths, not assumed filter names/capacity.
+- Offline PWA, universal TV playback and specialist fixture generation are validation
+  work, not capabilities guaranteed by framework choice.
+- Scope and delivery changes are marked proposed, retaining original features in 9.1.
+
+## 15. Primary references and research limits
+
+References checked for this revision on 2026-10-25. Recheck version-specific behaviour
+when implementing. External documents establish constraints, not local host readiness.
+
+| Reference | Used for |
+|---|---|
+| [SQLite backup API](https://www.sqlite.org/backup.html), [WAL](https://www.sqlite.org/wal.html) | Consistent online backups, local storage and writer contention |
+| [Apple HLS authoring](https://developer.apple.com/streaming/hls-authoring-specification-for-apple-devices.html), [hls.js](https://github.com/video-dev/hls.js) | Timeline/rendition interoperability and browser delivery paths |
+| [NVIDIA support matrix](https://developer.nvidia.com/video-encode-decode-support-matrix), [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html) | Hardware capability boundaries and actual filter selection |
+| [JASSUB](https://github.com/ThaUnknown/jassub), [Jellyfin client codec documentation](https://jellyfin.org/docs/general/clients/codec-support/) | Subtitle renderer and platform-specific compatibility constraints |
+| [OAuth BCP RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html) | Provider adapter and authentication security requirements |
+| [AniList terms](https://docs.anilist.co/guide/terms-of-use), [limits](https://docs.anilist.co/guide/rate-limiting), [Anime-Lists](https://github.com/Anime-Lists/anime-lists) | Provider-use constraints, backoff and mapping verification |
+| [FFmpeg license guidance](https://www.ffmpeg.org/legal.html) | Distribution review for the actual bundled build |
+
+Not performed in this revision: zraid access, GPU/codec benchmarks, real-device tests,
+provider app registration, API credential use, Plex extraction, legal clearance or
+application implementation. These remain named evidence gates above; this document
+must not be used as a completed test report.
