@@ -959,13 +959,22 @@ traffic is disclosed in setup and can be disabled independently.
 - Private repo `Lisimflix/lisimflix`, monorepo: `server/` (Go), `web/` (React), `docs/`,
   `deploy/` (generic compose, optional Unraid template), `testdata/`. Android goes in
   `Lisimflix/lisimflix-android` (G4 expansion milestone).
-- `main` is protected by team rule: PR + 1 review + green CI required. The org is on the free plan,
+- After CI bootstrap, the team merge rule for code PRs is PR + 1 review + green CI. The single bootstrap PR instead requires local `make check` plus a second-member review; GitHub cannot run its workflow before it exists on the default branch. The org is on the free plan,
   so a `.githooks/pre-push` hook blocks direct pushes instead of GitHub branch protection (see `CONTRIBUTING.md`).
   Switch to a GitHub ruleset when the org upgrades.
-- GitHub Actions on PRs: lint, unit tests, web build through `make check`.
+- After the CI-bootstrap PR reaches the default branch, GitHub Actions runs lint,
+  unit tests and web build through `make check` on every PR.
   E2E and real-device/GPU checks remain local per `CONTRIBUTING.md`; attach evidence
   to relevant PRs. On merge to `main`: build and push
   `ghcr.io/lisimflix/lisimflix:edge`. Tags `vX.Y.Z` push versioned + `latest`.
+- For code changes, authors complete dependency installation and run `make check`
+  locally on the finished feature branch before publishing it. The bootstrap PR that
+  introduces the command/workflow runs the new command locally on its own branch
+  before its first push. GitHub cannot run a new `pull_request` workflow until that
+  workflow exists on the default branch. So the bootstrap PR itself relies on the
+  passing local check and normal second-member review; report the Actions result as
+  not run for that reason. Every later code PR receives the independent GitHub run
+  after its required local preflight. This follows GitHub's [workflow trigger rule](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
 - Work is tracked as GitHub Issues on an org Project board, grouped by phase/milestone.
   Module boundaries (2.2) map to issue labels (`area:transcode`, `area:web`, ...).
 - `CONTRIBUTING.md` and `CLAUDE.md` define conventions for humans and AI agents alike.
@@ -1682,7 +1691,12 @@ is useful comparative evidence, not a guarantee inherited by this application.
 `make check` is the common local/CI gate: lint, unit tests, contract validation when
 present and web production build. Local E2E/GPU/device evidence is attached when a PR
 touches those paths. Deterministic unit tests do not replace real decoder/display
-evidence. No blanket tests for every trivial helper; test invariants and failures.
+evidence. Run `make check` locally on the complete code branch before pushing/opening
+the PR; after push, GitHub Actions independently runs the same command. GitHub will
+not run a new `pull_request` workflow before it exists on the default branch, so the
+CI-bootstrap PR is the single exception: it passes locally and gets the normal
+second-member review first; Actions begins on PRs after bootstrap merges.
+No blanket tests for every trivial helper; test invariants and failures.
 
 A gate records implemented requirement IDs, measured results, fixture/client versions,
 known limitations and maintainer sign-off. Release qualification includes 14 consecutive

@@ -31,9 +31,19 @@ Never bypass it with `--no-verify`.
 
 ## Checks (CI)
 
-- Before opening a PR, run `make check` locally (lint, unit tests, web build).
-  It arrives with the first code PR; docs-only PRs need no checks until then.
-- GitHub Actions runs the same `make check` on every PR. A PR merges only when it's green.
+- Before pushing code or opening its PR, run `make check` locally on the complete
+  feature branch, after installing locked dependencies reproducibly (e.g. `npm ci`).
+  Record the local result in the PR.
+- The bootstrap PR that adds `make check` and GitHub Actions must run its completed
+  check locally, with locked dependencies, before publishing. GitHub does not run a
+  new `pull_request` workflow until that workflow exists on the default branch, so
+  this one PR cannot have a GitHub CI result. Require the normal second-member review;
+  report the Actions check as "not run: bootstrap workflow not on default branch".
+- GitHub Actions runs `make check` on every PR. Its independent result supplements
+  the local preflight; a green remote run does not replace it. After the bootstrap PR
+  merges, each code PR must pass both the local check and its GitHub Actions run.
+- Docs-only PRs may skip local `make check`; once the workflow exists, GitHub Actions
+  still runs on every PR.
 - End-to-end tests (Playwright, real media) run locally only for now. Say in the PR's
   "How it was tested" whether you ran them.
 - CI minutes are limited (2,000/month on the free plan), so workflows must:
