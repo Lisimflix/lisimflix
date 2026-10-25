@@ -18,7 +18,8 @@ Never bypass it with `--no-verify`.
 
 1. Pick a named feature from the spec's §9.4 catalogue (e.g. `PLY-1`, `UI-1`) and
    claim its issue, or pick a bounded documentation/spec change. One feature slice
-   or spec part per PR keeps reviews small; cite its acceptance IDs as well.
+   or spec part per PR keeps reviews small; cite its acceptance IDs as well. Apply
+   the catalogue's GitHub area labels to the issue and the affected subset to the PR.
 2. Branch off an up-to-date `main`: `git switch main && git pull && git switch -c feat/short-name`.
 3. Commit small and often.
 4. Push the branch and open a PR. Fill in the template: `Closes #N` for an issue,

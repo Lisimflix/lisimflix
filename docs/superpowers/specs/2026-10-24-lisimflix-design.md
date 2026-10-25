@@ -1107,6 +1107,13 @@ or split a large feature into new IDs. Section numbers may change without breaki
 issue links. Existing BASE/FIRSTPLAY/PLAY/PERF and other test IDs remain acceptance
 references; the feature catalogue does not rename or duplicate those detailed tests.
 
+The GitHub-label column maps features to the live repository's area labels. Apply
+the listed labels to the feature issue; a PR delivering a narrower slice uses the
+affected subset. Labels describe work areas, not exclusive file ownership or priority.
+Prefixes are not a mechanical label rule: `DATA-3` uses `area:importer`, for example.
+`area:platform` covers runtime/deployment/storage work and `area:android` covers native
+clients. P0/P1/P2 remain spec priorities; no priority labels are assumed to exist.
+
 **P0** delivers the first reliable-playback slice (G1); **P1** expands compatibility
 and the independently deployed/remote trial (G2/G3); **P2** is retained later scope
 (G4). Priority is not a serial order or a requirement to finish every lower-numbered
@@ -1117,70 +1124,70 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 
 #### Contracts and platform
 
-| ID | Named feature / outcome | Pri / gate | Acceptance reference |
-|---|---|---|---|
-| CTR-1 | **Playback contract seed:** shared manifests, typed media/capability/playback/error fixtures and isolated harness entry points | P0 / before consumer integration | 8.2; producer/consumer fixture agreement without full runtime |
-| CTR-2 | **Catalogue and identity contracts:** item/profile/progress/policy shapes and revision rules | P0 / G1 | 3.8, 6.3, 10, 12; matching producer/consumer tests |
-| OPS-1 | **Runnable runtime:** non-root image, embedded frontend, configuration and health/shutdown | P0 / G1a | BASE-01, BASE-02, BASE-04 |
-| OPS-2 | **Durable storage:** SQLite migrations, persistence and consistent snapshot/restore | P0 / G1 | BASE-03, OPS-01, 11.3–11.4 |
-| OPS-3 | **Common checks:** local/CI checks and reproducible builds | P0 / G1a | BASE-05, 13.5 |
-| OPS-4 | **Portable deployment:** generic compose, mount mapping and independently reproduced deployment | P0 / G1; qualification G2 | DEPLOY-01, FIRSTPLAY-05 |
-| OPS-5 | **Operations diagnostics:** redacted logs, session/job/resource and backup health | P1 / G2–G3 | 11.2, PLAY-02; baseline errors required in G1 |
+| ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
+|---|---|---|---|---|
+| CTR-1 | **Playback contract seed:** shared manifests, typed media/capability/playback/error fixtures and isolated harness entry points | P0 / before consumer integration | 8.2; producer/consumer fixture agreement without full runtime | `area:api`, `area:playback` |
+| CTR-2 | **Catalogue and identity contracts:** item/profile/progress/policy shapes and revision rules | P0 / G1 | 3.8, 6.3, 10, 12; matching producer/consumer tests | `area:api`, `area:media`, `area:auth`, `area:userdata` |
+| OPS-1 | **Runnable runtime:** non-root image, embedded frontend, configuration and health/shutdown | P0 / G1a | BASE-01, BASE-02, BASE-04 | `area:platform`, `area:api`, `area:web` |
+| OPS-2 | **Durable storage:** SQLite migrations, persistence and consistent snapshot/restore | P0 / G1 | BASE-03, OPS-01, 11.3–11.4 | `area:platform`, `area:admin` |
+| OPS-3 | **Common checks:** local/CI checks and reproducible builds | P0 / G1a | BASE-05, 13.5 | `area:ci` |
+| OPS-4 | **Portable deployment:** generic compose, mount mapping and independently reproduced deployment | P0 / G1; qualification G2 | DEPLOY-01, FIRSTPLAY-05 | `area:platform` |
+| OPS-5 | **Operations diagnostics:** redacted logs, session/job/resource and backup health | P1 / G2–G3 | 11.2, PLAY-02; baseline errors required in G1 | `area:admin` |
 
 #### Playback and conversion
 
-| ID | Named feature / outcome | Pri / gate | Acceptance reference |
-|---|---|---|---|
-| PLY-1 | **Playback decisions:** deterministic route/track selection with policy and reasons | P0 / G1 | PLAY-01; table tests consume probe/capability/policy fixtures |
-| PLY-2 | **Direct media delivery:** authorised range responses and remux playback | P0 / G1 | FIRSTPLAY-01–02, 4.1, 12; real sample bytes in isolated HTTP harness |
-| PLY-3 | **Software conversion:** supervised bounded SDR conversion and manual quality | P0 / G1 | FIRSTPLAY-01–02, 4.9–4.10; real ffmpeg sample output |
-| PLY-4 | **Session lifecycle:** seek generations, pause/expiry/stop and job cleanup | P0 / G1 | FIRSTPLAY-03–04, PLAY-02; isolated supervisor/session tests |
-| PLY-5 | **Qualified acceleration:** optional backend probes, admission and bounded fallback | P1 / G2 | 2.3, 4.6, PLAY-02; per-backend evidence |
-| PLY-6 | **Colour-correct output:** qualified HDR/DV play/conversion or explicit refusal | P1 / G2 | HDR-01; real display/reference evidence |
-| PLY-7 | **Adaptive variants:** measured aligned-rendition scheduling and switching | P2 / G4 | 4.10; switch latency/resource proof |
-| PLY-8 | **Remote bandwidth governance:** trusted LAN/WAN classification and upload/profile caps | P1 / G3 | REMOTE-01, 4.3, 6.6 |
-| SUB-1 | **Text subtitle producer:** bounded extraction/conversion to WebVTT, authorised sidecar delivery and asset/timeline/error contract | P0 / G1 | 4.4, FIRSTPLAY-02–03, AUTH-01; real embedded/sidecar fixtures in an isolated backend harness |
+| ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
+|---|---|---|---|---|
+| PLY-1 | **Playback decisions:** deterministic route/track selection with policy and reasons | P0 / G1 | PLAY-01; table tests consume probe/capability/policy fixtures | `area:playback` |
+| PLY-2 | **Direct media delivery:** authorised range responses and remux playback | P0 / G1 | FIRSTPLAY-01–02, 4.1, 12; real sample bytes in isolated HTTP harness | `area:playback`, `area:transcode` |
+| PLY-3 | **Software conversion:** supervised bounded SDR conversion and manual quality | P0 / G1 | FIRSTPLAY-01–02, 4.9–4.10; real ffmpeg sample output | `area:transcode` |
+| PLY-4 | **Session lifecycle:** seek generations, pause/expiry/stop and job cleanup | P0 / G1 | FIRSTPLAY-03–04, PLAY-02; isolated supervisor/session tests | `area:playback`, `area:transcode` |
+| PLY-5 | **Qualified acceleration:** optional backend probes, admission and bounded fallback | P1 / G2 | 2.3, 4.6, PLAY-02; per-backend evidence | `area:transcode` |
+| PLY-6 | **Colour-correct output:** qualified HDR/DV play/conversion or explicit refusal | P1 / G2 | HDR-01; real display/reference evidence | `area:transcode` |
+| PLY-7 | **Adaptive variants:** measured aligned-rendition scheduling and switching | P2 / G4 | 4.10; switch latency/resource proof | `area:transcode` |
+| PLY-8 | **Remote bandwidth governance:** trusted LAN/WAN classification and upload/profile caps | P1 / G3 | REMOTE-01, 4.3, 6.6 | `area:playback` |
+| SUB-1 | **Text subtitle producer:** bounded extraction/conversion to WebVTT, authorised sidecar delivery and asset/timeline/error contract | P0 / G1 | 4.4, FIRSTPLAY-02–03, AUTH-01; real embedded/sidecar fixtures in an isolated backend harness | `area:subtitles` |
 
 #### Libraries, metadata and user data
 
-| ID | Named feature / outcome | Pri / gate | Acceptance reference |
-|---|---|---|---|
-| LIB-1 | **Read-only discovery/probe:** stable-file checks, bounded jobs and source revisions | P0 / G1 | SAFE-01, 3.6; temporary-directory and probe fixtures |
-| LIB-2 | **Resilient catalogue:** resumable scans, watcher reconciliation and offline-root safety | P0 / G1 | SCAN-01; temporary SQLite/root-disconnect fixtures |
-| LIB-3 | **Versions and extras:** stable logical identities, version choice and supplemental media | P1 / G2 | 3.1, 10.1; version/cut reconciliation fixtures |
-| META-1 | **Basic matching:** NFO/provider hints, candidate matches, locks and permitted primary provider | P0 / G1 | 3.2, 3.7; local/provider fake fixtures; offline playback unaffected |
-| META-2 | **Anime identity/order:** versioned mappings, alternate numbering and fix-match preservation | P1 / G2 | META-01, 3.7 |
-| META-3 | **Extended enrichment:** additional approved providers, art/ratings and language variants | P2 / G4 | 3.2, 3.7; provider terms and contract fixtures |
-| DATA-1 | **Personal progress:** ordered events, watched rules, resume and user overrides | P0 / G1 | DATA-01, PERF-06, 3.8; in-memory/temporary repository harness |
-| DATA-2 | **Preferences and watchlist:** per-profile/show tracks and personal rows | P0 / G1 | 3.3–3.4, 3.8, 5.2 |
-| DATA-3 | **Plex migration:** optional read-only dry-run, apply, rerun and guarded undo | P1 / G2 | DATA-01, 3.9; source API/snapshot fixtures before optional live test |
-| DATA-4 | **External list sync:** opt-in permitted outbound updates with conflict protection | P2 / G4 | 3.8; mapping, revocation and retry fixtures |
+| ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
+|---|---|---|---|---|
+| LIB-1 | **Read-only discovery/probe:** stable-file checks, bounded jobs and source revisions | P0 / G1 | SAFE-01, 3.6; temporary-directory and probe fixtures | `area:library` |
+| LIB-2 | **Resilient catalogue:** resumable scans, watcher reconciliation and offline-root safety | P0 / G1 | SCAN-01; temporary SQLite/root-disconnect fixtures | `area:library` |
+| LIB-3 | **Versions and extras:** stable logical identities, version choice and supplemental media | P1 / G2 | 3.1, 10.1; version/cut reconciliation fixtures | `area:media` |
+| META-1 | **Basic matching:** NFO/provider hints, candidate matches, locks and permitted primary provider | P0 / G1 | 3.2, 3.7; local/provider fake fixtures; offline playback unaffected | `area:metadata` |
+| META-2 | **Anime identity/order:** versioned mappings, alternate numbering and fix-match preservation | P1 / G2 | META-01, 3.7 | `area:metadata` |
+| META-3 | **Extended enrichment:** additional approved providers, art/ratings and language variants | P2 / G4 | 3.2, 3.7; provider terms and contract fixtures | `area:metadata` |
+| DATA-1 | **Personal progress:** ordered events, watched rules, resume and user overrides | P0 / G1 | DATA-01, PERF-06, 3.8; in-memory/temporary repository harness | `area:userdata` |
+| DATA-2 | **Preferences and watchlist:** per-profile/show tracks and personal rows | P0 / G1 | 3.3–3.4, 3.8, 5.2 | `area:userdata` |
+| DATA-3 | **Plex migration:** optional read-only dry-run, apply, rerun and guarded undo | P1 / G2 | DATA-01, 3.9; source API/snapshot fixtures before optional live test | `area:importer` |
+| DATA-4 | **External list sync:** opt-in permitted outbound updates with conflict protection | P2 / G4 | 3.8; mapping, revocation and retry fixtures | `area:userdata`, `area:metadata` |
 
 #### Accounts, player and discovery
 
-| ID | Named feature / outcome | Pri / gate | Acceptance reference |
-|---|---|---|---|
-| ACC-1 | **Local accounts/profiles:** protected bootstrap, admin-created users and session lifecycle | P0 / G1 | AUTH-01, 6.3–6.4; isolated auth/repository harness |
-| ACC-2 | **Content policy:** server-enforced account/profile/library/rating rules | P0 / G1 | AUTH-01; shared evaluator with deny/allow fixtures |
-| ACC-3 | **Invites and initial social sign-in:** Google/Microsoft identity/linking and TV pairing | P1 / G3 | REMOTE-01, 6.4–6.5 |
-| ACC-4 | **Additional sign-in:** remaining providers, generic OIDC and approved signup requests | P2 / G4 | 6.1, 6.4; provider-specific security fixtures |
-| UI-1 | **Player surface:** transport controls, media events, tracks, quality and errors | P0 / G1 | FIRSTPLAY-01–04; fixture-backed real-video browser harness |
-| UI-2 | **Browse-to-play:** layout C, permitted library/detail selection and resume | P0 / G1 | 5.1–5.2, 5.7; API-fixture module acceptance then real API integration |
-| UI-3 | **Text subtitle player:** selected sidecars, offsets and seek resynchronisation | P0 / G1 | 4.4, FIRSTPLAY-02–03; real browser rendering; module harness consumes agreed subtitle fixtures, integration consumes SUB-1 |
-| UI-4 | **Advanced subtitles:** ASS/fonts and bitmap burn-in/client support gates | P1 / G2 | TEXT-01, 4.11; renderer/device evidence |
-| UI-5 | **Accessible TV/mobile journeys:** focus, D-pad, keyboard, touch and error states | P1 / G2 | UX-01, 5.8; basic accessible controls required from G1 |
-| UI-6 | **Admin surface:** users/libraries/activity, matching and operational tools | P1 / G2–G3 | 5.3; minimal setup/user controls already required in G1 |
-| UI-7 | **Additional layouts and discovery:** A/B shells, smart/nested collections and advanced rows | P2 / G4 | 5.1–5.2, 9.2 |
+| ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
+|---|---|---|---|---|
+| ACC-1 | **Local accounts/profiles:** protected bootstrap, admin-created users and session lifecycle | P0 / G1 | AUTH-01, 6.3–6.4; isolated auth/repository harness | `area:auth` |
+| ACC-2 | **Content policy:** server-enforced account/profile/library/rating rules | P0 / G1 | AUTH-01; shared evaluator with deny/allow fixtures | `area:auth` |
+| ACC-3 | **Invites and initial social sign-in:** Google/Microsoft identity/linking and TV pairing | P1 / G3 | REMOTE-01, 6.4–6.5 | `area:auth` |
+| ACC-4 | **Additional sign-in:** remaining providers, generic OIDC and approved signup requests | P2 / G4 | 6.1, 6.4; provider-specific security fixtures | `area:auth` |
+| UI-1 | **Player surface:** transport controls, media events, tracks, quality and errors | P0 / G1 | FIRSTPLAY-01–04; fixture-backed real-video browser harness | `area:web` |
+| UI-2 | **Browse-to-play:** layout C, permitted library/detail selection and resume | P0 / G1 | 5.1–5.2, 5.7; API-fixture module acceptance then real API integration | `area:web` |
+| UI-3 | **Text subtitle player:** selected sidecars, offsets and seek resynchronisation | P0 / G1 | 4.4, FIRSTPLAY-02–03; real browser rendering; module harness consumes agreed subtitle fixtures, integration consumes SUB-1 | `area:web`, `area:subtitles` |
+| UI-4 | **Advanced subtitles:** ASS/fonts and bitmap burn-in/client support gates | P1 / G2 | TEXT-01, 4.11; renderer/device evidence | `area:subtitles`, `area:web`, `area:transcode` |
+| UI-5 | **Accessible TV/mobile journeys:** focus, D-pad, keyboard, touch and error states | P1 / G2 | UX-01, 5.8; basic accessible controls required from G1 | `area:web`, `accessibility` |
+| UI-6 | **Admin surface:** users/libraries/activity, matching and operational tools | P1 / G2–G3 | 5.3; minimal setup/user controls already required in G1 | `area:web`, `area:admin` |
+| UI-7 | **Additional layouts and discovery:** A/B shells, smart/nested collections and advanced rows | P2 / G4 | 5.1–5.2, 9.2 | `area:web`, `area:media` |
 
 #### Later media and clients
 
-| ID | Named feature / outcome | Pri / gate | Acceptance reference |
-|---|---|---|---|
-| EXT-1 | **Additional media types:** music/photos/home-video domain and player contracts | P2 / G4 | 9.2; separate per-type plans before implementation |
-| EXT-2 | **Seek previews and skips:** trickplay, intro/credits confidence and overrides | P2 / G4 | 4.7, 9.2 |
-| EXT-3 | **Native Android:** phone/TV client against the public API | P2 / G4 | 9.1; independent client/device qualification |
-| EXT-4 | **Offline downloads:** permissions, jobs, integrity, quotas and honest revocation | P2 / G4 | 9.2; actual offline playback on each advertised platform |
-| EXT-5 | **Optional built-in TLS:** supported listener/ACME deployment and recovery | P2 / G4 | 6.6, 11.1; existing HTTPS ingress works earlier |
+| ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
+|---|---|---|---|---|
+| EXT-1 | **Additional media types:** music/photos/home-video domain and player contracts | P2 / G4 | 9.2; separate per-type plans before implementation | `area:media`, `area:library` |
+| EXT-2 | **Seek previews and skips:** trickplay, intro/credits confidence and overrides | P2 / G4 | 4.7, 9.2 | `area:trickplay` |
+| EXT-3 | **Native Android:** phone/TV client against the public API | P2 / G4 | 9.1; independent client/device qualification | `area:android` |
+| EXT-4 | **Offline downloads:** permissions, jobs, integrity, quotas and honest revocation | P2 / G4 | 9.2; actual offline playback on each advertised platform | `area:playback`, `area:web`, `area:android` |
+| EXT-5 | **Optional built-in TLS:** supported listener/ACME deployment and recovery | P2 / G4 | 6.6, 11.1; existing HTTPS ingress works earlier | `area:tls` |
 
 ### 9.5 Parallel work breakdown and integration checkpoints
 
