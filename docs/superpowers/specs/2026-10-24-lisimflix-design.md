@@ -180,10 +180,11 @@ ghcr.io/lisimflix/lisimflix
   bounded fallback for profiles the host can sustain; unsupported real-time workloads
   are refused or offered a lower quality. CPU HDR/DV conversion requires separate proof.
 - Deploy: one generic `docker-compose.yml` and one optional Unraid template, 3 volumes
-  and HTTP port 8420. Authenticated G1 access requires operator-configured HTTPS
-  ingress; until in-container TLS exists this is a reverse proxy. GPU access is
-  optional. See 11.1 for listener/privilege requirements.
-- First run opens a setup wizard: admin account, server name, libraries, metadata keys.
+  and HTTP port 8420. Initial setup, local login and playback work on a trusted
+  private LAN without a domain, reverse proxy, TLS certificate or external account.
+  GPU access is optional. Remote/internet access requires configured HTTPS; see 11.1.
+- First run opens a setup wizard: local admin account, server name, libraries and
+  optional metadata keys. A domain or provider credential is not needed to complete it.
 - **Backup/restore:** use a consistent SQLite snapshot plus durable configuration;
   copying only a running WAL database file is not a backup procedure. A stopped,
   complete `/config` copy is also supported. Nightly snapshots keep the last 7
@@ -273,7 +274,7 @@ detecting a device is not equivalent to certifying every filter or real-time wor
 ### 3.3 Accounts and profiles
 
 - **Admin:** full server control.
-- **Users:** sign in locally when enabled, or with configured providers (6.1), phased
+- **Users:** sign in with local username/password accounts from G1, or later with configured providers (6.1), phased
   under section 9. Access requires admin creation, invitation or approved sign-up
   request. A social login on its own never grants access.
 - **Home profiles** under an account ("Who's watching?") with optional 4-digit PIN.
@@ -477,6 +478,8 @@ shown in admin activity and the player's stats overlay.
   - Web: runtime probing via `MediaSource.isTypeSupported`, `MediaCapabilities.decodingInfo`,
     `canPlayType`, HDR media queries (`(dynamic-range: high)`), screen size.
   - Android (later): `MediaCodecList`/Media3.
+- Feature-detect probes and provide compatible fallbacks; an unavailable browser
+  API on local HTTP must not block otherwise supported M1 video playback.
 - Server-side **quirks table** keyed by user-agent/platform (PlayStation browser, Hisense
   VIDAA browser, Safari, etc.) that overrides known false positives.
 - If direct play/remux fails, the client reports evidence. The server distinguishes
@@ -720,6 +723,9 @@ attach versioned references; missing mockups are not an implementation dependenc
 ### 5.5 Phones
 
 PWA (installable), bottom tab bar, touch gestures in the player (double-tap seek).
+Regular browser use on local HTTP is the baseline. PWA installation, offline and
+other browser features are qualified separately when available; they cannot become
+hidden prerequisites for local browsing, login or playback.
 
 ### 5.6 Accessibility
 
@@ -772,9 +778,13 @@ No essential action depends on hover, colour alone, gestures or auto-playing aud
 
 ## 6. Security
 
-### 6.1 Sign-in (OAuth)
+### 6.1 Sign-in: local accounts first, social providers later
 
-- **Primary sign-in is OAuth 2.0 / OpenID Connect** with **Google, Microsoft (personal +
+- **Initial sign-in is local username/password**, for the setup administrator and
+  admin-created user accounts. It works on trusted-LAN HTTP with providers disabled,
+  no internet/domain and no provider credentials. Passwords use Argon2id; existing
+  session, rate-limit and recovery requirements apply from this first usable release.
+- **Later optional sign-in uses OAuth 2.0 / OpenID Connect** with **Google, Microsoft (personal +
   work/school), Apple and Facebook**, plus a **generic OIDC** slot (e.g. Authentik/Keycloak).
   Authorization Code flow with PKCE, `state` + `nonce` checks, ID-token signature validation
   against each provider's JWKS. Facebook uses OAuth 2.0 + Graph `/me`, since it is not full OIDC.
@@ -785,15 +795,14 @@ No essential action depends on hover, colour alone, gestures or auto-playing aud
   supported development exceptions are provider-specific. Local sign-in does not
   require a public domain. Apple/Facebook eligibility, keys, review requirements and
   current fees must be checked against their official documentation before that phase.
-- **Access control:** users can link several providers to one account. The first sign-in must come
+- **Access control:** users can link several providers to one account. The first social sign-in must come
   through an invite link (which binds that provider identity to the invited account) or a sign-up
   request the admin approves. Identities are matched on the provider's stable subject ID, never on
   email alone, to prevent takeover via unverified emails.
-- **Local fallback:** the admin account (from the setup wizard) always keeps a local password
+- **Local access and fallback:** the admin account (from the setup wizard) always keeps a local password
   (Argon2id) with TOTP 2FA, so the server can still be managed if the internet or a provider is
-  down. Local passwords for other users are an admin toggle; proposed G1/G2 deployments
-  explicitly enable them until social sign-in is delivered. Production default is
-  reviewed with D07 rather than leaving trial users unable to sign in.
+  down. Local username/password accounts are enabled for users from G1. Later provider
+  configuration must not silently remove a user's working local login or history.
 - Home profiles (3.3) sit under the signed-in account and use PINs, not OAuth.
 - TV sign-in uses the QR flow (5.4): an authenticated phone session (local or provider)
   approves the TV with restricted authority as specified in 6.5.
@@ -854,8 +863,19 @@ adapters handle differences; Facebook is not treated as generic OIDC. Provider t
 remain server-side, with minimum scopes and explicit retention. Do not log callback
 query strings, auth codes, invitation tokens, cookies or device authorisation secrets.
 
-Browser sessions use Secure/HttpOnly cookies with a documented SameSite and CSRF
-strategy. Rotate the session on sign-in/privilege change. Proposed lifetimes: 7 days
+Browser sessions use host-only HttpOnly cookies with explicit `SameSite=Lax` and
+server-validated CSRF protection for state-changing browser requests. Set `Secure`
+for an HTTPS public origin. Trusted-LAN HTTP mode omits `Secure` so sessions work
+at a private IP/hostname, and cannot use cookie-name prefixes that require it.
+Do not rely on localhost exceptions for other LAN devices. See
+[MDN cookie attributes](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie).
+SameSite is defence in depth; use CSRF tokens and validated request origins rather
+than treating it as sufficient alone, following
+[OWASP CSRF guidance](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html).
+The effective public scheme is configured explicitly or obtained from a trusted
+proxy, never arbitrary forwarded headers. Origin/scheme changes require a new
+authenticated session; an HTTP-mode session must not silently downgrade HTTPS mode.
+Rotate the session on sign-in/privilege change. Proposed lifetimes: 7 days
 idle, 30 days absolute; sensitive admin changes require reauthentication within 10
 minutes. Native apps later use revocable secure token storage, not web localStorage.
 Rate limits apply per account/action plus network, with bounded lockout so an attacker
@@ -885,11 +905,17 @@ The TV never receives the approving phone's password or provider access token.
 
 ### 6.6 Network and untrusted-input boundaries
 
-Authenticated browser access requires HTTPS, including on LAN, to retain Secure
-session cookies. A trusted reverse proxy with an owner-configured certificate can
-provide it from G1; it does not require exposing the service publicly. Direct LAN
-HTTP is limited to unauthenticated health and protected initial setup, with no
-reusable login session or provider secret entry. Built-in ACME is optional later.
+**Trusted-LAN HTTP works from first launch:** setup, local account sign-in, browsing
+and playback require no domain or reverse proxy. Authentication/authorisation, CSRF,
+rate limits and protected bootstrap still apply; LAN reachability is not a login.
+This mode has no transport encryption. Setup/deployment docs state that it is for a
+trusted private network and is not to be directly exposed to the internet.
+
+**Remote/internet access requires HTTPS**, initially through an operator-configured
+reverse proxy. Social providers use their approved HTTPS callbacks when delivered;
+built-in ACME remains later optional work. Enabling remote access must not downgrade
+session/security settings to accommodate an HTTP public origin. Do not claim the
+application can detect every unsafe port-forward or proxy configuration automatically.
 Define public base URL, trusted proxy CIDRs and forwarded-header
 handling. Ignore forwarded client identity from untrusted peers. LAN detection uses
 configured/trusted network information, not arbitrary client headers.
@@ -1157,9 +1183,10 @@ harnesses while this package is unfinished:
 | BASE-05 | A common check command works locally and in CI | `make check` runs real Go/frontend lint, relevant unit checks and a production web build; failed checks fail the command and CI, with no placeholder always-green jobs |
 
 Bootstrap remains protected under 6.4. The unauthenticated foundation shell exposes no
-private library or administrative state. HTTPS and account protection are required
-before adding authenticated media browsing; an internal skeleton is not a safe public
-media server. It needs no complete metadata provider stack or polished home screen.
+private library or administrative state. Account protection is required before adding
+media browsing; trusted-LAN HTTP is supported under 6.6 and internet access requires
+HTTPS. An internal skeleton is not a safe public media server. It needs no complete
+metadata provider stack or polished home screen.
 
 #### G1b — integrated playback outcome
 
@@ -1259,7 +1286,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 
 | ID | Named feature / outcome | Pri / gate | Acceptance reference | GitHub labels |
 |---|---|---|---|---|
-| ACC-1 | **Local accounts/profiles:** protected bootstrap, admin-created users and session lifecycle | P0 / G1 | AUTH-01, 6.3–6.4; isolated auth/repository harness | `area:auth` |
+| ACC-1 | **Local accounts/profiles:** protected bootstrap, admin-created username/password users and session lifecycle on trusted-LAN HTTP | P0 / G1 | AUTH-01, LAN-01, 6.3–6.4; isolated auth/repository harness and private-LAN browser test | `area:auth` |
 | ACC-2 | **Content policy:** server-enforced account/profile/library/rating rules | P0 / G1 | AUTH-01; shared evaluator with deny/allow fixtures | `area:auth` |
 | ACC-3 | **Invites and initial social sign-in:** Google/Microsoft identity/linking and TV pairing | P1 / G3 | REMOTE-01, 6.4–6.5 | `area:auth` |
 | ACC-4 | **Additional sign-in:** remaining providers, generic OIDC and approved signup requests | P2 / G4 | 6.1, 6.4; provider-specific security fixtures | `area:auth` |
@@ -1382,10 +1409,13 @@ adapter's extraction details and completeness are planned and tested at G4.
 ### 11.1 Supported deployment contract
 
 Initial platform target is Linux amd64 containers on supported runtimes, independently
-of a specific server/NAS distribution. Generic compose is the primary deployment
-example; Unraid is an additional adapter. HTTPS may be terminated by each operator's
-configured reverse proxy; it is an explicit G1 prerequisite until an in-container TLS
-path exists. Other architectures remain experimental until qualified. Publish a pinned
+of a specific server/NAS distribution. Pete approved Linux/Docker as the initial
+server target; Windows/macOS are browser clients, with no native server install
+required for this release. Generic compose is the primary deployment example;
+Unraid is an additional adapter. Local HTTP setup and username/password login work
+out of the box; a domain, HTTPS proxy and external identity provider are not initial
+requirements. Optional remote access uses configured HTTPS ingress. Other
+architectures remain experimental until qualified. Publish a pinned
 image digest, tested runtime/CPU baseline and per-accelerator driver/device requirements;
 the CPU-only path has no NVIDIA prerequisite. Go/Node build tools stay out of the
 runtime image. Include dependency versions, licenses and an SBOM.
@@ -1396,11 +1426,12 @@ media or assume arbitrary mounts have appropriate ownership. No privileged conta
 Docker socket or unnecessary capabilities. GPU access is optional and explicitly
 configured using the supported container runtime mechanism.
 
-HTTP listens on 8420 in the container, reachable only by trusted ingress/admin paths.
-Authenticated LAN and remote deployments map it behind an HTTPS reverse proxy;
-optional built-in TLS uses a separately configured listener/port and
-validated ACME reachability. Resolve the original “one port plus optional 443” wording
-in the actual compose example; do not require root simply to bind a privileged port.
+HTTP listens on 8420 in the container and supports normal use via the documented
+host port on a trusted private LAN. Publish an initial URL using the operator's server
+IP/hostname and mapped port, without assuming localhost on the viewer's device.
+HTTPS ingress is an optional local upgrade and a requirement for remote access.
+Later built-in TLS uses a separately configured listener/port and validated ACME
+reachability; do not require root simply to bind a privileged port.
 Document public base URL, trusted proxies, host/container volume mappings, optional
 accelerator setup and secret injection. Samples use placeholders rather than private
 hostnames, paths, user IDs or domain names from any contributor's installation.
@@ -1621,6 +1652,7 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | OPS-01 | Recoverable deployment | G1/G3: fresh setup, backup, clean-instance restore, migration failure and documented rollback |
 | UX-01 | Accessible viewing journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
 | REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
+| LAN-01 | Local HTTP and username/password work from first launch | G1: fresh Linux/Docker setup and real login/browse/playback from another LAN device at its private IP/hostname, no domain/proxy/provider; valid HTTP cookies, auth/CSRF checks, and separate HTTPS/proxy-spoofing regression cases |
 | DEPLOY-01 | Independent installations require no contributor-specific configuration | G1/G2: fresh generic non-Unraid + CPU-only deployment, second independent configuration, remapped-root restore, distinct accounts/keys and absence of private host defaults |
 | MOVIE-01–04 | First measurable milestone is one complete original-quality movie in a browser | M1 within G1: the four direct-play criteria in 9.3; real full-duration playback and unchanged source/encoded delivery |
 | SCALE-01–04 | Large-library scanning, browsing and metadata management qualify early | First library/interface milestone: actual-scale workload in 13.1 with PERF-05 and measured bottlenecks |
@@ -1657,9 +1689,9 @@ as approval. Record decision, owner/date and rationale here when settled.
 | D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
 | D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
 | D06 | Are AniList and mapping sources permitted/sufficient? | Validate API terms and dataset coverage; local matching survives provider outage | Specific providers and outbound sync |
-| D07 | Social versus local user sign-in during trial? | Local login for G1/G2, Google/Microsoft + invites for G3; remaining providers later | Account rollout |
+| D07 | Initial versus later sign-in rollout | Approved: local username/password accounts first, social providers later; G3 Google/Microsoft and G4 additional providers retain their later gates | Initial choice settled; provider qualification later |
 | D08 | Profile PIN / child-policy guarantees? | Server-enforced restricted profile grants; account controller remains privileged; deny unrated by default for kids | Policy UX and security tests |
-| D09 | Remote ingress and TLS ownership? | Existing reverse proxy first, explicit trusted-proxy settings; built-in ACME later | Remote deployment |
+| D09 | Local versus remote ingress/TLS | Approved: local HTTP from first launch with no domain/proxy; Linux/Docker server. Remote access requires HTTPS; proxy configuration/certificate ownership is settled before G3 | Initial local mode settled; remote deployment details later |
 | D10 | Plex/Jellyfin source access and import completeness? | Approved as later optional G4 features; validate read-only source/version data before promising complete history. Core compatibility is required under 10.3 now | Source adapters only; not basic development |
 | D11 | Which remaining numeric defaults/targets are accepted? | Approved: actual-scale baseline and PERF-05 one-second browse/search target. Discovery has no universal one-minute deadline; remaining budgets/targets await measurement/review | Remaining acceptance sign-off |
 | D12 | Backup destination, recovery owner and key custody? | Owner names external copy target and tests restore before remote trial | Disaster-recovery claim |
@@ -1687,6 +1719,7 @@ when implementing. External documents establish constraints, not local host read
 | [NVIDIA support matrix](https://developer.nvidia.com/video-encode-decode-support-matrix), [FFmpeg filters](https://ffmpeg.org/ffmpeg-filters.html) | Hardware capability boundaries and actual filter selection |
 | [JASSUB](https://github.com/ThaUnknown/jassub), [Jellyfin client codec documentation](https://jellyfin.org/docs/general/clients/codec-support/) | Subtitle renderer and platform-specific compatibility constraints |
 | [OAuth BCP RFC 9700](https://www.rfc-editor.org/rfc/rfc9700.html) | Provider adapter and authentication security requirements |
+| [MDN Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie), [OWASP CSRF](https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html) | Explicit HTTP/HTTPS session-cookie modes and browser-request CSRF protection |
 | [AniList terms](https://docs.anilist.co/guide/terms-of-use), [limits](https://docs.anilist.co/guide/rate-limiting), [Anime-Lists](https://github.com/Anime-Lists/anime-lists) | Provider-use constraints, backoff and mapping verification |
 | [FFmpeg license guidance](https://www.ffmpeg.org/legal.html) | Distribution review for the actual bundled build |
 | [Sonarr webhook implementation](https://github.com/Sonarr/Sonarr/blob/develop/src/NzbDrone.Core/Notifications/Webhook/Webhook.cs), [Radarr webhook implementation](https://github.com/Radarr/Radarr/blob/develop/src/NzbDrone.Core/Notifications/Webhook/Webhook.cs) | Optional import/upgrade notification adapter contracts; supported installed versions still require fixtures |
