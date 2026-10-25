@@ -903,6 +903,92 @@ traffic is disclosed in setup and can be disabled independently.
   Module boundaries (2.2) map to issue labels (`area:transcode`, `area:web`, ...).
 - `CONTRIBUTING.md` and `CLAUDE.md` define conventions for humans and AI agents alike.
 
+### 8.1 Development model: 2–3 contributors in parallel
+
+The project is developed by 2–3 people, each potentially using a coding agent.
+Work must be independently claimable, testable and reviewable. A completed application
+skeleton is not a prerequisite for every feature. Milestone numbers describe product
+readiness, not an instruction for every contributor to work through one serial queue.
+
+Use the named feature IDs in 9.4 as the unit of discussion, issue claims, plans and
+PRs, following the requirement-catalogue pattern used by Trillion's PRD. Ownership is
+per active feature, not permanent ownership of an entire subsystem. One person claims
+an issue, identifies the other reviewer and declares their write scope before coding.
+No contributor is assigned by this draft; actual names belong in the claimed issues.
+
+Keep at most one primary feature active per contributor. With three people, begin
+with platform, playback and player packages concurrently. With two, one takes the
+small platform seed then switches to the player while the other builds playback;
+remaining platform work continues as separate small PRs. Contributors can take a
+different ready feature when genuinely blocked instead of waiting for a whole phase.
+
+### 8.2 Small shared contracts before integration
+
+Agree the smallest shared contracts needed for the next parallel features, not a
+complete speculative API. `CTR-1` records package locations, language manifests,
+playback request/result/error shapes, capability and media-stream descriptors,
+source-resolver results, effective-policy snapshots, subtitle-asset descriptors,
+timeline units, session/generation
+identity and representative fixtures. `CTR-2`
+records catalogue/profile/progress contracts when their consumers are ready.
+
+Each contract has one issue owner, a reviewer from its first consumer, a version and
+matching example/negative fixtures. Go and TypeScript representations must agree;
+OpenAPI is authoritative for HTTP shapes. The producer owns the fake/test adapter
+specification with consumer review, so each contributor does not invent a different
+definition of progress, source identity or playback state. Contracts never bypass auth.
+
+The smallest shared seed may add language manifests and contract fixtures before
+the runtime/container/database skeleton is complete. This is a real dependency;
+keep it small and explicit. UI design and fixture authoring can start while it is
+reviewed. Module acceptance then runs via package tests, a CLI/test harness or a
+fixture-backed browser harness without requiring the full server or database.
+
+Fixture servers/harnesses bind to loopback, use only synthetic accounts and approved
+test media, and are excluded from production startup. A fake policy/identity adapter
+must never become the default on a deployed instance or expose private library data.
+
+Plans distinguish **start dependency**, **module completion dependency** and
+**integration dependency**. A test adapter can satisfy a module dependency when the
+contract allows it; it cannot prove production integration. Do not replace a dependency
+on one method/schema with “wait for all of foundation/auth/library to finish.”
+
+### 8.3 Write boundaries and change coordination
+
+Each feature issue lists owned files/packages, consumed and produced contracts,
+test commands, review owner and integration partner. Work in separate branches and
+separate working directories. Two contributors must not mutate the same checkout.
+If write scopes overlap, split the feature or sequence that shared-file edit first.
+
+Shared hotspots have one temporary integration owner: Go module manifests, frontend
+package/lock files, root build/CI/container files, route registration, canonical
+OpenAPI/schema generation and migration ordering. Feature owners propose additions;
+the integration owner lands the shared change in a small PR. Do not concurrently
+rewrite the API document, regenerate clients or allocate the same migration number.
+Generated clients are regenerated from the reviewed contract, not edited by hand.
+
+Contract changes identify affected consumers before merge. Prefer additive compatible
+changes, update fixtures and producers/consumers together where needed, and avoid
+unannounced breaking changes that strand another contributor's branch. Reconcile
+with current main before review; do not use force-pushed shared feature branches.
+Coordination uses issues/PRs per CONTRIBUTING; no chat-only claim counts as ownership.
+
+### 8.4 What future implementation plans must contain
+
+Produce small feature/subsystem plans rather than one enormous serial implementation
+plan. Every task names feature IDs, owner role, reviewer, file scope, input/output
+contracts, real dependencies, standalone test command and integration proof. The plan
+must say what can run now against fixtures and what genuinely needs another feature.
+Exact file paths/signatures and test assertions are settled in those implementation
+plans; they are not invented independently by each worker after claiming a task.
+
+Feature delivery has two evidence stages: **module accepted** (its own behaviour and
+failure tests pass) and **integrated** (real adapters pass the cross-feature journey).
+A fixture-backed player can be module accepted before the server exists; reliable
+playback Goal 1 is complete only after real player/server/media integration passes.
+An issue records both stages and links proof. “Merged” alone never proves the user
+outcome, and “module accepted” must not be advertised as a working released feature.
+
 ## 9. Proposed delivery gates and retained roadmap
 
 This revises delivery order for review; it does not claim owners have approved dropping
@@ -961,13 +1047,16 @@ offline support simply because a service worker installs successfully.
 
 The first product goal is reliable playback. A running container, frontend shell or
 passing build alone does not achieve it. The following milestones divide G1 into
-reviewable increments; they do not add a new product phase or delay G0 risk testing.
-G0 playback experiments can proceed alongside foundation work. Remaining release
+reviewable work packages; they do not add a new product phase or impose serial task
+ordering. Foundation, playback packages and the player can progress in parallel under
+section 8. G0 experiments also run alongside them. Remaining release
 scope and numeric performance proposals still require maintainer review.
 
-#### G1a — internal foundation
+#### G1a — internal foundation work package
 
-The foundation provides the minimum base needed to build and test the playback loop:
+The foundation provides the deployed runtime for the integrated playback loop.
+Playback packages and player work use the small shared contracts and their own
+harnesses while this package is unfinished:
 
 | ID | Capability | Acceptance evidence |
 |---|---|---|
@@ -982,12 +1071,15 @@ private library or administrative state. HTTPS and account protection are requir
 before adding authenticated media browsing; an internal skeleton is not a safe public
 media server. It needs no complete metadata provider stack or polished home screen.
 
-#### G1b — prove the playback loop
+#### G1b — integrated playback outcome
 
 Build the smallest usable path from authenticated media selection to playback, using
 a read-only sample library, a basic player and persistent progress. File names and
 local probe data are sufficient for this proof; optional external metadata, import,
 social login, advanced layouts and discovery features cannot block the experiment.
+Playback decision/process supervision and the player each have earlier independent
+module acceptance under 9.4–9.5; G1b is their integration checkpoint, not a ban on
+starting them before G1a is complete.
 Existing G1 features remain required before G1 as a whole is declared complete.
 
 | ID | User-visible outcome | Acceptance evidence |
@@ -1006,6 +1098,121 @@ their own later gates. Passing G1b does not imply universal format/device compat
 The implementation plan decomposes BASE/FIRSTPLAY outcomes into files, interfaces,
 ordered tasks and concrete tests. This spec defines the acceptance boundary; it does
 not prescribe a directory full of empty future modules as a deliverable.
+
+### 9.4 Named feature catalogue
+
+Feature IDs are permanent references, like `SPN-1` in Trillion. Prefixes identify the
+area, not the person implementing it. Never renumber/reuse an ID; record supersession
+or split a large feature into new IDs. Section numbers may change without breaking
+issue links. Existing BASE/FIRSTPLAY/PLAY/PERF and other test IDs remain acceptance
+references; the feature catalogue does not rename or duplicate those detailed tests.
+
+**P0** delivers the first reliable-playback slice (G1); **P1** expands compatibility
+and the independently deployed/remote trial (G2/G3); **P2** is retained later scope
+(G4). Priority is not a serial order or a requirement to finish every lower-numbered
+ID first. G0 validates risk across these groups. Gate placement remains the release
+scope authority; a shared safety requirement applies whenever its feature is exposed.
+All catalogue entries are planned, not implemented. Live assignment/status belongs
+in linked GitHub issues, avoiding a second progress ledger in this document.
+
+#### Contracts and platform
+
+| ID | Named feature / outcome | Pri / gate | Acceptance reference |
+|---|---|---|---|
+| CTR-1 | **Playback contract seed:** shared manifests, typed media/capability/playback/error fixtures and isolated harness entry points | P0 / before consumer integration | 8.2; producer/consumer fixture agreement without full runtime |
+| CTR-2 | **Catalogue and identity contracts:** item/profile/progress/policy shapes and revision rules | P0 / G1 | 3.8, 6.3, 10, 12; matching producer/consumer tests |
+| OPS-1 | **Runnable runtime:** non-root image, embedded frontend, configuration and health/shutdown | P0 / G1a | BASE-01, BASE-02, BASE-04 |
+| OPS-2 | **Durable storage:** SQLite migrations, persistence and consistent snapshot/restore | P0 / G1 | BASE-03, OPS-01, 11.3–11.4 |
+| OPS-3 | **Common checks:** local/CI checks and reproducible builds | P0 / G1a | BASE-05, 13.5 |
+| OPS-4 | **Portable deployment:** generic compose, mount mapping and independently reproduced deployment | P0 / G1; qualification G2 | DEPLOY-01, FIRSTPLAY-05 |
+| OPS-5 | **Operations diagnostics:** redacted logs, session/job/resource and backup health | P1 / G2–G3 | 11.2, PLAY-02; baseline errors required in G1 |
+
+#### Playback and conversion
+
+| ID | Named feature / outcome | Pri / gate | Acceptance reference |
+|---|---|---|---|
+| PLY-1 | **Playback decisions:** deterministic route/track selection with policy and reasons | P0 / G1 | PLAY-01; table tests consume probe/capability/policy fixtures |
+| PLY-2 | **Direct media delivery:** authorised range responses and remux playback | P0 / G1 | FIRSTPLAY-01–02, 4.1, 12; real sample bytes in isolated HTTP harness |
+| PLY-3 | **Software conversion:** supervised bounded SDR conversion and manual quality | P0 / G1 | FIRSTPLAY-01–02, 4.9–4.10; real ffmpeg sample output |
+| PLY-4 | **Session lifecycle:** seek generations, pause/expiry/stop and job cleanup | P0 / G1 | FIRSTPLAY-03–04, PLAY-02; isolated supervisor/session tests |
+| PLY-5 | **Qualified acceleration:** optional backend probes, admission and bounded fallback | P1 / G2 | 2.3, 4.6, PLAY-02; per-backend evidence |
+| PLY-6 | **Colour-correct output:** qualified HDR/DV play/conversion or explicit refusal | P1 / G2 | HDR-01; real display/reference evidence |
+| PLY-7 | **Adaptive variants:** measured aligned-rendition scheduling and switching | P2 / G4 | 4.10; switch latency/resource proof |
+| PLY-8 | **Remote bandwidth governance:** trusted LAN/WAN classification and upload/profile caps | P1 / G3 | REMOTE-01, 4.3, 6.6 |
+| SUB-1 | **Text subtitle producer:** bounded extraction/conversion to WebVTT, authorised sidecar delivery and asset/timeline/error contract | P0 / G1 | 4.4, FIRSTPLAY-02–03, AUTH-01; real embedded/sidecar fixtures in an isolated backend harness |
+
+#### Libraries, metadata and user data
+
+| ID | Named feature / outcome | Pri / gate | Acceptance reference |
+|---|---|---|---|
+| LIB-1 | **Read-only discovery/probe:** stable-file checks, bounded jobs and source revisions | P0 / G1 | SAFE-01, 3.6; temporary-directory and probe fixtures |
+| LIB-2 | **Resilient catalogue:** resumable scans, watcher reconciliation and offline-root safety | P0 / G1 | SCAN-01; temporary SQLite/root-disconnect fixtures |
+| LIB-3 | **Versions and extras:** stable logical identities, version choice and supplemental media | P1 / G2 | 3.1, 10.1; version/cut reconciliation fixtures |
+| META-1 | **Basic matching:** NFO/provider hints, candidate matches, locks and permitted primary provider | P0 / G1 | 3.2, 3.7; local/provider fake fixtures; offline playback unaffected |
+| META-2 | **Anime identity/order:** versioned mappings, alternate numbering and fix-match preservation | P1 / G2 | META-01, 3.7 |
+| META-3 | **Extended enrichment:** additional approved providers, art/ratings and language variants | P2 / G4 | 3.2, 3.7; provider terms and contract fixtures |
+| DATA-1 | **Personal progress:** ordered events, watched rules, resume and user overrides | P0 / G1 | DATA-01, PERF-06, 3.8; in-memory/temporary repository harness |
+| DATA-2 | **Preferences and watchlist:** per-profile/show tracks and personal rows | P0 / G1 | 3.3–3.4, 3.8, 5.2 |
+| DATA-3 | **Plex migration:** optional read-only dry-run, apply, rerun and guarded undo | P1 / G2 | DATA-01, 3.9; source API/snapshot fixtures before optional live test |
+| DATA-4 | **External list sync:** opt-in permitted outbound updates with conflict protection | P2 / G4 | 3.8; mapping, revocation and retry fixtures |
+
+#### Accounts, player and discovery
+
+| ID | Named feature / outcome | Pri / gate | Acceptance reference |
+|---|---|---|---|
+| ACC-1 | **Local accounts/profiles:** protected bootstrap, admin-created users and session lifecycle | P0 / G1 | AUTH-01, 6.3–6.4; isolated auth/repository harness |
+| ACC-2 | **Content policy:** server-enforced account/profile/library/rating rules | P0 / G1 | AUTH-01; shared evaluator with deny/allow fixtures |
+| ACC-3 | **Invites and initial social sign-in:** Google/Microsoft identity/linking and TV pairing | P1 / G3 | REMOTE-01, 6.4–6.5 |
+| ACC-4 | **Additional sign-in:** remaining providers, generic OIDC and approved signup requests | P2 / G4 | 6.1, 6.4; provider-specific security fixtures |
+| UI-1 | **Player surface:** transport controls, media events, tracks, quality and errors | P0 / G1 | FIRSTPLAY-01–04; fixture-backed real-video browser harness |
+| UI-2 | **Browse-to-play:** layout C, permitted library/detail selection and resume | P0 / G1 | 5.1–5.2, 5.7; API-fixture module acceptance then real API integration |
+| UI-3 | **Text subtitle player:** selected sidecars, offsets and seek resynchronisation | P0 / G1 | 4.4, FIRSTPLAY-02–03; real browser rendering; module harness consumes agreed subtitle fixtures, integration consumes SUB-1 |
+| UI-4 | **Advanced subtitles:** ASS/fonts and bitmap burn-in/client support gates | P1 / G2 | TEXT-01, 4.11; renderer/device evidence |
+| UI-5 | **Accessible TV/mobile journeys:** focus, D-pad, keyboard, touch and error states | P1 / G2 | UX-01, 5.8; basic accessible controls required from G1 |
+| UI-6 | **Admin surface:** users/libraries/activity, matching and operational tools | P1 / G2–G3 | 5.3; minimal setup/user controls already required in G1 |
+| UI-7 | **Additional layouts and discovery:** A/B shells, smart/nested collections and advanced rows | P2 / G4 | 5.1–5.2, 9.2 |
+
+#### Later media and clients
+
+| ID | Named feature / outcome | Pri / gate | Acceptance reference |
+|---|---|---|---|
+| EXT-1 | **Additional media types:** music/photos/home-video domain and player contracts | P2 / G4 | 9.2; separate per-type plans before implementation |
+| EXT-2 | **Seek previews and skips:** trickplay, intro/credits confidence and overrides | P2 / G4 | 4.7, 9.2 |
+| EXT-3 | **Native Android:** phone/TV client against the public API | P2 / G4 | 9.1; independent client/device qualification |
+| EXT-4 | **Offline downloads:** permissions, jobs, integrity, quotas and honest revocation | P2 / G4 | 9.2; actual offline playback on each advertised platform |
+| EXT-5 | **Optional built-in TLS:** supported listener/ACME deployment and recovery | P2 / G4 | 6.6, 11.1; existing HTTPS ingress works earlier |
+
+### 9.5 Parallel work breakdown and integration checkpoints
+
+These tracks are a scheduling guide for 2–3 contributors. Each active feature gets
+one named issue owner, reviewer and target checkpoint before coding; `_unassigned_`
+below means available work, not a promised allocation/date. Do not assign every track
+at once when only 2–3 people are available. Use feature plans to keep PRs small.
+
+| Track | Initial feature scope / write boundary | Can start / prove independently | Real integration dependency | Owner |
+|---|---|---|---|---|
+| A · Platform | CTR-1 seed coordination, OPS-1–4; manifests/build/deploy/bootstrap wiring | Fresh image, DB/health and checks; contract/fixture work starts immediately | Consumer contributions to CTR-1; real player/media adapters for final image smoke | _unassigned_ |
+| B · Playback | PLY-1–4, SUB-1 and local LIB-1 probe boundary; playback/transcode/subtitle backend files | Sample descriptors + owned files + temporary cache; real ffmpeg and isolated HTTP tests after tiny contract/manifests seed | ACC-2 policy adapter, catalogue/source resolver and UI-1/3 for FIRSTPLAY integration | _unassigned_ |
+| C · Player | UI-1–3; player components and client adapter files | Browser fixture adapter and real test video, without Go server, DB, auth service or deployed skeleton | PLY/session API, SUB-1 subtitle producer and ACC-1/2 + DATA-1 adapters for integrated viewing | _unassigned_ |
+| D · Catalogue/identity | LIB-2, META-1, ACC-1/2, DATA-1/2 as separately claimed features | Temporary repositories, fake providers and contract fixtures; no running container/player needed | Route/schema migration coordination and real auth/catalogue wiring | _unassigned_ |
+| E · Integration/qualification | FIRSTPLAY evidence, OPS-4 and G2/G3 matrix | Shared fixture manifest, deployment instructions and harness design from day one | Real implementations of the journey being claimed; no mock-only Goal 1 sign-off | _unassigned_ |
+
+Track D is the next ready work pool when one of the initial three contributors frees
+up, not a requirement for a fourth person. Its features are split between available
+contributors and may start earlier if more useful than a blocked platform task.
+Track E is a rotating explicit responsibility, not an unowned final cleanup phase.
+
+Checkpoint progression is **contract agreed → module accepted → producer/consumer
+integrated → user outcome verified**. The first two can happen while the skeleton is
+unfinished. Merge small compatible slices into main after review and run real
+cross-track smoke checks as adapters become available, rather than saving all merges
+for the end. Each PR lists consumer impact, proof and the next integration obligation.
+
+G1 completes when its required feature set and FIRSTPLAY outcomes are integrated;
+G2/G3 remain release qualification gates. A feature's standalone milestone is valid
+progress even before those aggregate gates pass. Plan reviews reject artificial
+whole-phase dependencies, overlapping file ownership and “done” claims based only on
+fakes where the requirement calls for actual media, storage, permissions or devices.
 
 ## 10. Domain model, persistence and module contracts
 

@@ -16,8 +16,9 @@ Never bypass it with `--no-verify`.
 
 ## Workflow
 
-1. Pick the work: **either** an issue, **or** one part of the design spec
-   (e.g. "§4.4 Subtitles"). One issue or one spec part per PR, so PRs stay small.
+1. Pick a named feature from the spec's §9.4 catalogue (e.g. `PLY-1`, `UI-1`) and
+   claim its issue, or pick a bounded documentation/spec change. One feature slice
+   or spec part per PR keeps reviews small; cite its acceptance IDs as well.
 2. Branch off an up-to-date `main`: `git switch main && git pull && git switch -c feat/short-name`.
 3. Commit small and often.
 4. Push the branch and open a PR. Fill in the template: `Closes #N` for an issue,
@@ -49,8 +50,17 @@ Never bypass it with `--no-verify`.
 
 ## Working together
 
-- Assign an issue to yourself before starting it, so two people (or two Claudes)
-  never edit the same files.
+- We plan for 2–3 contributors working in parallel. Assign a feature issue to
+  yourself before coding; record its feature ID, reviewer, file scope, consumed/
+  produced contracts, standalone checks and integration dependencies. Do not claim
+  another person's active scope. Use separate branches and working directories.
+- Follow spec §§8.1–8.4 and 9.5: small agreed contracts and fixture/test harnesses let
+  modules progress before the full skeleton is complete. Plans name the exact
+  dependency needed, not a whole unfinished subsystem. Fixture-only proof is module
+  acceptance; user outcomes need real integration evidence.
+- Shared manifests/lockfiles, root build/CI, route/OpenAPI registration and migration
+  ordering have one named integration owner per change. Agree shared edits first;
+  update the contract and affected consumers together rather than editing in parallel.
 - Don't edit a spec or plan someone else is writing. Open an issue for them instead.
 - Hand-offs and decisions go in issue or PR comments, not only in chat.
 
