@@ -232,6 +232,11 @@ detecting a device is not equivalent to certifying every filter or real-time wor
 ### 3.1 Libraries
 
 - Types: **Movies, TV Shows, Anime (TV/Movies), Music, Photos, Home Videos**. One or more folders each.
+- The first library/interface milestone includes Movies, TV and **Anime as its own
+  selectable library type**, not only a tag on TV. Anime has its own provider/order
+  settings, with AniList preferred where permitted and suitable under 3.7 rather
+  than applying TVDB-first matching universally. Complex cross-provider mapping is
+  still qualified separately; provider reliability is validated with actual fixtures.
 - Scanner: inotify watch plus a periodic full scan (default 6h) as a safety net. Each file
   gets an ffprobe pass storing container, streams, codecs, profiles/levels, bit depth,
   HDR type (HDR10/HDR10+/HLG/DV profile), audio channels/format, subtitle tracks
@@ -999,11 +1004,11 @@ hardening phase. Build plans must reference requirement IDs in section 13.
 
 | Gate | Included | Exit evidence |
 |---|---|---|
-| G0 — prove the risky path | Deployment/client profiles, shared fixtures, CPU baseline and candidate accelerator conversion spikes, subtitle/HDR probes | Recorded capabilities and failures per profile; unsupported cells explicit; no private-host dependency or production cut-over |
-| G1 — local vertical slice | Container, migrations/backup, admin-created local users/profiles, HTTPS through configured proxy, one read-only movie/TV library, basic metadata, layout C browse/detail/player, progress, direct/remux plus bounded SDR H.264/AAC software transcode and manual quality changes | A second tester deploys fresh and restores a backup; representative files work end to end with permissions enforced |
-| G2 — deployment and client compatibility | Anime identity/preferences, tested subtitles/HDR, accelerator admission/fallback, seek recovery, TV controls on agreed devices, diagnostics, optional Plex dry-run/import | Mandatory matrix passes across at least two independently configured installations, including generic non-Unraid and CPU-only coverage; one real long-form session per target client; blocked cells accepted or fixed |
+| G0 — prove the risky path | Deployment/client profiles, shared fixtures and CPU direct-play baseline; conversion, accelerator and subtitle spikes can proceed independently for their later features | Recorded capabilities/failures per profile; M1 is not blocked by unneeded conversion/HDR work; no private-host dependency or production cut-over |
+| G1 — local vertical slice | First prove M1; next focus on Movies, TV and separate Anime libraries plus layout C browse/detail/play. Foundation, accounts/profiles, metadata/progress and broader direct/remux/SDR-conversion features retain their independent work packages | A second tester deploys fresh and restores a backup; required G1 features and playback cases work end to end with permissions enforced |
+| G2 — deployment and client compatibility | Anime identity/preferences, tested subtitles, accelerator admission/fallback, seek recovery, TV controls on agreed devices, diagnostics, optional Plex dry-run/import | Mandatory matrix passes across at least two independently configured installations, including generic non-Unraid and CPU-only coverage; one real long-form session per target client; blocked cells accepted or fixed |
 | G3 — invited remote trial | Google/Microsoft sign-in + invites, remote HTTPS/proxy, upload caps, session revocation, QR pairing if TV trial needs it, operational runbooks | Security/failure tests pass; 14-day trials on independently configured installations with local and invited remote users meet section 13 targets |
-| G4 — expansion | Remaining providers, layouts A/B, additional media types, ABR, trickplay/intro detection, external sync, native Android, offline | Each feature has its own approved contract, fixtures and acceptance evidence before being advertised |
+| G4 — expansion | HDR/DV playback and tone mapping, remaining providers, layouts A/B, additional media types, ABR, trickplay/intro detection, external sync, native Android, offline | Each feature has its own approved contract, fixtures and acceptance evidence before being advertised |
 
 For migration trials, the existing media server stays running and each installation's
 administrator chooses its own cut-over after G3 evidence. New installations have no
@@ -1014,8 +1019,9 @@ installation's cut-over and blocks release claims for the affected support profi
 
 | Feature from original vision | Proposed placement / boundary |
 |---|---|
-| Movies, TV, basic TMDB/NFO; local accounts/profiles; layout C; manual quality with bounded SDR software conversion | G1 baseline |
-| Anime matching/order; core providers; audio/ASS/PGS; GPU/HDR; TV navigation; Plex import | G2, with unproven conversions visibly blocked |
+| Movies, TV and separate Anime library options; basic metadata; local accounts/profiles; layout C; manual quality with bounded SDR software conversion | G1 baseline; library/interface focus follows M1, with other work progressing in parallel |
+| Advanced anime matching/order; core providers; audio/ASS/PGS; GPU; TV navigation; Plex import | G2, with unproven conversions visibly blocked |
+| HDR/DV playback and tone mapping | G4 later expansion; not a first-playback or initial library/interface prerequisite |
 | Google/Microsoft + invites; HTTPS remote delivery; QR pairing; bandwidth policy | G3, or earlier when required for real-device testing |
 | Apple/Facebook/generic OIDC; admin-approved signup requests; built-in ACME | G4; local fallback and secure remote deployment already exist |
 | Music, photos, home videos | Retained G4 scope; need domain/player contracts before implementation |
@@ -1055,14 +1061,20 @@ scope and numeric performance proposals still require maintainer review.
 #### M1 — one complete movie in a browser at original quality
 
 This is the first measurable playback milestone, confirmed by Pete. A complete
-browser-compatible movie plays through the real Lisimflix media endpoint and browser
+1080p SDR MP4 movie with H.264 video plays through the real Lisimflix media endpoint and browser
 player at its original video and audio quality, without re-encoding or modifying the
 source. For this first proof use direct play: select a source whose container, video
 and audio are supported by the named browser. Universal codec support is not implied.
 
+Required clients are **Chrome and Firefox on Linux, Windows and macOS**: all six
+combinations, using the same source movie with recorded browser/OS versions. The
+movie's audio must play unchanged on each target; selecting its codec/profile is
+part of fixture qualification, not permission to convert an incompatible track.
+MKV/remux, HDR and other containers/formats are outside M1. HDR is later expansion.
+
 | ID | Pass criterion | Required evidence |
 |---|---|---|
-| MOVIE-01 | The movie plays from beginning to end with video and audio | Record the source identity/duration and browser/OS version; an uninterrupted full-duration run reaches the actual end with advancing video and audible, synchronised audio. A short clip or a seek to the last frame is not end-to-end proof. |
+| MOVIE-01 | The MP4 movie plays from beginning to end with video and audio on all six targets | Record the shared source identity/duration and each browser/OS version; a full-duration run on each combination reaches the actual end with advancing video and audible, synchronised audio. A short clip or a seek to the last frame is not end-to-end proof. |
 | MOVIE-02 | Original encoded video and audio are delivered unchanged | Route is direct play; source codec/profile, resolution, frame rate and selected audio stream are preserved. No video/audio encoder job runs, no lower-bitrate rendition substitutes for the source, and representative HTTP range bytes match the source. Browser decoding for display/audio output is expected. |
 | MOVIE-03 | Playback remains stable on a suitable connection | Record host, storage, connection and source bitrate. With enough sustained bandwidth and working storage, the full run has no crash, unhandled playback error or post-start buffering interruption. Record startup time separately; the initial M1 pass does not depend on the provisional p95 benchmarks. |
 | MOVIE-04 | Source media remains untouched | Media is mounted read-only and before/after source integrity checks match. Only application-owned config/cache paths may receive writes. |
@@ -1070,7 +1082,8 @@ and audio are supported by the named browser. Universal codec support is not imp
 The test uses a complete movie the tester is authorised to use, with a known duration.
 Live server/player/media integration is required: a fixture-only UI, `file://` playback
 or opening the source outside Lisimflix cannot pass M1. Record the result with its
-limitations; one source/browser combination does not certify all movies or devices.
+limitations; one successful browser/OS run does not pass the other five, and these
+six combinations do not certify every movie, codec profile or device.
 
 M1 needs only enough safe runtime, media selection and player functionality to prove
 these four outcomes. A controlled local proof can use one authorised test account;
@@ -1085,6 +1098,12 @@ software/hardware conversion, subtitles, seeking, persistent resume, failure rec
 and additional browsers remain the broader FIRSTPLAY and later support-matrix work.
 Container-only remux may preserve encoded quality, but it is a separate proof from
 the direct-play baseline selected here.
+
+After M1, the next product focus is the library and interface journey: add Movies,
+TV or Anime libraries, browse their items and start playback. Anime is independently
+configurable for its indexing/providers. This sequencing describes the user-visible
+milestones; the library/interface contributors can work in parallel before M1 passes.
+Wider format support and HDR do not delay that next library/interface milestone.
 
 #### G1a — internal foundation work package
 
@@ -1177,7 +1196,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | PLY-3 | **Software conversion:** supervised bounded SDR conversion and manual quality | P0 / G1 | FIRSTPLAY-01–02, 4.9–4.10; real ffmpeg sample output | `area:transcode` |
 | PLY-4 | **Session lifecycle:** seek generations, pause/expiry/stop and job cleanup | P0 / G1 | FIRSTPLAY-03–04, PLAY-02; isolated supervisor/session tests | `area:playback`, `area:transcode` |
 | PLY-5 | **Qualified acceleration:** optional backend probes, admission and bounded fallback | P1 / G2 | 2.3, 4.6, PLAY-02; per-backend evidence | `area:transcode` |
-| PLY-6 | **Colour-correct output:** qualified HDR/DV play/conversion or explicit refusal | P1 / G2 | HDR-01; real display/reference evidence | `area:transcode` |
+| PLY-6 | **Colour-correct output:** qualified HDR/DV play/conversion or explicit refusal | P2 / G4 | HDR-01; real display/reference evidence | `area:transcode` |
 | PLY-7 | **Adaptive variants:** measured aligned-rendition scheduling and switching | P2 / G4 | 4.10; switch latency/resource proof | `area:transcode` |
 | PLY-8 | **Remote bandwidth governance:** trusted LAN/WAN classification and upload/profile caps | P1 / G3 | REMOTE-01, 4.3, 6.6 | `area:playback` |
 | SUB-1 | **Text subtitle producer:** bounded extraction/conversion to WebVTT, authorised sidecar delivery and asset/timeline/error contract | P0 / G1 | 4.4, FIRSTPLAY-02–03, AUTH-01; real embedded/sidecar fixtures in an isolated backend harness | `area:subtitles` |
@@ -1504,7 +1523,7 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | PLAY-01 | Deterministic route and reasons | G1/G2: file × capability × policy table tests plus real subprocess output |
 | PLAY-02 | Bounded work and recovery | G2: overload, killed encoder, GPU failure, heartbeat expiry, rapid seek and job reaping |
 | TEXT-01 | Selected subtitles remain usable | G2: ASS/bitmap/sidecar with seeks, fonts, fullscreen and PiP/fallback |
-| HDR-01 | Correct display or explicit rejection | G2: reference colours and signalling on physical SDR/HDR devices |
+| HDR-01 | Correct display or explicit rejection | G4: reference colours and signalling on physical SDR/HDR devices; earlier releases reject unqualified HDR paths explicitly |
 | DATA-01 | Progress/import cannot erase newer work | G1/G2: duplicate/out-of-order events, two sessions, import rerun and guarded undo |
 | OPS-01 | Recoverable deployment | G1/G3: fresh setup, backup, clean-instance restore, migration failure and documented rollback |
 | UX-01 | Accessible viewing journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
