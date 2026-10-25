@@ -106,12 +106,16 @@ every file. Build/version-specific capability evidence remains mandatory.
 
 ### Goals
 
-- Long-term coverage of self-hosted media users' core Plex/Jellyfin functions: libraries, metadata (including anime), multiple
-  accounts and profiles, personal home screens, watch progress, remote access.
-- Reliable playback for a published file/client/network matrix, with an explicit
+- **Goal 1 — reliable playback:** a user can select supported media, start it, seek,
+  pause, resume and complete it reliably on a declared deployment/client/network
+  profile. This priority was confirmed by Pete on 2026-10-25. Section 9.3 separates
+  the enabling skeleton from the user-visible proof required to achieve this goal.
+  Playback uses a published support matrix, with an explicit
   fallback or clear unsupported result outside it. Lag and unplayable formats were
   the reason the earlier Jellyfin attempt was abandoned; impossible bandwidth or
   hardware combinations must not be presented as guaranteed smooth streaming.
+- Long-term coverage of self-hosted media users' core Plex/Jellyfin functions: libraries, metadata (including anime), multiple
+  accounts and profiles, personal home screens, watch progress, remote access.
 - One Docker container. Simple to deploy, back up and migrate across supported hosts.
 - Built by an organisation team in parallel through PRs and CI.
 
@@ -953,6 +957,56 @@ Already downloaded unencrypted files cannot be remotely erased with certainty. P
 storage/eviction/background restrictions need real-platform tests. Do not advertise
 offline support simply because a service worker installs successfully.
 
+### 9.3 Goal 1 — reliable playback, with an enabling foundation
+
+The first product goal is reliable playback. A running container, frontend shell or
+passing build alone does not achieve it. The following milestones divide G1 into
+reviewable increments; they do not add a new product phase or delay G0 risk testing.
+G0 playback experiments can proceed alongside foundation work. Remaining release
+scope and numeric performance proposals still require maintainer review.
+
+#### G1a — internal foundation
+
+The foundation provides the minimum base needed to build and test the playback loop:
+
+| ID | Capability | Acceptance evidence |
+|---|---|---|
+| BASE-01 | Generic non-root container starts without a GPU or external provider credentials | Fresh documented compose deployment with writable config/cache and read-only media mount; invalid paths/permissions produce actionable startup errors |
+| BASE-02 | Go serves the built React application | A browser loads a working application shell and a real server response; no separate frontend development server is required in the deployed image |
+| BASE-03 | SQLite initialises and migrates durably | Empty config creates the database; restart retains a non-secret test record and does not reapply a completed migration; migration failure blocks readiness |
+| BASE-04 | Health and shutdown are observable | Liveness responds while the process is running; readiness distinguishes usable versus failed initialisation; shutdown exits within the documented grace period |
+| BASE-05 | A common check command works locally and in CI | `make check` runs real Go/frontend lint, relevant unit checks and a production web build; failed checks fail the command and CI, with no placeholder always-green jobs |
+
+Bootstrap remains protected under 6.4. The unauthenticated foundation shell exposes no
+private library or administrative state. HTTPS and account protection are required
+before adding authenticated media browsing; an internal skeleton is not a safe public
+media server. It needs no complete metadata provider stack or polished home screen.
+
+#### G1b — prove the playback loop
+
+Build the smallest usable path from authenticated media selection to playback, using
+a read-only sample library, a basic player and persistent progress. File names and
+local probe data are sufficient for this proof; optional external metadata, import,
+social login, advanced layouts and discovery features cannot block the experiment.
+Existing G1 features remain required before G1 as a whole is declared complete.
+
+| ID | User-visible outcome | Acceptance evidence |
+|---|---|---|
+| FIRSTPLAY-01 | Select a permitted file and start the correct supported route | Shared direct, remux and bounded SDR software-transcode fixtures play on named baseline clients; route/reasons match PLAY-01, and first-frame results meet agreed PERF-01 conditions |
+| FIRSTPLAY-02 | Watch sustained media without unexplained stalls or silent track loss | Each mandatory route completes the 30-minute stability run under PERF-03; a full-duration fixture reaches its end; selected supported audio/text subtitles remain correct |
+| FIRSTPLAY-03 | Seek, pause and resume with correct state | Seek forwards/backwards, pause/resume and reopen after client interruption; position, selected tracks and progress satisfy PERF-02/PERF-06 and DATA-01 |
+| FIRSTPLAY-04 | Recover or fail clearly when playback cannot continue | Unsupported fixtures, source loss, encoder failure, repeated seeks and excess work produce bounded fallback or a named error; no orphan jobs, endless spinner or modified media |
+| FIRSTPLAY-05 | Repeat the result on a fresh baseline setup | Another tester follows generic deployment instructions and reproduces the declared playback cases using shared fixtures without access to a contributor's private server/library |
+
+Supported fixture/client choices and performance conditions are recorded before the
+run; removing a failing mandatory case does not count as passing it. Hardware decode,
+complex ASS/bitmap rendering, HDR/DV and seamless ABR expand the support matrix through
+their own later gates. Passing G1b does not imply universal format/device compatibility.
+
+The implementation plan decomposes BASE/FIRSTPLAY outcomes into files, interfaces,
+ordered tasks and concrete tests. This spec defines the acceptance boundary; it does
+not prescribe a directory full of empty future modules as a deliverable.
+
 ## 10. Domain model, persistence and module contracts
 
 ### 10.1 Stable identities and relationships
@@ -1208,6 +1262,8 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | UX-01 | Accessible viewing journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
 | REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
 | DEPLOY-01 | Independent installations require no contributor-specific configuration | G1/G2: fresh generic non-Unraid + CPU-only deployment, second independent configuration, remapped-root restore, distinct accounts/keys and absence of private host defaults |
+| BASE-01–05 | Internal foundation enables a runnable, testable application | G1a: the five foundation acceptance rows in 9.3; skeleton completion alone is not Goal 1 completion |
+| FIRSTPLAY-01–05 | First product goal is demonstrated reliable playback | G1b: the five playback outcomes in 9.3 with declared fixtures, clients and PERF/PLAY/DATA evidence |
 
 ### 13.5 PR and trial completion rules
 
