@@ -35,13 +35,14 @@ Never bypass it with `--no-verify`.
   feature branch, after installing locked dependencies reproducibly (e.g. `npm ci`).
   Record the local result in the PR.
 - The bootstrap PR that adds `make check` and GitHub Actions must run its completed
-  check locally, with locked dependencies, before publishing. GitHub does not run a
-  new `pull_request` workflow until that workflow exists on the default branch, so
-  this one PR cannot have a GitHub CI result. Require the normal second-member review;
-  report the Actions check as "not run: bootstrap workflow not on default branch".
+  check locally, with locked dependencies, before publishing. A new `pull_request`
+  workflow can run from the PR merge branch before reaching the default branch.
+  Require the normal second-member review and report the actual Actions result.
 - GitHub Actions runs `make check` on every PR. Its independent result supplements
-  the local preflight; a green remote run does not replace it. After the bootstrap PR
-  merges, each code PR must pass both the local check and its GitHub Actions run.
+  the local preflight; a green remote run does not replace it. Every code PR,
+  including bootstrap, must pass both the local check and its GitHub Actions run.
+  If Actions did not run, investigate the trigger/settings rather than assuming
+  a bootstrap exemption. See [GitHub's pull_request event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
 - Docs-only PRs may skip local `make check`; once the workflow exists, GitHub Actions
   still runs on every PR.
 - End-to-end tests (Playwright, real media) run locally only for now. Say in the PR's

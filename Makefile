@@ -6,6 +6,7 @@ check:
 	go -C server test -count=1 ./...
 	npm --prefix web run generate:api
 	git diff --exit-code -- web/src/api/schema.d.ts
+	npm --prefix web run test:contracts
 	npm --prefix web run lint
 	npm --prefix web run typecheck
 	npm --prefix web run build
