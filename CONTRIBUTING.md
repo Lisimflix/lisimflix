@@ -16,8 +16,10 @@ Never bypass it with `--no-verify`.
 
 ## Workflow
 
-1. Pick the work: **either** an issue, **or** one part of the design spec
-   (e.g. "§4.4 Subtitles"). One issue or one spec part per PR, so PRs stay small.
+1. Pick a named feature from the spec's §9.4 catalogue (e.g. `PLY-1`, `UI-1`) and
+   claim its issue, or pick a bounded documentation/spec change. One feature slice
+   or spec part per PR keeps reviews small; cite its acceptance IDs as well. Apply
+   the catalogue's GitHub area labels to the issue and the affected subset to the PR.
 2. Branch off an up-to-date `main`: `git switch main && git pull && git switch -c feat/short-name`.
 3. Commit small and often.
 4. Push the branch and open a PR. Fill in the template: `Closes #N` for an issue,
@@ -29,9 +31,19 @@ Never bypass it with `--no-verify`.
 
 ## Checks (CI)
 
-- Before opening a PR, run `make check` locally (lint, unit tests, web build).
-  It arrives with the first code PR; docs-only PRs need no checks until then.
-- GitHub Actions runs the same `make check` on every PR. A PR merges only when it's green.
+- Before pushing code or opening its PR, run `make check` locally on the complete
+  feature branch, after installing locked dependencies reproducibly (e.g. `npm ci`).
+  Record the local result in the PR.
+- The bootstrap PR that adds `make check` and GitHub Actions must run its completed
+  check locally, with locked dependencies, before publishing. GitHub does not run a
+  new `pull_request` workflow until that workflow exists on the default branch, so
+  this one PR cannot have a GitHub CI result. Require the normal second-member review;
+  report the Actions check as "not run: bootstrap workflow not on default branch".
+- GitHub Actions runs `make check` on every PR. Its independent result supplements
+  the local preflight; a green remote run does not replace it. After the bootstrap PR
+  merges, each code PR must pass both the local check and its GitHub Actions run.
+- Docs-only PRs may skip local `make check`; once the workflow exists, GitHub Actions
+  still runs on every PR.
 - End-to-end tests (Playwright, real media) run locally only for now. Say in the PR's
   "How it was tested" whether you ran them.
 - CI minutes are limited (2,000/month on the free plan), so workflows must:
@@ -49,8 +61,18 @@ Never bypass it with `--no-verify`.
 
 ## Working together
 
-- Assign an issue to yourself before starting it, so two people (or two Claudes)
-  never edit the same files.
+- We plan for 2–3 contributors working in parallel. Choose an unclaimed ready
+  feature yourself; work is not allocated by Pete or by fixed subsystem teams.
+  Assign its issue to yourself before coding; record its feature ID, reviewer, file scope, consumed/
+  produced contracts, standalone checks and integration dependencies. Do not claim
+  another person's active scope. Use separate branches and working directories.
+- Follow spec §§8.1–8.4 and 9.5: small agreed contracts and fixture/test harnesses let
+  modules progress before the full skeleton is complete. Plans name the exact
+  dependency needed, not a whole unfinished subsystem. Fixture-only proof is module
+  acceptance; user outcomes need real integration evidence.
+- Shared manifests/lockfiles, root build/CI, route/OpenAPI registration and migration
+  ordering have one named integration owner per change. Agree shared edits first;
+  update the contract and affected consumers together rather than editing in parallel.
 - Don't edit a spec or plan someone else is writing. Open an issue for them instead.
 - Hand-offs and decisions go in issue or PR comments, not only in chat.
 
