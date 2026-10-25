@@ -1046,6 +1046,11 @@ Coordination uses issues/PRs per CONTRIBUTING; no chat-only claim counts as owne
 
 ### 8.4 What future implementation plans must contain
 
+The first M1 draft plan set starts with [CTR-1 contracts and the plan map](../plans/2026-10-25-ctr-1-m1-contracts.md).
+Runtime, direct playback and player plans are independently claimable after the small
+seed; the integration plan separately proves the complete movie. These are review
+drafts, not assignments or evidence that implementation has started.
+
 Produce small feature/subsystem plans rather than one enormous serial implementation
 plan. Every task names feature IDs, owner role, reviewer, file scope, input/output
 contracts, real dependencies, standalone test command and integration proof. The plan
