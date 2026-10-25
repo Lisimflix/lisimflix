@@ -51,8 +51,9 @@ Never bypass it with `--no-verify`.
 
 ## Working together
 
-- We plan for 2–3 contributors working in parallel. Assign a feature issue to
-  yourself before coding; record its feature ID, reviewer, file scope, consumed/
+- We plan for 2–3 contributors working in parallel. Choose an unclaimed ready
+  feature yourself; work is not allocated by Pete or by fixed subsystem teams.
+  Assign its issue to yourself before coding; record its feature ID, reviewer, file scope, consumed/
   produced contracts, standalone checks and integration dependencies. Do not claim
   another person's active scope. Use separate branches and working directories.
 - Follow spec §§8.1–8.4 and 9.5: small agreed contracts and fixture/test harnesses let

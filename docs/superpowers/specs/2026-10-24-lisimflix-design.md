@@ -981,13 +981,17 @@ Use the named feature IDs in 9.4 as the unit of discussion, issue claims, plans 
 PRs, following the requirement-catalogue pattern used by Trillion's PRD. Ownership is
 per active feature, not permanent ownership of an entire subsystem. One person claims
 an issue, identifies the other reviewer and declares their write scope before coding.
-No contributor is assigned by this draft; actual names belong in the claimed issues.
+Features stay unassigned until a contributor chooses an available one and assigns
+its issue to themselves. Pete does not allocate work or preassign subsystem roles.
+An active claim is visible to everyone; another contributor picks a different ready
+feature or agrees a scope split with the claimant before touching overlapping files.
 
-Keep at most one primary feature active per contributor. With three people, begin
-with platform, playback and player packages concurrently. With two, one takes the
-small platform seed then switches to the player while the other builds playback;
-remaining platform work continues as separate small PRs. Contributors can take a
-different ready feature when genuinely blocked instead of waiting for a whole phase.
+Keep at most one primary feature active per contributor. Anyone can choose any
+unclaimed feature whose start dependencies are satisfied, across platform, playback,
+player, catalogue or other areas. The track examples below describe parallelism and
+integration, not assigned teams or a mandated picking order. A feature needing a
+missing shared contract identifies that small dependency explicitly; its contributor
+can propose the seed/change or pick other ready work while it is resolved.
 
 ### 8.2 Small shared contracts before integration
 
@@ -1312,23 +1316,25 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 
 ### 9.5 Parallel work breakdown and integration checkpoints
 
-These tracks are a scheduling guide for 2–3 contributors. Each active feature gets
-one named issue owner, reviewer and target checkpoint before coding; `_unassigned_`
-below means available work, not a promised allocation/date. Do not assign every track
-at once when only 2–3 people are available. Use feature plans to keep PRs small.
+These tracks group compatible work and expose dependencies for 2–3 contributors;
+they are not assignments. Contributors self-select individual features rather than
+being allocated a track. Each claimed feature records its claimant, reviewer, scope
+and target checkpoint before coding. Unclaimed work remains available to anyone.
+Use feature plans to keep PRs small.
 
-| Track | Initial feature scope / write boundary | Can start / prove independently | Real integration dependency | Owner |
-|---|---|---|---|---|
-| A · Platform | CTR-1 seed coordination, OPS-1–4; manifests/build/deploy/bootstrap wiring | Fresh image, DB/health and checks; contract/fixture work starts immediately | Consumer contributions to CTR-1; real player/media adapters for final image smoke | _unassigned_ |
-| B · Playback | PLY-1–4, SUB-1 and local LIB-1 probe boundary; playback/transcode/subtitle backend files | Sample descriptors + owned files + temporary cache; real ffmpeg and isolated HTTP tests after tiny contract/manifests seed | ACC-2 policy adapter, catalogue/source resolver and UI-1/3 for FIRSTPLAY integration | _unassigned_ |
-| C · Player | UI-1–3; player components and client adapter files | Browser fixture adapter and real test video, without Go server, DB, auth service or deployed skeleton | PLY/session API, SUB-1 subtitle producer and ACC-1/2 + DATA-1 adapters for integrated viewing | _unassigned_ |
-| D · Catalogue/identity | LIB-2/4, META-1, ACC-1/2, DATA-1/2 as separately claimed features | Temporary repositories, fake providers and contract fixtures; no running container/player needed | Route/schema migration coordination and real auth/catalogue wiring; LIB-4 uses source-scoped authenticated ingress | _unassigned_ |
-| E · Integration/qualification | FIRSTPLAY evidence, OPS-4 and G2/G3 matrix | Shared fixture manifest, deployment instructions and harness design from day one | Real implementations of the journey being claimed; no mock-only Goal 1 sign-off | _unassigned_ |
+| Track | Initial feature scope / write boundary | Can start / prove independently | Real integration dependency |
+|---|---|---|---|
+| A · Platform | CTR-1 seed coordination, OPS-1–4; manifests/build/deploy/bootstrap wiring | Fresh image, DB/health and checks; contract/fixture work starts immediately | Consumer contributions to CTR-1; real player/media adapters for final image smoke |
+| B · Playback | PLY-1–4, SUB-1 and local LIB-1 probe boundary; playback/transcode/subtitle backend files | Sample descriptors + owned files + temporary cache; real ffmpeg and isolated HTTP tests after tiny contract/manifests seed | ACC-2 policy adapter, catalogue/source resolver and UI-1/3 for FIRSTPLAY integration |
+| C · Player | UI-1–3; player components and client adapter files | Browser fixture adapter and real test video, without Go server, DB, auth service or deployed skeleton | PLY/session API, SUB-1 subtitle producer and ACC-1/2 + DATA-1 adapters for integrated viewing |
+| D · Catalogue/identity | LIB-2/4, META-1, ACC-1/2, DATA-1/2 as separately claimed features | Temporary repositories, fake providers and contract fixtures; no running container/player needed | Route/schema migration coordination and real auth/catalogue wiring; LIB-4 uses source-scoped authenticated ingress |
+| E · Integration/qualification | FIRSTPLAY evidence, OPS-4 and G2/G3 matrix | Shared fixture manifest, deployment instructions and harness design from day one | Real implementations of the journey being claimed; no mock-only Goal 1 sign-off |
 
-Track D is the next ready work pool when one of the initial three contributors frees
-up, not a requirement for a fourth person. Its features are split between available
-contributors and may start earlier if more useful than a blocked platform task.
-Track E is a rotating explicit responsibility, not an unowned final cleanup phase.
+Tracks A–D can be chosen in any order when their actual start dependencies are met;
+catalogue/identity work does not wait for three other people or the full skeleton.
+Track E can also be claimed for fixture/harness work immediately, with real journey
+sign-off waiting for its actual producer/consumer implementations. Each integration
+change still has an explicit volunteer owner so it does not become unowned cleanup.
 
 Checkpoint progression is **contract agreed → module accepted → producer/consumer
 integrated → user outcome verified**. The first two can happen while the skeleton is
