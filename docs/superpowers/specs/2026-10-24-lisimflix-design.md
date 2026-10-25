@@ -1092,6 +1092,7 @@ installation's cut-over and blocks release claims for the affected support profi
 | Missing episode display, richer ratings/artwork providers, alternative order UI | G4 except ordering needed to identify the G2 anime fixture set correctly |
 | Seamless ABR, seek thumbnails, automatic intro/credits, speculative next preload | G4 optimisations; manual seeks/next episode work earlier |
 | Native Android phone/TV (Kotlin/Media3), offline originals/transcodes/batches | G4 separate milestones; browser offline capability is independently proven |
+| ARM64 container images and other server architectures | Optional later G4 qualification; initial server image is x86-64/amd64 and is not blocked by ARM work |
 | AniList/MAL outbound sync | G4 after terms, scopes and mapping verification |
 
 ### 9.2 Contracts required before expansion features start
@@ -1307,6 +1308,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 | EXT-3 | **Native Android:** phone/TV client against the public API | P2 / G4 | 9.1; independent client/device qualification | `area:android` |
 | EXT-4 | **Offline downloads:** permissions, jobs, integrity, quotas and honest revocation | P2 / G4 | 9.2; actual offline playback on each advertised platform | `area:playback`, `area:web`, `area:android` |
 | EXT-5 | **Optional built-in TLS:** supported listener/ACME deployment and recovery | P2 / G4 | 6.6, 11.1; existing HTTPS ingress works earlier | `area:tls` |
+| EXT-6 | **Additional server architectures:** optional ARM64 container build and platform qualification | P2 / G4 | 11.1; real architecture startup/playback/restore evidence before support claims; not an initial release dependency | `area:platform`, `area:ci` |
 
 ### 9.5 Parallel work breakdown and integration checkpoints
 
@@ -1408,14 +1410,18 @@ adapter's extraction details and completeness are planned and tested at G4.
 
 ### 11.1 Supported deployment contract
 
-Initial platform target is Linux amd64 containers on supported runtimes, independently
-of a specific server/NAS distribution. Pete approved Linux/Docker as the initial
+Initial platform target is **Linux x86-64/amd64 containers** on supported Docker
+setups, independently of a specific server/NAS distribution. Pete approved x86-64
+first; ARM64 and other server architectures are later nice-to-haves under EXT-6.
+Neither multi-architecture builds nor access to ARM hardware blocks initial work.
+Linux/Docker is the initial
 server target; Windows/macOS are browser clients, with no native server install
 required for this release. Generic compose is the primary deployment example;
 Unraid is an additional adapter. Local HTTP setup and username/password login work
 out of the box; a domain, HTTPS proxy and external identity provider are not initial
 requirements. Optional remote access uses configured HTTPS ingress. Other
-architectures remain experimental until qualified. Publish a pinned
+architectures are not initially supported and remain experimental until separately
+qualified. Publish a pinned
 image digest, tested runtime/CPU baseline and per-accelerator driver/device requirements;
 the CPU-only path has no NVIDIA prerequisite. Go/Node build tools stay out of the
 runtime image. Include dependency versions, licenses and an SBOM.
@@ -1653,6 +1659,7 @@ is useful comparative evidence, not a guarantee inherited by this application.
 | UX-01 | Accessible viewing journey | G2: D-pad-only and keyboard/screen-reader journeys; all core empty/error/loading states |
 | REMOTE-01 | Remote policies and identities safe | G3: invite/link/QR replay, proxy spoofing, bitrate enforcement, outage fallback |
 | LAN-01 | Local HTTP and username/password work from first launch | G1: fresh Linux/Docker setup and real login/browse/playback from another LAN device at its private IP/hostname, no domain/proxy/provider; valid HTTP cookies, auth/CSRF checks, and separate HTTPS/proxy-spoofing regression cases |
+| ARCH-01 | Initial server release targets x86-64/amd64 | G1: image architecture and actual startup/playback evidence on a named Linux x86-64 host; ARM64 qualification belongs to EXT-6/G4 |
 | DEPLOY-01 | Independent installations require no contributor-specific configuration | G1/G2: fresh generic non-Unraid + CPU-only deployment, second independent configuration, remapped-root restore, distinct accounts/keys and absence of private host defaults |
 | MOVIE-01–04 | First measurable milestone is one complete original-quality movie in a browser | M1 within G1: the four direct-play criteria in 9.3; real full-duration playback and unchanged source/encoded delivery |
 | SCALE-01–04 | Large-library scanning, browsing and metadata management qualify early | First library/interface milestone: actual-scale workload in 13.1 with PERF-05 and measured bottlenecks |
@@ -1684,7 +1691,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 | ID | Challenge / decision | Proposed position | Blocks |
 |---|---|---|---|
 | D01 | Must first trial include all media types/providers/layouts? | Movies/TV/anime + layout C first; retain expansion ledger | G1/G2 scope approval |
-| D02 | Which deployment profiles and independent operators qualify the first release? | zraid is confirmed as Lammy's Unraid reference; select another independently configured installation, generic Linux-container + CPU-only coverage and per-profile capacity evidence | Published deployment/support claims |
+| D02 | Which x86-64 deployment profiles/operators qualify the first release? | Approved Linux/Docker x86-64 first; ARM64 later optional. zraid is Lammy's reference; select another independent installation with generic Linux/CPU-only coverage and per-profile capacity evidence | Remaining hardware/operator evidence; architecture choice settled |
 | D03 | Which client/device profiles qualify beyond M1? | M1 approved: Chrome/Firefox on Linux/Windows/macOS; record tested versions. TV/mobile/additional client profiles still need qualification | Wider G2/G3 matrix; M1 platform selection settled |
 | D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
 | D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
