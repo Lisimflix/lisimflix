@@ -5,10 +5,10 @@
 not in `main`, and are **not executable** (see #12, #13). Unclaimed, unapproved and unimplemented.
 Realigned on
 2026-10-26 to the spec revision on `main` (#6) and the M1 plan set
-([CTR-1 map](../2026-10-25-ctr-1-m1-contracts.md)). Nothing here assigns work. Contributors
+([CTR-1 map](2026-10-25-ctr-1-m1-contracts.md)). Nothing here assigns work. Contributors
 self-claim feature issues per `CONTRIBUTING.md`.
 
-**Spec:** [Design §§3, 6, 8.2–8.4, 9.1, 9.4–9.5, 10, 12](../../specs/2026-10-24-lisimflix-design.md)
+**Spec:** [Design §§3, 6, 8.2–8.4, 9.1, 9.4–9.5, 10, 12](../specs/2026-10-24-lisimflix-design.md)
 
 These plans were written on 2026-10-24 against an earlier phase structure, before the spec
 revision and the CTR-1 contract seed (PR #8). They hold useful, mostly tested, detailed work
@@ -29,8 +29,8 @@ claimed feature's tasks, and gets approval before coding.
 | [`data-1-2-3-userdata`](https://github.com/Lisimflix/lisimflix/blob/drafts/catalogue-2026-10-24/docs/superpowers/plans/drafts/2026-10-24-data-1-2-3-userdata.md) | **DATA-1**: T0–T3 · **DATA-2**: T4–T6, T8–T11 · ACC-2 consumer: T7 · **DATA-3** (Plex import): T12–T15 | DATA-1/2 P0 G1 · DATA-3 P2 G4 | CTR-2 progress/profile shapes; rules (T1) start now; ACC-2 evaluator for T7 |
 
 **Retired:** the old phase 1 index and plan 1A (core skeleton). They are superseded by CTR-1
-(#8), the [OPS-1/ACC-1 runtime plan](../2026-10-25-ops-1-m1-runtime.md) and the
-[M1 integration plan](../2026-10-25-m1-integration.md). 1A's SQLite migration runner became the
+(#8), the [OPS-1/ACC-1 runtime plan](2026-10-25-ops-1-m1-runtime.md) and the
+[M1 integration plan](2026-10-25-m1-integration.md). 1A's SQLite migration runner became the
 starting point for the [OPS-2 plan](2026-10-26-ops-2-durable-storage.md) (#11, #14). The original
 1A file is kept in the tag's history at commit `d90a441`
 (`git show d90a441:docs/superpowers/plans/2026-10-24-phase1a-core.md`).
