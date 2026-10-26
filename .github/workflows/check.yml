@@ -20,7 +20,7 @@ jobs:
         with:
           go-version-file: server/go.mod
           # shortcut: keyed on go.mod because the module has no dependencies, so no go.sum
-          # exists yet; switch to server/go.sum in the PR that adds the first one (OPS-1).
+          # exists yet; switch to server/go.sum in the first PR that adds a dependency.
           cache-dependency-path: server/go.mod
       - uses: actions/setup-node@v7
         with:
