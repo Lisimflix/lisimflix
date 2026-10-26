@@ -1,0 +1,9 @@
+{
+  "authenticated": true,
+  "viewer": {
+    "accountId": "acct-synthetic-0001",
+    "profileId": "prof-synthetic-0001",
+    "username": "viewer"
+  },
+  "csrfToken": "csrf-synthetic-auth-0002"
+}

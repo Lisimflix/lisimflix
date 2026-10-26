@@ -959,10 +959,10 @@ traffic is disclosed in setup and can be disabled independently.
 - Private repo `Lisimflix/lisimflix`, monorepo: `server/` (Go), `web/` (React), `docs/`,
   `deploy/` (generic compose, optional Unraid template), `testdata/`. Android goes in
   `Lisimflix/lisimflix-android` (G4 expansion milestone).
-- After CI bootstrap, the team merge rule for code PRs is PR + 1 review + green CI. The single bootstrap PR instead requires local `make check` plus a second-member review; GitHub cannot run its workflow before it exists on the default branch. The org is on the free plan,
+- The team merge rule for code PRs, including CI bootstrap, is local `make check` + PR + 1 review + green GitHub CI. A new `pull_request` workflow can run from the PR merge branch before reaching the default branch. The org is on the free plan,
   so a `.githooks/pre-push` hook blocks direct pushes instead of GitHub branch protection (see `CONTRIBUTING.md`).
   Switch to a GitHub ruleset when the org upgrades.
-- After the CI-bootstrap PR reaches the default branch, GitHub Actions runs lint,
+- GitHub Actions runs lint,
   unit tests and web build through `make check` on every PR.
   E2E and real-device/GPU checks remain local per `CONTRIBUTING.md`; attach evidence
   to relevant PRs. On merge to `main`: build and push
@@ -970,11 +970,10 @@ traffic is disclosed in setup and can be disabled independently.
 - For code changes, authors complete dependency installation and run `make check`
   locally on the finished feature branch before publishing it. The bootstrap PR that
   introduces the command/workflow runs the new command locally on its own branch
-  before its first push. GitHub cannot run a new `pull_request` workflow until that
-  workflow exists on the default branch. So the bootstrap PR itself relies on the
-  passing local check and normal second-member review; report the Actions result as
-  not run for that reason. Every later code PR receives the independent GitHub run
-  after its required local preflight. This follows GitHub's [workflow trigger rule](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows).
+  before its first push. The bootstrap PR also requires the independent GitHub run
+  and normal second-member review. Report the actual Actions result; if it did not
+  run, investigate the trigger/settings rather than assuming a bootstrap exemption.
+  This follows GitHub's [pull_request event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
 - Work is tracked as GitHub Issues on an org Project board, grouped by phase/milestone.
   Module boundaries (2.2) map to issue labels (`area:transcode`, `area:web`, ...).
 - `CONTRIBUTING.md` and `CLAUDE.md` define conventions for humans and AI agents alike.
@@ -1692,10 +1691,10 @@ is useful comparative evidence, not a guarantee inherited by this application.
 present and web production build. Local E2E/GPU/device evidence is attached when a PR
 touches those paths. Deterministic unit tests do not replace real decoder/display
 evidence. Run `make check` locally on the complete code branch before pushing/opening
-the PR; after push, GitHub Actions independently runs the same command. GitHub will
-not run a new `pull_request` workflow before it exists on the default branch, so the
-CI-bootstrap PR is the single exception: it passes locally and gets the normal
-second-member review first; Actions begins on PRs after bootstrap merges.
+the PR; after push, GitHub Actions independently runs the same command, including
+on the CI-bootstrap PR. New `pull_request` workflows can run from the PR merge
+branch before reaching the default branch; require the actual Actions pass and
+normal second-member review.
 No blanket tests for every trivial helper; test invariants and failures.
 
 A gate records implemented requirement IDs, measured results, fixture/client versions,
@@ -1721,7 +1720,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 | D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
 | D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
 | D06 | Are AniList and mapping sources permitted/sufficient? | Validate API terms and dataset coverage; local matching survives provider outage | Specific providers and outbound sync |
-| D07 | Initial versus later sign-in rollout | Approved: local username/password accounts first, social providers later; G3 Google/Microsoft and G4 additional providers retain their later gates | Initial choice settled; provider qualification later |
+| D07 | Initial versus later sign-in rollout | Approved by Pete and Lammy, 2026-10-26 (#9): local username/password accounts first, social providers later; G3 Google/Microsoft and G4 additional providers retain their later gates. Social sign-in needs a public HTTPS domain for redirects, so local-first fits D09 | Initial choice settled; provider qualification later |
 | D08 | Profile PIN / child-policy guarantees? | Server-enforced restricted profile grants; account controller remains privileged; deny unrated by default for kids | Policy UX and security tests |
 | D09 | Local versus remote ingress/TLS | Approved: local HTTP from first launch with no domain/proxy; Linux/Docker server. Remote access requires HTTPS; proxy configuration/certificate ownership is settled before G3 | Initial local mode settled; remote deployment details later |
 | D10 | Plex/Jellyfin source access and import completeness? | Approved as later optional G4 features; validate read-only source/version data before promising complete history. Core compatibility is required under 10.3 now | Source adapters only; not basic development |

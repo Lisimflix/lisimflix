@@ -1,0 +1,294 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Lisimflix M1 API",
+    "version": "0.1.0",
+    "description": "M1 contract (CTR-1): one authorised viewer plays one original MP4. All /api/v1 responses are private and sent with Cache-Control: no-store. Unsafe browser operations require X-CSRF-Token. Login/logout/session behaviour belongs to the runtime (OPS-1/ACC-1); playback sessions and content belong to PLY-2. Source paths, password hashes, cookies and grants never appear in response bodies other than the grant inside contentUrl."
+  },
+  "servers": [{ "url": "/" }],
+  "security": [{ "sessionCookie": [] }],
+  "paths": {
+    "/api/v1/auth/session": {
+      "get": {
+        "operationId": "getAuthSession",
+        "summary": "Current auth state; anonymous callers get authenticated:false, viewer:null and a CSRF token",
+        "security": [{}, { "sessionCookie": [] }],
+        "responses": {
+          "200": { "description": "Auth state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthState" } } } },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "login",
+        "summary": "Sign in; rotates the session cookie and issues a fresh CSRF token",
+        "security": [{}],
+        "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Signed in",
+            "headers": { "Set-Cookie": { "description": "Rotated session cookie", "schema": { "type": "string" } } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthState" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "summary": "Sign out; removes the cookie and revokes the auth session and its playback sessions",
+        "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }],
+        "responses": {
+          "204": { "description": "Signed out" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/movies": {
+      "get": {
+        "operationId": "listMovies",
+        "summary": "Movies the viewer may play (M1: only the configured movie)",
+        "responses": {
+          "200": { "description": "Movies", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MovieList" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions": {
+      "post": {
+        "operationId": "createPlaybackSession",
+        "summary": "Start playback. Replaying the same key and payload for an active session returns 200 with that session; the same key with a changed payload is 409.",
+        "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSessionRequest" } } } },
+        "responses": {
+          "200": { "description": "Replay of an active request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSession" } } } },
+          "201": { "description": "Session created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSession" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions/{sessionId}/heartbeat": {
+      "post": {
+        "operationId": "heartbeatPlaybackSession",
+        "summary": "Keep a live owned session alive; expired sessions return 410 and are not revived",
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HeartbeatRequest" } } } },
+        "responses": {
+          "204": { "description": "Session renewed" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions/{sessionId}": {
+      "delete": {
+        "operationId": "stopPlaybackSession",
+        "summary": "Stop an owned session; idempotent",
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
+        "responses": {
+          "204": { "description": "Stopped" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions/{sessionId}/content": {
+      "get": {
+        "operationId": "getPlaybackContent",
+        "summary": "Original MP4 bytes, never transformed. Needs both the user cookie and the signed grant.",
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/Grant" },
+          { "$ref": "#/components/parameters/Range" },
+          { "$ref": "#/components/parameters/IfRange" },
+          { "$ref": "#/components/parameters/IfNoneMatch" },
+          { "$ref": "#/components/parameters/IfModifiedSince" }
+        ],
+        "responses": {
+          "200": { "description": "Whole file with Accept-Ranges: bytes, Content-Length, ETag and Last-Modified of the original", "content": { "video/mp4": { "schema": { "type": "string", "contentMediaType": "video/mp4" } } } },
+          "206": { "description": "Requested range", "content": { "video/mp4": { "schema": { "type": "string", "contentMediaType": "video/mp4" } } } },
+          "304": { "description": "Not modified" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" },
+          "416": { "description": "Range not satisfiable" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "head": {
+        "operationId": "headPlaybackContent",
+        "summary": "Headers of the original MP4 (length, ranges, validators) without a body",
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/Grant" },
+          { "$ref": "#/components/parameters/Range" },
+          { "$ref": "#/components/parameters/IfRange" },
+          { "$ref": "#/components/parameters/IfNoneMatch" },
+          { "$ref": "#/components/parameters/IfModifiedSince" }
+        ],
+        "responses": {
+          "200": { "description": "Whole-file headers" },
+          "206": { "description": "Range headers" },
+          "304": { "description": "Not modified" },
+          "401": { "description": "Unauthenticated" },
+          "404": { "description": "Unknown or not owned" },
+          "409": { "description": "Source changed" },
+          "410": { "description": "Playback expired" },
+          "416": { "description": "Range not satisfiable" },
+          "500": { "description": "Internal error" },
+          "503": { "description": "Source unavailable" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "lisimflix_session", "description": "HttpOnly, SameSite=Lax session cookie; Secure when served over HTTPS" }
+    },
+    "parameters": {
+      "CSRFToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "description": "Token from AuthState.csrfToken; mismatch is 403 csrf_failed", "schema": { "type": "string", "minLength": 1 } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
+      "SessionId": { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
+      "Grant": { "name": "grant", "in": "query", "required": true, "description": "Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session", "schema": { "type": "string", "minLength": 1 } },
+      "Range": { "name": "Range", "in": "header", "required": false, "schema": { "type": "string" } },
+      "IfRange": { "name": "If-Range", "in": "header", "required": false, "schema": { "type": "string" } },
+      "IfNoneMatch": { "name": "If-None-Match", "in": "header", "required": false, "schema": { "type": "string" } },
+      "IfModifiedSince": { "name": "If-Modified-Since", "in": "header", "required": false, "schema": { "type": "string" } }
+    },
+    "responses": {
+      "Error": {
+        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body; retry with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } }
+      }
+    },
+    "schemas": {
+      "Viewer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accountId", "profileId", "username"],
+        "properties": {
+          "accountId": { "type": "string", "minLength": 1 },
+          "profileId": { "type": "string", "minLength": 1 },
+          "username": { "type": "string", "minLength": 1 }
+        }
+      },
+      "AuthState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["authenticated", "viewer", "csrfToken"],
+        "properties": {
+          "authenticated": { "type": "boolean" },
+          "viewer": { "oneOf": [{ "$ref": "#/components/schemas/Viewer" }, { "type": "null" }] },
+          "csrfToken": { "type": "string", "minLength": 1 }
+        },
+        "if": { "properties": { "authenticated": { "const": true } } },
+        "then": { "properties": { "viewer": { "$ref": "#/components/schemas/Viewer" } } },
+        "else": { "properties": { "viewer": { "type": "null" } } }
+      },
+      "Movie": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "sourceRevision", "title", "durationMs", "container", "videoCodec", "width", "height", "audioCodec"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "sourceRevision": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "durationMs": { "type": "integer", "format": "int64", "minimum": 1 },
+          "container": { "type": "string", "enum": ["mp4"] },
+          "videoCodec": { "type": "string", "enum": ["h264"] },
+          "width": { "type": "integer", "minimum": 1, "maximum": 1920 },
+          "height": { "type": "integer", "minimum": 1, "maximum": 1080 },
+          "audioCodec": { "type": "string", "minLength": 1 }
+        }
+      },
+      "MovieList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Movie" } },
+          "nextCursor": { "type": ["string", "null"], "description": "Always null in M1" }
+        }
+      },
+      "PlaybackSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "movieId", "sourceRevision", "contentUrl", "route", "heartbeatIntervalSeconds", "idleTimeoutSeconds"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "movieId": { "type": "string", "minLength": 1 },
+          "sourceRevision": { "type": "string", "minLength": 1 },
+          "contentUrl": { "type": "string", "pattern": "^/api/v1/playback/sessions/", "description": "Same-origin relative URL carrying the grant" },
+          "route": { "type": "string", "enum": ["direct"] },
+          "heartbeatIntervalSeconds": { "type": "integer", "enum": [10] },
+          "idleTimeoutSeconds": { "type": "integer", "enum": [60] }
+        }
+      },
+      "APIError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "requestId"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": ["invalid_request", "unauthenticated", "csrf_failed", "not_found", "source_changed", "idempotency_conflict", "playback_expired", "capacity_unavailable", "rate_limited", "source_unavailable", "internal_error"]
+          },
+          "message": { "type": "string", "maxLength": 256 },
+          "requestId": { "type": "string", "minLength": 1 }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["username", "password"],
+        "properties": {
+          "username": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "password": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        }
+      },
+      "PlaybackSessionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["movieId"],
+        "properties": {
+          "movieId": { "type": "string", "minLength": 1 }
+        }
+      },
+      "HeartbeatRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence"],
+        "properties": {
+          "sequence": { "type": "integer", "format": "int64", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
