@@ -61,13 +61,13 @@ Create `docs/contracts/m1-openapi.json` with these operations. All `/api/v1` res
 | DELETE `/api/v1/playback/sessions/{id}` | CSRF | 204; idempotent stop for the owner |
 | GET/HEAD `/api/v1/playback/sessions/{id}/content?grant=…` | User cookie + signed URL; optional Range | Original MP4 bytes; 200/206/304/416 as applicable, never a transformed file |
 
-The table has eight operation groups; GET and HEAD content are distinct OpenAPI operations. All object schemas disallow unexpected input properties. Use 400 invalid input, 401 unauthenticated, 404 unknown/non-owned media/session, 409 changed source/idempotency conflict, 410 own expired playback, 429 rate/capacity exceeded, 503 source unavailable. Reuse one stable code enum: `invalid_request`, `unauthenticated`, `not_found`, `source_changed`, `playback_expired`, `capacity_unavailable`, `rate_limited`, `source_unavailable`, `internal_error`. CSRF rejection uses 403 `csrf_failed`. Do not echo paths, secrets or ffmpeg commands.
+The table has eight operation groups; GET and HEAD content are distinct OpenAPI operations. All object schemas disallow unexpected input properties. Use 400 invalid input, 401 unauthenticated, 404 unknown/non-owned media/session, 409 changed source (`source_changed`) or idempotency conflict (`idempotency_conflict`), 410 own expired playback, 429 rate/capacity exceeded, 503 source unavailable. Reuse one stable code enum: `invalid_request`, `unauthenticated`, `not_found`, `source_changed`, `idempotency_conflict`, `playback_expired`, `capacity_unavailable`, `rate_limited`, `source_unavailable`, `internal_error`. CSRF rejection uses 403 `csrf_failed`. Do not echo paths, secrets or ffmpeg commands.
 
 | Public type | Exact fields / units |
 |---|---|
 | `Viewer` | `accountId`, `profileId`, `username`: strings |
 | `AuthState` | `authenticated`: boolean; `viewer`: Viewer or null; `csrfToken`: string |
-| `Movie` | `id`, `sourceRevision`, `title`: strings; `durationMs`: positive int64; `container:"mp4"`, `videoCodec:"h264"`; `width:1920`, `height:1080`; `audioCodec`: nonempty string |
+| `Movie` | `id`, `sourceRevision`, `title`: strings; `durationMs`: positive int64; `container:"mp4"`, `videoCodec:"h264"`; `width`: integer 1–1920, `height`: integer 1–1080 (actual encoded size; cropped 1080p sources are valid); `audioCodec`: nonempty string |
 | `PlaybackSession` | `id`, `movieId`, `sourceRevision`, `contentUrl`: strings; `route:"direct"`; `heartbeatIntervalSeconds:10`, `idleTimeoutSeconds:60` |
 | `APIError` | `code`, `message`, `requestId`: strings; safe bounded text |
 

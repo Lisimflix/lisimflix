@@ -16,8 +16,12 @@ func WithPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, p)
 }
 
-// PrincipalFrom reports false when no authenticated caller is attached.
+// PrincipalFrom reports false when no authenticated caller is attached, or when
+// any ID is empty, so a zero Principal never reads as authenticated.
 func PrincipalFrom(ctx context.Context) (Principal, bool) {
 	p, ok := ctx.Value(principalKey{}).(Principal)
-	return p, ok
+	if !ok || p.AccountID == "" || p.ProfileID == "" || p.AuthSessionID == "" {
+		return Principal{}, false
+	}
+	return p, true
 }

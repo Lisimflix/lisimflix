@@ -198,3 +198,58 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestEmptyMovieListEncodesItemsAsArray(t *testing.T) {
+	for _, l := range []MovieList{{}, {Items: []Movie{}}} {
+		b, err := json.Marshal(l)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(b) != `{"items":[],"nextCursor":null}` {
+			t.Fatalf("empty list encoded as %s", b)
+		}
+	}
+}
+
+func TestPrincipalWithEmptyIDIsUnauthenticated(t *testing.T) {
+	full := Principal{AccountID: "acct-1", ProfileID: "prof-1", AuthSessionID: "auth-1"}
+	cases := map[string]Principal{"zero": {}}
+	for _, field := range []string{"AccountID", "ProfileID", "AuthSessionID"} {
+		p := full
+		reflect.ValueOf(&p).Elem().FieldByName(field).SetString("")
+		cases["empty "+field] = p
+	}
+	for name, p := range cases {
+		if got, ok := PrincipalFrom(WithPrincipal(context.Background(), p)); ok {
+			t.Errorf("%s: reported principal %+v", name, got)
+		}
+	}
+}
+
+func TestErrorCodesMatchOpenAPI(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "m1-openapi.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Components struct {
+			Schemas struct {
+				APIError struct {
+					Properties struct {
+						Code struct {
+							Enum []string `json:"enum"`
+						} `json:"code"`
+					} `json:"properties"`
+				} `json:"APIError"`
+			} `json:"schemas"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	got := slices.Sorted(slices.Values(errorCodes))
+	want := slices.Sorted(slices.Values(doc.Components.Schemas.APIError.Properties.Code.Enum))
+	if !slices.Equal(got, want) {
+		t.Fatalf("go codes %v, openapi enum %v", got, want)
+	}
+}

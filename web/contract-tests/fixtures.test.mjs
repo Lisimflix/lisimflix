@@ -27,6 +27,16 @@ for (const [file, schema] of Object.entries(fixtures)) {
   });
 }
 
+test("accepts a cropped 1080p movie at its actual size", () => {
+  const data = readJSON("../../testdata/contracts/m1/movies.json");
+  data.items[0].height = 800;
+  assert.ok(ajv.getSchema("m1#/components/schemas/MovieList")(data));
+});
+
+test("accepts an empty movie list", () => {
+  assert.ok(ajv.getSchema("m1#/components/schemas/MovieList")({ items: [], nextCursor: null }));
+});
+
 const invalidFixtures = [
   ["transcoded route", "playback.json", (data) => { data.route = "transcode"; }],
   ["external content URL", "playback.json", (data) => { data.contentUrl = "https://example.invalid/private"; }],
@@ -36,6 +46,9 @@ const invalidFixtures = [
   ["unexpected field", "playback.json", (data) => { data.sourcePath = "/synthetic/movie.mp4"; }],
   ["zero duration", "movies.json", (data) => { data.items[0].durationMs = 0; }],
   ["fractional duration", "movies.json", (data) => { data.items[0].durationMs = 1.5; }],
+  ["width above 1080p", "movies.json", (data) => { data.items[0].width = 2560; }],
+  ["height above 1080p", "movies.json", (data) => { data.items[0].height = 1440; }],
+  ["zero height", "movies.json", (data) => { data.items[0].height = 0; }],
 ];
 
 for (const [name, file, mutate] of invalidFixtures) {

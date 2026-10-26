@@ -3,6 +3,8 @@
 // truth; TestOpenAPIMatchesGoTypes keeps these structs in step with it.
 package contracts
 
+import "encoding/json"
+
 type Viewer struct {
 	AccountID string `json:"accountId"`
 	ProfileID string `json:"profileId"`
@@ -30,6 +32,15 @@ type Movie struct {
 type MovieList struct {
 	Items      []Movie `json:"items"`
 	NextCursor *string `json:"nextCursor"`
+}
+
+// MarshalJSON encodes nil Items as [] because the contract requires an array.
+func (l MovieList) MarshalJSON() ([]byte, error) {
+	type plain MovieList
+	if l.Items == nil {
+		l.Items = []Movie{}
+	}
+	return json.Marshal(plain(l))
 }
 
 type PlaybackSession struct {

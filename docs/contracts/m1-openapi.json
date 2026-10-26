@@ -184,7 +184,7 @@
     },
     "responses": {
       "Error": {
-        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency conflict (invalid_request), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
+        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body; retry with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } }
       }
     },
@@ -220,8 +220,8 @@
           "durationMs": { "type": "integer", "format": "int64", "minimum": 1 },
           "container": { "type": "string", "enum": ["mp4"] },
           "videoCodec": { "type": "string", "enum": ["h264"] },
-          "width": { "type": "integer", "enum": [1920] },
-          "height": { "type": "integer", "enum": [1080] },
+          "width": { "type": "integer", "minimum": 1, "maximum": 1920 },
+          "height": { "type": "integer", "minimum": 1, "maximum": 1080 },
           "audioCodec": { "type": "string", "minLength": 1 }
         }
       },
@@ -255,7 +255,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "enum": ["invalid_request", "unauthenticated", "csrf_failed", "not_found", "source_changed", "playback_expired", "capacity_unavailable", "rate_limited", "source_unavailable", "internal_error"]
+            "enum": ["invalid_request", "unauthenticated", "csrf_failed", "not_found", "source_changed", "idempotency_conflict", "playback_expired", "capacity_unavailable", "rate_limited", "source_unavailable", "internal_error"]
           },
           "message": { "type": "string", "maxLength": 256 },
           "requestId": { "type": "string", "minLength": 1 }

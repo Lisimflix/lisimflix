@@ -13,6 +13,7 @@ const (
 	CodeCSRFFailed          = "csrf_failed"
 	CodeNotFound            = "not_found"
 	CodeSourceChanged       = "source_changed"
+	CodeIdempotencyConflict = "idempotency_conflict"
 	CodePlaybackExpired     = "playback_expired"
 	CodeCapacityUnavailable = "capacity_unavailable"
 	CodeRateLimited         = "rate_limited"
@@ -20,11 +21,21 @@ const (
 	CodeInternalError       = "internal_error"
 )
 
-var knownCodes = map[string]bool{
-	CodeInvalidRequest: true, CodeUnauthenticated: true, CodeCSRFFailed: true, CodeNotFound: true,
-	CodeSourceChanged: true, CodePlaybackExpired: true, CodeCapacityUnavailable: true,
-	CodeRateLimited: true, CodeSourceUnavailable: true, CodeInternalError: true,
+// errorCodes is the single Go list of codes; TestErrorCodesMatchOpenAPI checks it
+// against the APIError.code enum.
+var errorCodes = []string{
+	CodeInvalidRequest, CodeUnauthenticated, CodeCSRFFailed, CodeNotFound, CodeSourceChanged,
+	CodeIdempotencyConflict, CodePlaybackExpired, CodeCapacityUnavailable, CodeRateLimited,
+	CodeSourceUnavailable, CodeInternalError,
 }
+
+var knownCodes = func() map[string]bool {
+	m := make(map[string]bool, len(errorCodes))
+	for _, c := range errorCodes {
+		m[c] = true
+	}
+	return m
+}()
 
 const maxMessageBytes = 256
 

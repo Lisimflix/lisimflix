@@ -32,7 +32,7 @@ Use the module signatures verbatim. Composition is: load config → open `os.Roo
 
 `lisimflix init --config PATH --origin URL --media-root PATH --movie RELATIVE_PATH --probe-json PATH --username NAME` is owner-only provisioning for this proof. It prompts twice for a password using `x/term`, never accepts/logs a plaintext password argument, generates stable IDs/CSRF key, validates the source and probe record and refuses config overwrite. `serve --config PATH` runs the app. `healthcheck` checks loopback readiness with a bounded HTTP deadline and exits nonzero on failure. Full browser admin setup/user management remains separate G1 work, so this CLI proof does not claim the finished out-of-box setup UX.
 
-The probe record is owner-generated ffprobe JSON, outside Git, with the source mounted read-only. Validate MP4/H.264/1920×1080/SDR, compatible audio and positive duration before writing config; reject absent/ambiguous streams or invalid data rather than labelling it qualified. Use `playback.Revision(movieID, fileInfo)` for the configured revision. Record complete-file SHA-256 separately for acceptance; do not load an entire movie into memory.
+The probe record is owner-generated ffprobe JSON, outside Git, with the source mounted read-only. Validate MP4/H.264/SDR at width ≤1920 and height ≤1080 (record the actual dimensions), compatible audio and positive duration before writing config; reject absent/ambiguous streams or invalid data rather than labelling it qualified. Use `playback.Revision(movieID, fileInfo)` for the configured revision. Record complete-file SHA-256 separately for acceptance; do not load an entire movie into memory.
 
 ## Task 1: Compose the executable and non-root container
 

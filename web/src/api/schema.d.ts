@@ -165,10 +165,8 @@ export interface components {
             container: "mp4";
             /** @enum {string} */
             videoCodec: "h264";
-            /** @enum {integer} */
-            width: 1920;
-            /** @enum {integer} */
-            height: 1080;
+            width: number;
+            height: number;
             audioCodec: string;
         };
         MovieList: {
@@ -191,7 +189,7 @@ export interface components {
         };
         APIError: {
             /** @enum {string} */
-            code: "invalid_request" | "unauthenticated" | "csrf_failed" | "not_found" | "source_changed" | "playback_expired" | "capacity_unavailable" | "rate_limited" | "source_unavailable" | "internal_error";
+            code: "invalid_request" | "unauthenticated" | "csrf_failed" | "not_found" | "source_changed" | "idempotency_conflict" | "playback_expired" | "capacity_unavailable" | "rate_limited" | "source_unavailable" | "internal_error";
             message: string;
             requestId: string;
         };
@@ -208,7 +206,7 @@ export interface components {
         };
     };
     responses: {
-        /** @description Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency conflict (invalid_request), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable. */
+        /** @description Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body; retry with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable. */
         Error: {
             headers: {
                 [name: string]: unknown;
