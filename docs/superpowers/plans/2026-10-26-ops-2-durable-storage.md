@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Draft for review, revision 2 (addresses @lisim's review on #14). Claimed by @Lammy93 in
+**Status:** Draft for review, revision 3 (addresses @lisim's reviews on #14). Claimed by @Lammy93 in
 #11; reviewer @lisim. Not implemented. Every code block below was compiled and passed its tests
 (`go vet`, `go test -race`, `CGO_ENABLED=0` build) in a scratch module on Go 1.27.3 before this
 plan was written. That is evidence for the plan, not module acceptance.
@@ -37,6 +37,9 @@ acceptance BASE-03, OPS-01 (G1 storage part), PERF-07 inputs.
 - Network filesystems are refused: NFS, SMB/CIFS, 9p, Ceph. FUSE is allowed, because it also
   covers local tools such as Unraid's `/mnt/user`.
 - The nightly hour is in the container's time zone (`TZ`, UTC if unset).
+- A pre-upgrade snapshot is reused only if it has the same schema **and** is under 1 hour old
+  (`ReuseWindow`). This collapses a crash loop to one snapshot, while a later upgrade always gets a
+  fresh one.
 - Nightly snapshots keep the last **7**. Failed or partial snapshots never displace a usable one.
   Backups are stale after **26 hours** without success (spec §11.3).
 - Standalone check: `go -C server test ./internal/storage/...`. No server, container, auth or media
@@ -104,6 +107,7 @@ var ErrInvalidSnapshot error
 func Restore(ctx context.Context, o RestoreOptions) (preRestore string, err error)
 
 // backup.go
+const ReuseWindow = time.Hour // a same-schema pre-upgrade snapshot younger than this is reused
 func (d *DB) MigrateWithBackup(ctx context.Context, srcs []Source, o SnapshotOptions, now func() time.Time) ([]string, error)
 func NextRun(now time.Time, hour int) time.Time
 type Nightly struct{ DB *DB; Opts SnapshotOptions; Hour int; Now func() time.Time; After func(time.Duration) <-chan time.Time; Log *slog.Logger } // zero fields default: 3, time.Now, time.After, slog.Default()
@@ -1455,7 +1459,7 @@ git commit -m "feat(platform): validated restore with pre-restore snapshot"
 
 **Interfaces:**
 - Consumes: `Pending`, `Applied`, `Migrate` (Task 1); `Snapshot`, `Prune`, `Latest` (Task 2).
-- Produces: `MigrateWithBackup` (what OPS-1 calls at startup), `NextRun`, `Nightly` (`RunOnce`, `Run`).
+- Produces: `MigrateWithBackup` (what OPS-1 calls at startup), `ReuseWindow`, `NextRun`, `Nightly` (`RunOnce`, `Run`).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1518,6 +1522,42 @@ func TestFailingUpgradeCrashLoopReusesOneSnapshot(t *testing.T) {
 	}
 }
 
+// After a failed upgrade, a rollback and a month of use, the next upgrade must
+// take a fresh snapshot: same schema doesn't mean same data.
+func TestRollbackThenUpgradeTakesFreshSnapshot(t *testing.T) {
+	ctx := context.Background()
+	d, path := openTemp(t)
+	dir := filepath.Join(filepath.Dir(path), "backups")
+	o := SnapshotOptions{Dir: dir, AppVersion: "test"}
+	if _, err := d.MigrateWithBackup(ctx, []Source{Core()}, o, fixedNow); err != nil {
+		t.Fatal(err)
+	}
+	broken := []Source{Core(), src("library", map[string]string{"20261027000000_library_bad.sql": `NOT SQL;`})}
+	if _, err := d.MigrateWithBackup(ctx, broken, o, fixedNow); err == nil {
+		t.Fatal("broken migration succeeded")
+	}
+	if err := d.SetSetting(ctx, "after", "month-of-data", fixedNow()); err != nil {
+		t.Fatal(err)
+	}
+	later := func() time.Time { return fixedNow().Add(30 * 24 * time.Hour) }
+	good := []Source{Core(), src("library", map[string]string{"20261127000000_library_ok.sql": `CREATE TABLE x (a TEXT) STRICT;`})}
+	if _, err := d.MigrateWithBackup(ctx, good, o, later); err != nil {
+		t.Fatal(err)
+	}
+	m, found, err := latest(dir, "pre-upgrade")
+	if err != nil || !found || !m.CreatedAt.Equal(later()) {
+		t.Fatalf("day-31 upgrade reused the snapshot from %v (%v)", m.CreatedAt, err)
+	}
+	snap, err := Open(ctx, filepath.Join(dir, "20261125T030000Z-pre-upgrade", "lisimflix.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snap.Close()
+	if v, _, _ := snap.GetSetting(ctx, "after"); v != "month-of-data" {
+		t.Fatalf("fresh pre-upgrade snapshot is missing recent data: %q", v)
+	}
+}
+
 func TestNextRunAndNightlyOnce(t *testing.T) {
 	loc := time.FixedZone("AEST", 10*3600)
 	if got := NextRun(time.Date(2026, 10, 26, 2, 30, 0, 0, loc), 3); !got.Equal(time.Date(2026, 10, 26, 3, 0, 0, 0, loc)) {
@@ -1560,11 +1600,16 @@ import (
 	"time"
 )
 
+// ReuseWindow is how recent a same-schema pre-upgrade snapshot must be to be
+// reused instead of taking a new one. It covers a crash loop (minutes), not a
+// later upgrade after a rollback, whose data may have changed since.
+const ReuseWindow = time.Hour
+
 // MigrateWithBackup takes a verified "pre-upgrade" snapshot before applying
 // pending migrations to an existing database (spec §11.4). A brand-new
-// database is migrated without one. If the newest pre-upgrade snapshot already
-// has this database's schema, it is reused, so a container restarting on a
-// failing migration doesn't write a new copy on every start.
+// database is migrated without one. If the newest pre-upgrade snapshot has this
+// database's schema and is younger than ReuseWindow, it is reused, so a
+// container restarting on a failing migration doesn't write a copy every start.
 func (d *DB) MigrateWithBackup(ctx context.Context, srcs []Source, o SnapshotOptions, now func() time.Time) ([]string, error) {
 	pending, err := d.Pending(ctx, srcs)
 	if err != nil || len(pending) == 0 {
@@ -1579,8 +1624,9 @@ func (d *DB) MigrateWithBackup(ctx context.Context, srcs []Source, o SnapshotOpt
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			return nil, err
 		}
-		if !found || !slices.Equal(prev.Schema, applied) {
-			o.Reason, o.Now = "pre-upgrade", now()
+		t := now()
+		if !found || !slices.Equal(prev.Schema, applied) || t.Sub(prev.CreatedAt) >= ReuseWindow {
+			o.Reason, o.Now = "pre-upgrade", t
 			if _, _, err := d.Snapshot(ctx, o); err != nil {
 				return nil, fmt.Errorf("storage: pre-upgrade snapshot: %w", err)
 			}
@@ -1665,8 +1711,9 @@ func (n *Nightly) Run(ctx context.Context) {
 - [ ] **Step 4: Run the full package and the repository check**
 
 Run: `go -C server test -race ./internal/storage/... && CGO_ENABLED=0 go -C server build ./... && make check`
-Expected: all 15 storage tests pass, including 10 failing restarts leaving exactly one pre-upgrade
-snapshot. The static build succeeds and `make check` passes.
+Expected: all 16 storage tests pass, including 10 failing restarts leaving exactly one pre-upgrade
+snapshot, and a rollback followed by an upgrade a month later taking a fresh snapshot that contains
+the month's data. The static build succeeds and `make check` passes.
 
 - [ ] **Step 5: Commit and open the PR**
 
