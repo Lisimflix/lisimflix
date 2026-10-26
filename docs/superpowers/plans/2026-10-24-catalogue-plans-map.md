@@ -61,6 +61,21 @@ in the history of branch `docs/phase1-plans`) is a candidate starting point for 
    template's Source names the feature ID and acceptance IDs. The author squash-merges after
    review. Agents never merge.
 
+## How these plans reach `main` (procedure)
+
+- **Not as one PR.** About 38k lines of plans would break "one feature slice or spec part per
+  PR keeps reviews small". Publish each plan in its own `docs/` PR when someone is ready to
+  claim it, after updating it through the planning gate. Map file first, then one PR per plan.
+- **Claim first.** Open or claim the feature's issue (area labels from the §9.4 table), record
+  feature ID, reviewer, file scope, consumed/produced contracts and dependencies, then
+  assign yourself before editing the plan for execution.
+- **Respect active scopes.** Don't edit files in another person's open PR or assigned issue,
+  e.g. CTR-1 (#7/#8) owns `.gitignore`, `Makefile`, `server/go.mod`, `web/`, `.github/` for now.
+  Don't edit Pete's M1 plans or the spec. Open an issue instead.
+- **Decisions and hand-offs go in issues/PR comments**, not only in chat (e.g. D06 and D07 in
+  spec §14, and the gaps below).
+- Docs-only PRs may skip local `make check`. Actions still run on the PR.
+
 ## Known gaps against the revised spec
 
 - **ACC-1:** admin-created **local username/password users** (spec §6.1, D07). The accounts plan
