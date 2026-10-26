@@ -79,7 +79,7 @@ Create `server/internal/contracts/types.go`, `context.go`, `errors.go` and tests
 type Principal struct { AccountID, ProfileID, AuthSessionID string }
 func WithPrincipal(context.Context, Principal) context.Context
 func PrincipalFrom(context.Context) (Principal, bool)
-func WriteError(http.ResponseWriter, *http.Request, int, string, string)
+func WriteError(http.ResponseWriter, *http.Request, string, string) // status derived from code
 ```
 
 `WriteError` supplies a non-secret request ID if no middleware ID exists, emits JSON once and never serialises arbitrary errors. Public response types are separate from internal principals/source configuration. Integer `sequence` is nonnegative and bounded to int64.

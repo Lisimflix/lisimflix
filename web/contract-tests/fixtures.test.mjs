@@ -46,6 +46,8 @@ const invalidFixtures = [
   ["unexpected field", "playback.json", (data) => { data.sourcePath = "/synthetic/movie.mp4"; }],
   ["zero duration", "movies.json", (data) => { data.items[0].durationMs = 0; }],
   ["fractional duration", "movies.json", (data) => { data.items[0].durationMs = 1.5; }],
+  ["authenticated without viewer", "authenticated.json", (data) => { data.viewer = null; }],
+  ["anonymous with viewer", "anonymous.json", (data) => { data.viewer = readJSON("../../testdata/contracts/m1/authenticated.json").viewer; }],
   ["width above 1080p", "movies.json", (data) => { data.items[0].width = 2560; }],
   ["height above 1080p", "movies.json", (data) => { data.items[0].height = 1440; }],
   ["zero height", "movies.json", (data) => { data.items[0].height = 0; }],

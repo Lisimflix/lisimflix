@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -97,7 +98,7 @@ func TestPrincipalAbsentIsUnauthenticated(t *testing.T) {
 func TestErrorResponseDoesNotExposeSourcePath(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/playback/sessions/p/content?grant=secret-grant&path=/media/movies/secret.mp4", nil)
 	w := httptest.NewRecorder()
-	WriteError(w, r, http.StatusNotFound, CodeNotFound, "Movie not found.")
+	WriteError(w, r, CodeNotFound, "Movie not found.")
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status %d", w.Code)
@@ -127,7 +128,7 @@ func TestErrorResponseDoesNotExposeSourcePath(t *testing.T) {
 func TestWriteErrorKeepsMiddlewareRequestID(t *testing.T) {
 	w := httptest.NewRecorder()
 	w.Header().Set("X-Request-Id", "req-from-middleware")
-	WriteError(w, httptest.NewRequest(http.MethodGet, "/", nil), http.StatusBadRequest, CodeInvalidRequest, "Bad input.")
+	WriteError(w, httptest.NewRequest(http.MethodGet, "/", nil), CodeInvalidRequest, "Bad input.")
 	var e APIError
 	decodeStrict(t, w.Body.Bytes(), &e)
 	if e.RequestID != "req-from-middleware" {
@@ -137,7 +138,7 @@ func TestWriteErrorKeepsMiddlewareRequestID(t *testing.T) {
 
 func TestWriteErrorRejectsUnknownCodeAndLongMessage(t *testing.T) {
 	w := httptest.NewRecorder()
-	WriteError(w, httptest.NewRequest(http.MethodGet, "/", nil), http.StatusTeapot, "open /media/x: permission denied", strings.Repeat("x", 1000))
+	WriteError(w, httptest.NewRequest(http.MethodGet, "/", nil), "open /media/x: permission denied", strings.Repeat("x", 1000))
 	var e APIError
 	decodeStrict(t, w.Body.Bytes(), &e)
 	if e.Code != CodeInternalError || w.Code != http.StatusInternalServerError {
@@ -149,7 +150,8 @@ func TestWriteErrorRejectsUnknownCodeAndLongMessage(t *testing.T) {
 }
 
 // TestOpenAPIMatchesGoTypes keeps the Go types and the OpenAPI contract (and so
-// the generated TypeScript types) on the same field names and required set.
+// the generated TypeScript types) on the same field names and required set. It
+// does not compare field types or nullability.
 func TestOpenAPIMatchesGoTypes(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "m1-openapi.json"))
 	if err != nil {
@@ -247,9 +249,21 @@ func TestErrorCodesMatchOpenAPI(t *testing.T) {
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatal(err)
 	}
-	got := slices.Sorted(slices.Values(errorCodes))
+	got := slices.Sorted(maps.Keys(codeStatus))
 	want := slices.Sorted(slices.Values(doc.Components.Schemas.APIError.Properties.Code.Enum))
 	if !slices.Equal(got, want) {
 		t.Fatalf("go codes %v, openapi enum %v", got, want)
+	}
+}
+
+func TestWriteErrorSendsCodeStatus(t *testing.T) {
+	for code, status := range codeStatus {
+		w := httptest.NewRecorder()
+		WriteError(w, httptest.NewRequest(http.MethodGet, "/", nil), code, "Safe message.")
+		var e APIError
+		decodeStrict(t, w.Body.Bytes(), &e)
+		if w.Code != status || e.Code != code {
+			t.Errorf("%s: got %d %q, want %d", code, w.Code, e.Code, status)
+		}
 	}
 }

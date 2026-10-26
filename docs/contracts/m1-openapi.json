@@ -207,7 +207,10 @@
           "authenticated": { "type": "boolean" },
           "viewer": { "oneOf": [{ "$ref": "#/components/schemas/Viewer" }, { "type": "null" }] },
           "csrfToken": { "type": "string", "minLength": 1 }
-        }
+        },
+        "if": { "properties": { "authenticated": { "const": true } } },
+        "then": { "properties": { "viewer": { "$ref": "#/components/schemas/Viewer" } } },
+        "else": { "properties": { "viewer": { "type": "null" } } }
       },
       "Movie": {
         "type": "object",
