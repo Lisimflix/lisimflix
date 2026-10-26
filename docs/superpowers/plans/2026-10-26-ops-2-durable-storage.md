@@ -2,10 +2,10 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Draft for review. Claimed by @Lammy93 in #11; reviewer @lisim. Not implemented. Every code
-block below was compiled and passed its tests (`go vet`, `go test -race`, `CGO_ENABLED=0` build)
-in a scratch module on Go 1.27.3 before this plan was written. That is evidence for the plan, not
-module acceptance.
+**Status:** Draft for review, revision 2 (addresses @lisim's review on #14). Claimed by @Lammy93 in
+#11; reviewer @lisim. Not implemented. Every code block below was compiled and passed its tests
+(`go vet`, `go test -race`, `CGO_ENABLED=0` build) in a scratch module on Go 1.27.3 before this
+plan was written. That is evidence for the plan, not module acceptance.
 **Goal:** Give every module one SQLite database that opens safely, migrates durably, stores settings,
 and can be snapshotted and restored consistently.
 **Architecture:** One package, `server/internal/storage`, wraps `database/sql` with the pure-Go
@@ -27,10 +27,16 @@ acceptance BASE-03, OPS-01 (G1 storage part), PERF-07 inputs.
 - Migrations: one `Source` per module, file names `YYYYMMDDHHMMSS_<module>_<what>.sql` (UTC), the
   module prefix must match its `Source`, and timestamps are unique across all modules. A merged
   migration is never edited: the runner records a SHA-256 and refuses an edited file.
+- Every migration runs in a transaction with `foreign_keys` on, so `PRAGMA foreign_keys=OFF` inside a
+  migration does nothing. For a table rebuild (SQLite's 12-step procedure), start with
+  `PRAGMA defer_foreign_keys=ON;` and end with `PRAGMA foreign_key_check;`.
 - Startup refuses a database with migrations this binary doesn't know (`ErrSchemaTooNew`); recovery
   is restoring a compatible snapshot with a compatible image (spec §11.4). No binary downgrades.
-- Snapshot directories and files are mode 0700/0600. They can contain secrets (settings,
-  `/config/m1.json`): never log their contents.
+- The live database (and so its `-wal`/`-shm`), snapshot directories and snapshot files are mode
+  0600/0700. They can contain secrets (settings, `/config/m1.json`): never log their contents.
+- Network filesystems are refused: NFS, SMB/CIFS, 9p, Ceph. FUSE is allowed, because it also
+  covers local tools such as Unraid's `/mnt/user`.
+- The nightly hour is in the container's time zone (`TZ`, UTC if unset).
 - Nightly snapshots keep the last **7**. Failed or partial snapshots never displace a usable one.
   Backups are stale after **26 hours** without success (spec §11.3).
 - Standalone check: `go -C server test ./internal/storage/...`. No server, container, auth or media
@@ -43,7 +49,7 @@ acceptance BASE-03, OPS-01 (G1 storage part), PERF-07 inputs.
 | Kind | Dependency | Why |
 |---|---|---|
 | Start | CTR-1 (#8) merged | Gives `server/go.mod` and `make check`; storage needs nothing else from it |
-| Shared-file edit | `server/go.mod`/`go.sum` + `modernc.org/sqlite v1.60.1` | Sequenced with OPS-1's dependency edit so the manifests aren't edited in parallel (spec §8.3) |
+| Shared-file edit | `server/go.mod`/`go.sum` + `modernc.org/sqlite v1.60.1` | After CTR-1; whichever of OPS-1/OPS-2 lands first (agreed in #14). If this is the first dependency, the same PR switches `cache-dependency-path` in `.github/workflows/check.yml` to `server/go.sum` |
 | Integration | OPS-1 runtime | Calls `Open` + `MigrateWithBackup` at startup and reports readiness; restore runs while serving is stopped |
 | Integration | ACC-1, LIB-2, META-1, DATA-1 | First modules to register a `Source` |
 | Integration | UI-6 / OPS-5 | Admin backup/restore actions and backup freshness on screen |
@@ -93,14 +99,14 @@ func Latest(dir string) (Manifest, bool, error)
 func Stale(latest Manifest, found bool, now time.Time) bool
 
 // restore.go
-type RestoreOptions struct{ SnapshotDir, DBPath, ConfigDir, BackupsDir string; Known []Source; AppVersion string; Now time.Time }
+type RestoreOptions struct{ SnapshotDir, DBPath, ConfigDir, BackupsDir string; ExtraFiles []string; Known []Source; AppVersion string; Now time.Time }
 var ErrInvalidSnapshot error
 func Restore(ctx context.Context, o RestoreOptions) (preRestore string, err error)
 
 // backup.go
 func (d *DB) MigrateWithBackup(ctx context.Context, srcs []Source, o SnapshotOptions, now func() time.Time) ([]string, error)
 func NextRun(now time.Time, hour int) time.Time
-type Nightly struct{ DB *DB; Opts SnapshotOptions; Hour int; Now func() time.Time; After func(time.Duration) <-chan time.Time; Log *slog.Logger }
+type Nightly struct{ DB *DB; Opts SnapshotOptions; Hour int; Now func() time.Time; After func(time.Duration) <-chan time.Time; Log *slog.Logger } // zero fields default: 3, time.Now, time.After, slog.Default()
 func (n *Nightly) RunOnce(ctx context.Context) error
 func (n *Nightly) Run(ctx context.Context)
 ```
@@ -110,7 +116,8 @@ func (n *Nightly) Run(ctx context.Context)
 ### Task 1: Open the database and migrate durably (BASE-03)
 
 **Files:**
-- Modify (coordinated shared-file edit): `server/go.mod`, `server/go.sum`
+- Modify (coordinated shared-file edit): `server/go.mod`, `server/go.sum`; `.github/workflows/check.yml`
+  only if this is the first PR to add a dependency
 - Create: `server/internal/storage/open.go`, `fs_linux.go`, `fs_other.go`, `migrate.go`, `settings.go`,
   `migrations/20261026000000_storage_settings.sql`
 - Test: `server/internal/storage/migrate_test.go`
@@ -126,6 +133,9 @@ func (n *Nightly) Run(ctx context.Context)
 git switch main && git pull && git switch -c feat/ops-2-storage
 go -C server get modernc.org/sqlite@v1.60.1
 ```
+If `server/go.sum` didn't exist before this step, this is the first dependency: in
+`.github/workflows/check.yml`, set `cache-dependency-path: server/go.sum` and delete the
+`shortcut:` comment above it.
 
 - [ ] **Step 2: Write the failing tests**
 
@@ -314,6 +324,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"os"
 
 	_ "modernc.org/sqlite"
 )
@@ -333,6 +344,11 @@ var ErrNetworkFilesystem = errors.New("storage: database must be on local disk, 
 func Open(ctx context.Context, path string) (*DB, error) {
 	if err := checkLocalFilesystem(path); err != nil {
 		return nil, err
+	}
+	// Create the file 0600 before SQLite does: it holds settings and secrets,
+	// and SQLite gives -wal/-shm files the database file's mode.
+	if err := ensurePrivateFile(path); err != nil {
+		return nil, fmt.Errorf("storage: open: %w", err)
 	}
 	q := url.Values{}
 	for _, p := range []string{"journal_mode(WAL)", "foreign_keys(1)", "busy_timeout(5000)", "synchronous(NORMAL)"} {
@@ -355,6 +371,16 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	return &DB{DB: sdb, path: path}, nil
 }
 
+// ensurePrivateFile creates path with mode 0600, or tightens an existing file.
+func ensurePrivateFile(path string) error {
+	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	f.Close()
+	return os.Chmod(path, 0o600)
+}
+
 // Path is the database file path.
 func (d *DB) Path() string { return d.path }
 ```
@@ -372,11 +398,14 @@ import (
 )
 
 // Filesystem magic numbers from statfs(2) that must not hold a WAL database.
+// FUSE is allowed: it also covers local tools such as Unraid's /mnt/user.
 var networkFS = map[int64]string{
 	0x6969:     "nfs",
 	0x517b:     "smb",
 	0xff534d42: "cifs",
 	0xfe534d42: "smb2",
+	0x01021997: "9p",
+	0x00c36400: "ceph",
 }
 
 func checkLocalFilesystem(dbPath string) error {
@@ -670,7 +699,7 @@ Expected: `ok  .../internal/storage`. The 7 tests cover WAL/foreign keys, restar
 - [ ] **Step 6: Commit**
 
 ```bash
-git add server/go.mod server/go.sum server/internal/storage
+git add server/go.mod server/go.sum server/internal/storage .github/workflows/check.yml
 git commit -m "feat(platform): SQLite storage with module migrations and settings"
 ```
 
@@ -685,7 +714,8 @@ git commit -m "feat(platform): SQLite storage with module migrations and setting
 **Interfaces:**
 - Consumes: `Open`, `Applied`, `Migrate`, `Core`, `SetSetting` (Task 1); test helpers `openTemp`, `fixedNow` (Task 1 test file).
 - Produces: `Manifest`, `ManifestFile`, `SnapshotOptions`, `Snapshot`, `Keep`, `Prune`, `Latest`, `Stale`,
-  `StaleAfter`; unexported `describe`, `copyFile`, `syncDir`, `checkSnapshotDB`, `readManifest`, used by Tasks 3–4.
+  `StaleAfter`; unexported `ensurePrivateFile` (Task 1), `describe`, `copyFile`, `syncDir`, `checkSnapshotDB`,
+  `readManifest`, `latest(dir, reason)`, used by Tasks 3–4.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -739,6 +769,16 @@ func TestSnapshotIsConsistentAndChecksummed(t *testing.T) {
 	if st, _ := os.Stat(snap); st.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("snapshot dir mode %v", st.Mode())
 	}
+	// The live database, its WAL and every snapshot file hold secrets: 0600.
+	for _, p := range []string{path, path + "-wal", filepath.Join(snap, "lisimflix.db"), filepath.Join(snap, "m1.json"), filepath.Join(snap, "manifest.json")} {
+		st, err := os.Stat(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st.Mode().Perm() != 0o600 {
+			t.Errorf("%s mode %v, want 0600", filepath.Base(p), st.Mode().Perm())
+		}
+	}
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 1 {
 		t.Fatalf("staging left behind: %v", entries)
@@ -770,6 +810,9 @@ func TestPruneKeepsNewestPerReasonAndIgnoresBroken(t *testing.T) {
 	}
 	os.Mkdir(filepath.Join(dir, "20991231T000000Z-nightly"), 0o700) // no manifest: never counts
 	os.Mkdir(filepath.Join(dir, ".tmp-leftover"), 0o700)
+	future := filepath.Join(dir, "20200101T000000Z-weekly") // a reason from a newer version
+	os.Mkdir(future, 0o700)
+	os.WriteFile(filepath.Join(future, "manifest.json"), []byte(`{"format":1,"reason":"weekly","createdAt":"2020-01-01T00:00:00Z","newField":true}`), 0o600)
 	removed, err := Prune(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -779,6 +822,9 @@ func TestPruneKeepsNewestPerReasonAndIgnoresBroken(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".tmp-leftover")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("staging leftover not cleaned")
+	}
+	if _, err := os.Stat(future); err != nil {
+		t.Fatal("snapshot with an unknown reason was deleted")
 	}
 	latest, found, _ := Latest(dir)
 	if !found || !latest.CreatedAt.Equal(base.Add(8*24*time.Hour)) {
@@ -877,6 +923,10 @@ func (d *DB) Snapshot(ctx context.Context, o SnapshotOptions) (string, Manifest,
 	}()
 
 	dbCopy := filepath.Join(staging, snapshotDB)
+	// VACUUM INTO accepts an existing empty file, so create it 0600 first.
+	if err := ensurePrivateFile(dbCopy); err != nil {
+		return "", Manifest{}, fmt.Errorf("storage: snapshot: %w", err)
+	}
 	if _, err := d.ExecContext(ctx, `VACUUM INTO ?`, dbCopy); err != nil {
 		return "", Manifest{}, fmt.Errorf("storage: snapshot: %w", err)
 	}
@@ -1002,7 +1052,8 @@ var Keep = map[string]int{"nightly": 7, "pre-upgrade": 3, "pre-restore": 3, "man
 
 // Prune deletes the oldest completed snapshots beyond Keep for each reason.
 // Only directories with a readable manifest count, so a failed or partial
-// snapshot never displaces a usable one. Staging leftovers (.tmp-*) are removed.
+// snapshot never displaces a usable one. Reasons this version doesn't know are
+// kept. Staging leftovers (.tmp-*) are removed.
 func Prune(dir string) ([]string, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -1026,7 +1077,10 @@ func Prune(dir string) ([]string, error) {
 	var removed []string
 	for reason, names := range byReason {
 		sort.Strings(names) // names start with a UTC timestamp
-		keep := Keep[reason]
+		keep, known := Keep[reason]
+		if !known {
+			continue // written by a newer version: never delete it
+		}
 		for len(names) > keep {
 			if err := os.RemoveAll(filepath.Join(dir, names[0])); err != nil {
 				return removed, err
@@ -1041,7 +1095,10 @@ func Prune(dir string) ([]string, error) {
 
 // Latest returns the newest completed snapshot's manifest, for backup
 // freshness (warn after 26h without success, spec §11.3).
-func Latest(dir string) (Manifest, bool, error) {
+func Latest(dir string) (Manifest, bool, error) { return latest(dir, "") }
+
+// latest returns the newest completed snapshot, of reason if non-empty.
+func latest(dir, reason string) (Manifest, bool, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return Manifest{}, false, nil
@@ -1056,7 +1113,7 @@ func Latest(dir string) (Manifest, bool, error) {
 			continue
 		}
 		m, err := readManifest(filepath.Join(dir, e.Name()))
-		if err != nil {
+		if err != nil || (reason != "" && m.Reason != reason) {
 			continue
 		}
 		if !found || m.CreatedAt.After(best.CreatedAt) {
@@ -1073,9 +1130,9 @@ func readManifest(snapDir string) (Manifest, error) {
 	}
 	defer f.Close()
 	var m Manifest
-	dec := json.NewDecoder(io.LimitReader(f, maxManifest))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&m); err != nil {
+	// Unknown fields are ignored so a newer version's snapshots stay visible to
+	// Prune and Latest; Format guards incompatible layouts.
+	if err := json.NewDecoder(io.LimitReader(f, maxManifest)).Decode(&m); err != nil {
 		return Manifest{}, fmt.Errorf("storage: manifest: %w", err)
 	}
 	if m.Format != 1 {
@@ -1097,9 +1154,10 @@ func Stale(latest Manifest, found bool, now time.Time) bool {
 - [ ] **Step 4: Run the tests and confirm they pass**
 
 Run: `go -C server test -race ./internal/storage/...`
-Expected: PASS. Snapshot files match their manifest checksums, directories are 0700, a failed
-snapshot leaves nothing behind, `Prune` keeps the newest 7 nightly snapshots and ignores
-directories without a manifest, and `Stale` turns on after 26 hours.
+Expected: PASS. Snapshot files match their manifest checksums. The live database, its WAL and
+every snapshot file are 0600 and directories 0700. A failed snapshot leaves nothing behind.
+`Prune` keeps the newest 7 nightly snapshots, ignores directories without a manifest, and never
+deletes a reason it doesn't know. `Stale` turns on after 26 hours.
 
 - [ ] **Step 5: Commit**
 
@@ -1153,12 +1211,20 @@ func TestRestoreRoundTripWithPreRestoreSnapshot(t *testing.T) {
 	os.WriteFile(extra, []byte(`{"v":2}`), 0o600)
 	d.Close()
 
-	pre, err := Restore(ctx, RestoreOptions{SnapshotDir: snap, DBPath: path, ConfigDir: cfg, BackupsDir: dir, Known: srcs, Now: fixedNow().Add(time.Hour)})
+	pre, err := Restore(ctx, RestoreOptions{SnapshotDir: snap, DBPath: path, ConfigDir: cfg, BackupsDir: dir, ExtraFiles: []string{extra}, Known: srcs, Now: fixedNow().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.HasSuffix(pre, "-pre-restore") {
 		t.Fatalf("pre-restore snapshot %q", pre)
+	}
+	// The pre-restore snapshot keeps the config as it was just before restore.
+	pm, err := readManifest(pre)
+	if err != nil || len(pm.Files) != 2 {
+		t.Fatalf("pre-restore manifest %+v %v", pm, err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(pre, "m1.json")); string(b) != `{"v":2}` {
+		t.Fatalf("pre-restore m1.json %s", b)
 	}
 	r, err := Open(ctx, path)
 	if err != nil {
@@ -1254,6 +1320,7 @@ type RestoreOptions struct {
 	DBPath      string   // live database path, e.g. /config/lisimflix.db
 	ConfigDir   string   // where extra files are restored, e.g. /config
 	BackupsDir  string   // where the pre-restore snapshot goes
+	ExtraFiles  []string // current durable config files, kept in the pre-restore snapshot
 	Known       []Source // migrations this binary knows
 	AppVersion  string
 	Now         time.Time
@@ -1263,8 +1330,10 @@ type RestoreOptions struct {
 var ErrInvalidSnapshot = errors.New("storage: invalid snapshot")
 
 // Restore validates a snapshot, takes a pre-restore snapshot of the current
-// database, then atomically replaces it. On any validation failure the current
-// installation is left untouched. The caller revokes sessions afterwards.
+// database and config files, then atomically replaces the database. On any
+// validation failure the current installation is left untouched. Extra files
+// are replaced one by one after the database; if that fails part-way, restore
+// the pre-restore snapshot. The caller revokes sessions afterwards.
 func Restore(ctx context.Context, o RestoreOptions) (preRestore string, err error) {
 	m, err := readManifest(o.SnapshotDir)
 	if err != nil {
@@ -1320,7 +1389,7 @@ func Restore(ctx context.Context, o RestoreOptions) (preRestore string, err erro
 		if err != nil {
 			return "", fmt.Errorf("storage: open current for pre-restore snapshot: %w", err)
 		}
-		preRestore, _, err = cur.Snapshot(ctx, SnapshotOptions{Dir: o.BackupsDir, Reason: "pre-restore", AppVersion: o.AppVersion, Now: o.Now})
+		preRestore, _, err = cur.Snapshot(ctx, SnapshotOptions{Dir: o.BackupsDir, Reason: "pre-restore", AppVersion: o.AppVersion, ExtraFiles: existing(o.ExtraFiles), Now: o.Now})
 		cur.Close()
 		if err != nil {
 			return "", fmt.Errorf("storage: pre-restore snapshot: %w", err)
@@ -1348,14 +1417,26 @@ func Restore(ctx context.Context, o RestoreOptions) (preRestore string, err erro
 	}
 	return preRestore, syncDir(filepath.Dir(o.DBPath))
 }
+
+// existing drops paths that don't exist yet (e.g. a config file on a fresh install).
+func existing(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
 ```
 
 - [ ] **Step 4: Run the tests and confirm they pass**
 
 Run: `go -C server test -race ./internal/storage/...`
 Expected: PASS. A good snapshot restores the database and config files and leaves a
-`…-pre-restore` snapshot. A checksum mismatch, a `../` file name or a newer schema is rejected,
-and the current installation is unchanged.
+`…-pre-restore` snapshot containing the database **and** the config as it was before the restore.
+A checksum mismatch, a `../` file name or a newer schema is rejected, and the current installation
+is unchanged.
 
 - [ ] **Step 5: Commit**
 
@@ -1386,6 +1467,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -1413,6 +1495,29 @@ func TestMigrateWithBackupSnapshotsExistingDatabaseOnly(t *testing.T) {
 	}
 }
 
+// A container restarting on a failing migration must not write a new
+// pre-upgrade copy on every start.
+func TestFailingUpgradeCrashLoopReusesOneSnapshot(t *testing.T) {
+	ctx := context.Background()
+	d, path := openTemp(t)
+	dir := filepath.Join(filepath.Dir(path), "backups")
+	o := SnapshotOptions{Dir: dir, AppVersion: "test"}
+	if _, err := d.MigrateWithBackup(ctx, []Source{Core()}, o, fixedNow); err != nil {
+		t.Fatal(err)
+	}
+	broken := []Source{Core(), src("library", map[string]string{"20261027000000_library_bad.sql": `NOT SQL;`})}
+	for i := range 10 {
+		now := func() time.Time { return fixedNow().Add(time.Duration(i) * 10 * time.Second) }
+		if _, err := d.MigrateWithBackup(ctx, broken, o, now); err == nil {
+			t.Fatal("broken migration succeeded")
+		}
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Fatalf("want 1 pre-upgrade snapshot, got %d", len(entries))
+	}
+}
+
 func TestNextRunAndNightlyOnce(t *testing.T) {
 	loc := time.FixedZone("AEST", 10*3600)
 	if got := NextRun(time.Date(2026, 10, 26, 2, 30, 0, 0, loc), 3); !got.Equal(time.Date(2026, 10, 26, 3, 0, 0, 0, loc)) {
@@ -1422,7 +1527,8 @@ func TestNextRunAndNightlyOnce(t *testing.T) {
 		t.Fatalf("at hour: %v", got)
 	}
 	d, path, _ := seeded(t)
-	n := &Nightly{DB: d, Opts: SnapshotOptions{Dir: filepath.Join(filepath.Dir(path), "backups")}, Hour: 3, Now: fixedNow,
+	// After and Hour are left unset: the defaults (time.After, 3) apply.
+	n := &Nightly{DB: d, Opts: SnapshotOptions{Dir: filepath.Join(filepath.Dir(path), "backups")}, Now: fixedNow,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	if err := n.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -1446,14 +1552,19 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"slices"
 	"time"
 )
 
 // MigrateWithBackup takes a verified "pre-upgrade" snapshot before applying
 // pending migrations to an existing database (spec §11.4). A brand-new
-// database is migrated without one.
+// database is migrated without one. If the newest pre-upgrade snapshot already
+// has this database's schema, it is reused, so a container restarting on a
+// failing migration doesn't write a new copy on every start.
 func (d *DB) MigrateWithBackup(ctx context.Context, srcs []Source, o SnapshotOptions, now func() time.Time) ([]string, error) {
 	pending, err := d.Pending(ctx, srcs)
 	if err != nil || len(pending) == 0 {
@@ -1464,9 +1575,18 @@ func (d *DB) MigrateWithBackup(ctx context.Context, srcs []Source, o SnapshotOpt
 		return nil, err
 	}
 	if len(applied) > 0 {
-		o.Reason, o.Now = "pre-upgrade", now()
-		if _, _, err := d.Snapshot(ctx, o); err != nil {
-			return nil, fmt.Errorf("storage: pre-upgrade snapshot: %w", err)
+		prev, found, err := latest(o.Dir, "pre-upgrade")
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return nil, err
+		}
+		if !found || !slices.Equal(prev.Schema, applied) {
+			o.Reason, o.Now = "pre-upgrade", now()
+			if _, _, err := d.Snapshot(ctx, o); err != nil {
+				return nil, fmt.Errorf("storage: pre-upgrade snapshot: %w", err)
+			}
+			if _, err := Prune(o.Dir); err != nil {
+				return nil, fmt.Errorf("storage: prune: %w", err)
+			}
 		}
 	}
 	return d.Migrate(ctx, srcs, now)
@@ -1485,15 +1605,31 @@ func NextRun(now time.Time, hour int) time.Time {
 // and never prune a usable snapshot.
 type Nightly struct {
 	DB    *DB
-	Opts  SnapshotOptions // Dir, AppVersion, ExtraFiles; Reason and Now are set per run
-	Hour  int             // local hour, default 3
-	Now   func() time.Time
-	After func(time.Duration) <-chan time.Time
-	Log   *slog.Logger
+	Opts  SnapshotOptions                      // Dir, AppVersion, ExtraFiles; Reason and Now are set per run
+	Hour  int                                  // hour in the container's time zone (TZ; UTC if unset), default 3
+	Now   func() time.Time                     // default time.Now
+	After func(time.Duration) <-chan time.Time // default time.After
+	Log   *slog.Logger                         // default slog.Default()
+}
+
+func (n *Nightly) defaults() {
+	if n.Hour == 0 {
+		n.Hour = 3
+	}
+	if n.Now == nil {
+		n.Now = time.Now
+	}
+	if n.After == nil {
+		n.After = time.After
+	}
+	if n.Log == nil {
+		n.Log = slog.Default()
+	}
 }
 
 // RunOnce takes a nightly snapshot, then prunes.
 func (n *Nightly) RunOnce(ctx context.Context) error {
+	n.defaults()
 	o := n.Opts
 	o.Reason, o.Now = "nightly", n.Now()
 	path, _, err := n.DB.Snapshot(ctx, o)
@@ -1510,8 +1646,10 @@ func (n *Nightly) RunOnce(ctx context.Context) error {
 
 // Run loops until ctx is cancelled.
 func (n *Nightly) Run(ctx context.Context) {
+	n.defaults()
 	for {
-		wait := NextRun(n.Now(), n.Hour).Sub(n.Now())
+		now := n.Now()
+		wait := NextRun(now, n.Hour).Sub(now)
 		select {
 		case <-ctx.Done():
 			return
@@ -1527,7 +1665,8 @@ func (n *Nightly) Run(ctx context.Context) {
 - [ ] **Step 4: Run the full package and the repository check**
 
 Run: `go -C server test -race ./internal/storage/... && CGO_ENABLED=0 go -C server build ./... && make check`
-Expected: all 14 storage tests pass, the static build succeeds, and `make check` passes.
+Expected: all 15 storage tests pass, including 10 failing restarts leaving exactly one pre-upgrade
+snapshot. The static build succeeds and `make check` passes.
 
 - [ ] **Step 5: Commit and open the PR**
 
@@ -1548,9 +1687,11 @@ Storage is **module accepted** when this plan's tests pass. It is **integrated**
 - **OPS-1** opens `/config/lisimflix.db` at startup, calls `MigrateWithBackup` with every registered
   `Source` and `SnapshotOptions{Dir: "/config/backups", AppVersion: version, ExtraFiles: ["/config/m1.json"]}`,
   and reports not-ready on any error, naming `ErrSchemaTooNew` with the recovery instruction. It
-  starts `Nightly.Run` with `After: time.After`.
-- **Restore** runs as an owner action while serving is stopped. The admin UI (UI-6) adds
-  re-authentication and confirmation, and sessions are revoked afterwards.
+  starts `Nightly.Run` (zero-value fields take their defaults). The deployment docs state the
+  container `TZ` used for the nightly hour.
+- **Restore** runs as an owner action while serving is stopped, with
+  `ExtraFiles: ["/config/m1.json"]` so the pre-restore snapshot keeps the current config. The admin
+  UI (UI-6) adds re-authentication and confirmation, and sessions are revoked afterwards.
 - **OPS-01** evidence: fresh setup, a nightly snapshot, a clean-instance restore, a forced migration
   failure blocking readiness, and the documented rollback (old image + `pre-upgrade` snapshot).
 - **Backup copies off the host** (spec §11.3) are the owner's job: document copying `/config/backups`
