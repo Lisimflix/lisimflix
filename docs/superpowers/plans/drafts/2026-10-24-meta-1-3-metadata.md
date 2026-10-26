@@ -6,7 +6,7 @@
 > (`authctx`, `httpx`, `app.Module`, `dbtest`, `make test`) with CTR-1 contracts, the OPS-1 runtime, OPS-2
 > storage and `make check`. Specific to this plan: Check match provenance, revision and confidence against spec §3.7 before claiming.
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Do not execute.** Archived draft for reference only: it predates the revised spec and the CTR-1/OPS-1/OPS-2 contracts. Claim the feature and write a new plan through the planning gate instead.
 
 **Goal:** Every movie and TV show the 1C scanner finds is matched to TMDB (with Fanart.tv artwork
 and local Kodi NFO overrides), its metadata and artwork are stored and cached locally, and admins
@@ -8968,7 +8968,7 @@ Run: `make fmt && make test && make vet`
 Expected: every package PASS, including `cmd/lisimflix` (`TestServeHealthcheckAndShutdown` still
 shuts down cleanly with the matcher running).
 
-- [ ] **Step 5: Verify against real files on zraid** (read-only mount; needs 1B for a real login)
+- [ ] **Step 5: Verify against real files on a reference installation** (read-only mount; needs 1B for a real login)
 
 ```bash
 make image
@@ -8992,6 +8992,7 @@ Record mismatches (title, year) as new scoring test cases in `score_test.go`, th
 ```bash
 git add server/cmd/lisimflix
 git commit -m "feat(metadata): wire metadata matching into the server"
+# DO NOT RUN: archived draft. See the catalogue plans map.
 git push -u origin HEAD
 gh pr create --base main --title "feat(metadata): metadata core with TMDB, Fanart.tv and NFO" --body-file - <<'EOF'
 ## What changed
@@ -9004,7 +9005,7 @@ Spec §3.2 Metadata (plan `docs/superpowers/plans/2026-10-24-meta-1-3-metadata.m
 
 ## How it was tested
 `make test` and `make vet` (fixtures only, no network); live TMDB test with `-tags live`;
-manual check against the zraid library (Task 16 step 5).
+manual check against the reference library (Task 16 step 5).
 EOF
 ```
 The reviewer runs `/code-review` on the branch first, then reads and approves; after approval
@@ -9015,7 +9016,7 @@ the author squash-merges (CONTRIBUTING.md).
 ## Done when
 
 - `make test` and `make vet` pass; CI is green on the PR.
-- A scan of the real zraid Movies and TV libraries leaves most items `matched`, with overview,
+- A scan of the reference installation's Movies and TV libraries leaves most items `matched`, with overview,
   genres, cast, ratings, content rating (AU first), posters/backdrops/logos served from
   `/api/v1/images/{id}`, and episode titles.
 - Fix match, edits (locked fields) and manual matches survive a rescan and a refresh.

@@ -6,7 +6,7 @@
 > (`authctx`, `httpx`, `app.Module`, `dbtest`, `make test`) with CTR-1 contracts, the OPS-1 runtime, OPS-2
 > storage and `make check`. Specific to this plan: T7 must consume the ACC-2 shared policy evaluator. Add ordered progress events with revisions and MIGRATE-01 fixtures (spec §3.8, §10.3).
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Do not execute.** Archived draft for reference only: it predates the revised spec and the CTR-1/OPS-1/OPS-2 contracts. Claim the feature and write a new plan through the planning gate instead.
 
 **Goal:** Per-profile watch state (progress, watched, play count, history, watchlist, ratings,
 per-show track choices, home-row layout), the personal home rows API (Continue Watching,
@@ -4680,13 +4680,13 @@ TV Shows (section 2, `/data/tv`) and Music (section 3, ignored). Accounts: `1` z
 lisim (`tokA` listings): 101 viewOffset 1200000; 201 viewCount 1. History: 201 once.
 ondo (history only): 101 twice (1758000000, 1759000000), 107 once.
 
-- [ ] **Step 1 (optional, on zraid): refresh fixtures from the real server**
+- [ ] **Step 1 (optional, on a reference installation): refresh fixtures from the real server**
 
 The fixtures below are hand-written in the exact PMS JSON shape. To compare them against
 the household Plex server, run these commands. The token is read from an env var and never written to disk:
 ```bash
 read -rs PLEX_TOKEN   # paste the server admin token (Plex Web > any item > Get Info > View XML > X-Plex-Token)
-P=http://zraid:32400
+P=http://plex.example:32400
 for p in /identity /accounts /library/sections "/library/sections/1/all?type=1&includeGuids=1&X-Plex-Container-Size=2" \
          "/status/sessions/history/all?accountID=1&sort=viewedAt:desc&X-Plex-Container-Size=2"; do
   curl -s -H "Accept: application/json" -H "X-Plex-Token: $PLEX_TOKEN" "$P$p" | head -c 1500; echo; echo ---
@@ -4821,7 +4821,7 @@ seen with leftovers from old agents.)
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <MediaContainer friendlyName="myPlex" identifier="com.plexapp.plugins.myplex" machineIdentifier="abc123machine" size="1">
-  <SharedServer id="9876543" username="lisim" email="lisim@example.com" userID="2345678" accessToken="tokA" name="zraid" acceptedAt="1690000000" invitedAt="1689990000" allowSync="0" allowCameraUpload="0" allowChannels="0" allowTuners="0" allowSubtitleAdmin="0" owned="0" allLibraries="1" filterAll="" filterMovies="" filterMusic="" filterPhotos="" filterTelevision="">
+  <SharedServer id="9876543" username="lisim" email="lisim@example.com" userID="2345678" accessToken="tokA" name="plex-server" acceptedAt="1690000000" invitedAt="1689990000" allowSync="0" allowCameraUpload="0" allowChannels="0" allowTuners="0" allowSubtitleAdmin="0" owned="0" allLibraries="1" filterAll="" filterMovies="" filterMusic="" filterPhotos="" filterTelevision="">
     <Section id="11111" key="1" title="Movies" type="movie" shared="1"/>
     <Section id="11112" key="2" title="TV Shows" type="show" shared="1"/>
   </SharedServer>
@@ -4948,12 +4948,12 @@ func ownerClient(t *testing.T, f *fakePMS) *Client {
 }
 
 func TestNewClientValidates(t *testing.T) {
-	for _, u := range []string{"", "zraid:32400", "ftp://zraid", "http://"} {
+	for _, u := range []string{"", "plex.example:32400", "ftp://plex.example", "http://"} {
 		if _, err := NewClient(u, "t", nil); err == nil {
 			t.Fatalf("%q accepted", u)
 		}
 	}
-	if _, err := NewClient("http://zraid:32400", " ", nil); err == nil {
+	if _, err := NewClient("http://plex.example:32400", " ", nil); err == nil {
 		t.Fatal("blank token accepted")
 	}
 }
@@ -7730,22 +7730,22 @@ call. Don't reorder or remove anything else.
 Run: `make fmt && make test && make vet`
 Expected: all packages PASS (including `cmd/lisimflix`), vet clean.
 
-- [ ] **Step 5: Manual check against the real Plex (zraid, optional but recommended)**
+- [ ] **Step 5: Manual check against the real Plex (reference installation, optional but recommended)**
 
 ```bash
 make run   # in another terminal; sign in as admin per 1B, keep the session cookie in $C
 read -rs PLEX_TOKEN
 curl -s -b "$C" -X POST localhost:8420/api/v1/import/plex/accounts \
-  -d "{\"baseUrl\":\"http://zraid:32400\",\"token\":\"$PLEX_TOKEN\"}" | jq
+  -d "{\"baseUrl\":\"http://plex.example:32400\",\"token\":\"$PLEX_TOKEN\"}" | jq
 # map accounts to profiles, dry run first:
-curl -s -b "$C" -X POST localhost:8420/api/v1/import/plex/jobs -d "{\"baseUrl\":\"http://zraid:32400\",\"token\":\"$PLEX_TOKEN\",
+curl -s -b "$C" -X POST localhost:8420/api/v1/import/plex/jobs -d "{\"baseUrl\":\"http://plex.example:32400\",\"token\":\"$PLEX_TOKEN\",
   \"dryRun\":true,\"discoverUserTokens\":true,\"pathMappings\":[{\"plex\":\"/data\",\"local\":\"/media\"}],
   \"accounts\":[{\"plexAccountId\":1,\"profileId\":1}]}" | jq .id
 curl -s -b "$C" localhost:8420/api/v1/import/plex/jobs/<id> | jq '.state, .report.matched, .report.unmatchedTotal, .report.conflictsTotal'
 unset PLEX_TOKEN
 ```
 Expected: the job reaches `done` with matched counts close to the number of watched items in Plex.
-Check the Plex path prefix in Plex's library settings before running (the zraid Plex container's
+Check the Plex path prefix in Plex's library settings before running (the reference Plex container's
 media mount). Don't run an apply (`dryRun:false`) until the person who owns the data has looked at
 the dry-run report.
 
@@ -7782,9 +7782,10 @@ Routes: individual `/me/...` paths (no `r.Route("/me")`; other modules must not 
 ```bash
 git add server/cmd/lisimflix/main.go server/cmd/lisimflix/main_test.go docs/superpowers/plans/2026-10-24-catalogue-plans-map.md
 git commit -m "feat(userdata): wire user data and Plex import modules into the server"
+# DO NOT RUN: archived draft. See the catalogue plans map.
 git push -u origin feat/1f-userdata-plex
 gh pr create --base main --title "feat(userdata): per-profile watch state, home rows and Plex import" \
-  --body "$(printf '## What changed\nPlan 1F: user data (progress, watched, history, watchlist, ratings, track prefs, home rows) and the admin Plex import (dry run + apply). Adds media lookups in server/internal/media/lookup.go (1C owner please review that file).\n\n## Source\nSpec §3.4, §3.5, §5.2; plan docs/superpowers/plans/2026-10-24-data-1-2-3-userdata.md\n\n## How it was tested\nmake test/vet (fake PMS + plex.tv fixtures); optional dry run against the zraid Plex (Task 16 Step 5)\n')"
+  --body "$(printf '## What changed\nPlan 1F: user data (progress, watched, history, watchlist, ratings, track prefs, home rows) and the admin Plex import (dry run + apply). Adds media lookups in server/internal/media/lookup.go (1C owner please review that file).\n\n## Source\nSpec §3.4, §3.5, §5.2; plan docs/superpowers/plans/2026-10-24-data-1-2-3-userdata.md\n\n## How it was tested\nmake test/vet (fake PMS + plex.tv fixtures); optional dry run against a reference Plex (Task 16 Step 5)\n')"
 gh pr checks --watch
 ```
 Expected: CI `test` passes. Another member reviews (`/code-review` first pass, then reads it
