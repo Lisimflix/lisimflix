@@ -56,7 +56,7 @@ Store sessions in a mutex-protected bounded map. Use random opaque IDs and stand
 **Consumes:** `contracts.Movie`, `PrincipalFrom` and error responses. **Produces:** `Source`, `Revision`, initial `Server`/handler source validation.
 
 - [ ] Write `TestRangeReturnsExactSourceBytes`, `TestHeadHasNoBody`, `TestUnsatisfiableRange`, `TestPrivatePathAndSymlinkEscapeDenied`, `TestSourceReplacementRejected`, `TestSameMetadataDifferentFileRejected`, `TestMissingSourceIsUnavailable` and `TestRevisionIsStable` (checks the exact layout) using temporary files and `httptest`. Byte fixtures need not be decodable movies; these tests prove delivery semantics, not browser playback.
-- [ ] Run `go -C server test ./internal/playback -run 'Test(Range|Head|Unsatisfiable|Private|Source|Missing)'`; expect missing implementation/failing tests.
+- [ ] Run `go -C server test ./internal/playback -run 'Test(Range|Head|Unsatisfiable|Private|Source|SameMetadata|Missing|Revision)'`; expect missing implementation/failing tests.
 - [ ] Implement rooted opens using `os.Root.Open`, validate relative paths, stat/revision and configured source, close every file, and use `http.ServeContent` with `Cache-Control: no-store` (as CTR-1 requires for all `/api/v1` responses), `ETag` set to the quoted revision and `Last-Modified`, so `Range`/`If-Range`/`If-None-Match` still give 206/304/416. Never accept a path/URL in a play request. Preserve standard content/range headers; application failures use safe JSON, protocol-level range failures expose no paths.
 - [ ] Repeat the command and `go -C server vet ./internal/playback`; expect exact bytes/statuses and all negative cases passing.
 - [ ] Commit as `feat(playback): deliver original MP4 ranges safely`.
