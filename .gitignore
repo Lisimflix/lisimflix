@@ -17,6 +17,3 @@ node_modules/
 .idea/
 .DS_Store
 Thumbs.db
-
-# Brainstorm mockups (local only)
-.superpowers/
