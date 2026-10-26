@@ -1,0 +1,16 @@
+{
+  "items": [
+    {
+      "id": "movie-synthetic-0001",
+      "sourceRevision": "rev-synthetic-0001",
+      "title": "Synthetic Test Movie",
+      "durationMs": 5400000,
+      "container": "mp4",
+      "videoCodec": "h264",
+      "width": 1920,
+      "height": 1080,
+      "audioCodec": "aac"
+    }
+  ],
+  "nextCursor": null
+}
