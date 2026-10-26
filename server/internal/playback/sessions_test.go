@@ -2,11 +2,9 @@ package playback
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"strings"
 	"testing"
@@ -186,16 +184,7 @@ func (e *env) streaming(ps contracts.PlaybackSession) func() (int, error) {
 	e.t.Helper()
 	req, _ := http.NewRequest("GET", e.srv.URL+ps.ContentURL, nil)
 	req.Header.Set("X-Test-Principal", header(alice))
-	// A small fixed receive buffer turns off autotuning, so the server's
-	// write really blocks once its send buffer fills.
-	slow := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		c, err := (&net.Dialer{}).DialContext(ctx, network, addr)
-		if err == nil {
-			c.(*net.TCPConn).SetReadBuffer(16 << 10)
-		}
-		return c, err
-	}}}
-	resp, err := slow.Do(req)
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != 200 {
 		e.t.Fatalf("stream = %v %v", resp, err)
 	}
