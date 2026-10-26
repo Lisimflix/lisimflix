@@ -1,9 +1,7 @@
-import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { createClient } from "./api/client";
+import { M1App } from "./player/M1App";
+import "./styles.css";
 
-// Seed only: UI-1 replaces this with the real player. It must never imply playback works.
-createRoot(document.getElementById("root")!).render(
-  <StrictMode>
-    <h1>M1 player not connected</h1>
-  </StrictMode>,
-);
+// No StrictMode: its development double-mount would stop the live playback session.
+createRoot(document.getElementById("root")!).render(<M1App client={createClient()} />);

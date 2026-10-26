@@ -17,3 +17,8 @@ node_modules/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Playwright output and local test media
+/web/test-results/
+/web/playwright-report/
+*.mp4
