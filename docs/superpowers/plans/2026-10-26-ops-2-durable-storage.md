@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Draft for review, revision 3 (addresses @lisim's reviews on #14). Claimed by @Lammy93 in
+**Status:** Draft for review, revision 4 (addresses @lisim's reviews on #14). Claimed by @Lammy93 in
 #11; reviewer @lisim. Not implemented. Every code block below was compiled and passed its tests
 (`go vet`, `go test -race`, `CGO_ENABLED=0` build) in a scratch module on Go 1.27.3 before this
 plan was written. That is evidence for the plan, not module acceptance.
@@ -10,7 +10,8 @@ plan was written. That is evidence for the plan, not module acceptance.
 and can be snapshotted and restored consistently.
 **Architecture:** One package, `server/internal/storage`, wraps `database/sql` with the pure-Go
 `modernc.org/sqlite` driver. Each module registers its own embedded migrations as a `Source`. The
-runner merges them by timestamp, applies each in its own transaction and records a checksum.
+runner merges them by timestamp, applies the whole pending batch in one transaction and records a
+checksum for each.
 Snapshots use `VACUUM INTO` plus a checksummed manifest, and restore validates before an atomic
 file swap. No HTTP, CLI or scheduler wiring is included: integration owners call these functions.
 **Tech Stack:** Go 1.27.3, `modernc.org/sqlite v1.60.1`, stdlib only otherwise.
@@ -27,7 +28,9 @@ acceptance BASE-03, OPS-01 (G1 storage part), PERF-07 inputs.
 - Migrations: one `Source` per module, file names `YYYYMMDDHHMMSS_<module>_<what>.sql` (UTC), the
   module prefix must match its `Source`, and timestamps are unique across all modules. A merged
   migration is never edited: the runner records a SHA-256 and refuses an edited file.
-- Every migration runs in a transaction with `foreign_keys` on, so `PRAGMA foreign_keys=OFF` inside a
+- All pending migrations run as **one batch in one transaction**: either every one applies or none
+  does, so a failed upgrade always leaves the previous schema intact and restorable by the previous
+  version. The transaction has `foreign_keys` on, so `PRAGMA foreign_keys=OFF` inside a
   migration does nothing. For a table rebuild (SQLite's 12-step procedure), start with
   `PRAGMA defer_foreign_keys=ON;` and end with `PRAGMA foreign_key_check;`.
 - Startup refuses a database with migrations this binary doesn't know (`ErrSchemaTooNew`); recovery
@@ -59,7 +62,7 @@ acceptance BASE-03, OPS-01 (G1 storage part), PERF-07 inputs.
 
 ## Review focus
 
-1. A failed or interrupted migration leaves no partial schema and is not recorded. Readiness stays blocked.
+1. A failed or interrupted upgrade leaves no partial schema: the whole batch rolls back and nothing is recorded. Readiness stays blocked.
 2. A snapshot is consistent while the app is writing, passes `integrity_check`, and appears atomically.
 3. Restore never changes the current installation unless every check passes, and always keeps a pre-restore snapshot.
 4. Manifest file names cannot escape the snapshot or config directory.
@@ -612,8 +615,9 @@ func (d *DB) plan(ctx context.Context, ms []migration) (known map[string]migrati
 	return known, pending, nil
 }
 
-// Migrate applies pending migrations in version order, each in its own
-// transaction. Any error means the database is not ready (BASE-03).
+// Migrate applies all pending migrations in version order in one transaction:
+// either every one applies or none does. Any error means the database is not
+// ready (BASE-03).
 func (d *DB) Migrate(ctx context.Context, srcs []Source, now func() time.Time) ([]string, error) {
 	ms, err := collect(srcs)
 	if err != nil {
@@ -623,26 +627,30 @@ func (d *DB) Migrate(ctx context.Context, srcs []Source, now func() time.Time) (
 	if err != nil {
 		return nil, err
 	}
+	if len(pending) == 0 {
+		return nil, nil
+	}
+	// One transaction for the whole batch: a failing upgrade leaves the old
+	// schema intact, so every crash-loop snapshot stays restorable by the old version.
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("storage: migrate: begin: %w", err)
+	}
+	defer tx.Rollback()
 	var done []string
 	for _, m := range pending {
-		tx, err := d.BeginTx(ctx, nil)
-		if err != nil {
-			return done, fmt.Errorf("storage: migration %s: begin: %w", m.version, err)
-		}
 		if _, err := tx.ExecContext(ctx, m.body); err != nil {
-			tx.Rollback()
-			return done, fmt.Errorf("storage: migration %s: %w", m.version, err)
+			return nil, fmt.Errorf("storage: migration %s: %w", m.version, err)
 		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO schema_migrations(version, checksum, applied_at) VALUES(?, ?, ?)`,
 			m.version, m.sum, now().UTC().Format(time.RFC3339)); err != nil {
-			tx.Rollback()
-			return done, fmt.Errorf("storage: migration %s: record: %w", m.version, err)
-		}
-		if err := tx.Commit(); err != nil {
-			return done, fmt.Errorf("storage: migration %s: commit: %w", m.version, err)
+			return nil, fmt.Errorf("storage: migration %s: record: %w", m.version, err)
 		}
 		done = append(done, m.version)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("storage: migrate: commit: %w", err)
 	}
 	return done, nil
 }
@@ -698,7 +706,8 @@ func (d *DB) SetSetting(ctx context.Context, key, value string, now time.Time) e
 
 Run: `go -C server vet ./internal/storage/... && go -C server test -race ./internal/storage/...`
 Expected: `ok  .../internal/storage`. The 7 tests cover WAL/foreign keys, restart without reapplying
-(BASE-03), cross-module order, rollback on failure, name validation, a too-new schema and an edited migration.
+(BASE-03), cross-module order, rollback of the whole batch on failure, name validation, a too-new
+schema and an edited migration.
 
 - [ ] **Step 6: Commit**
 
@@ -1473,6 +1482,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -1556,6 +1566,40 @@ func TestRollbackThenUpgradeTakesFreshSnapshot(t *testing.T) {
 	if v, _, _ := snap.GetSetting(ctx, "after"); v != "month-of-data" {
 		t.Fatalf("fresh pre-upgrade snapshot is missing recent data: %q", v)
 	}
+}
+
+// An upgrade whose first migration applies and second fails, restarting every
+// 10 minutes for 4 hours: a pre-upgrade snapshot at the original schema must
+// survive, or rolling back to the previous version becomes impossible.
+func TestLongCrashLoopKeepsOriginalSchemaSnapshot(t *testing.T) {
+	ctx := context.Background()
+	d, path := openTemp(t)
+	dir := filepath.Join(filepath.Dir(path), "backups")
+	o := SnapshotOptions{Dir: dir, AppVersion: "test"}
+	if _, err := d.MigrateWithBackup(ctx, []Source{Core()}, o, fixedNow); err != nil {
+		t.Fatal(err)
+	}
+	orig, _ := d.Applied(ctx)
+	up := []Source{Core(), src("library", map[string]string{
+		"20261027000000_library_ok.sql":  `CREATE TABLE y (a TEXT) STRICT;`,
+		"20261027000001_library_bad.sql": `NOT SQL;`,
+	})}
+	for i := 0; i <= 24; i++ {
+		at := fixedNow().Add(time.Duration(i) * 10 * time.Minute)
+		if _, err := d.MigrateWithBackup(ctx, up, o, func() time.Time { return at }); err == nil {
+			t.Fatal("broken upgrade succeeded")
+		}
+	}
+	if after, _ := d.Applied(ctx); !slices.Equal(after, orig) {
+		t.Fatalf("failed upgrade left schema %v, want %v", after, orig)
+	}
+	entries, _ := os.ReadDir(dir)
+	for _, e := range entries {
+		if m, err := readManifest(filepath.Join(dir, e.Name())); err == nil && m.Reason == "pre-upgrade" && slices.Equal(m.Schema, orig) {
+			return
+		}
+	}
+	t.Fatal("no pre-upgrade snapshot left at the original schema; rollback to the old version is impossible")
 }
 
 func TestNextRunAndNightlyOnce(t *testing.T) {
@@ -1711,9 +1755,10 @@ func (n *Nightly) Run(ctx context.Context) {
 - [ ] **Step 4: Run the full package and the repository check**
 
 Run: `go -C server test -race ./internal/storage/... && CGO_ENABLED=0 go -C server build ./... && make check`
-Expected: all 16 storage tests pass, including 10 failing restarts leaving exactly one pre-upgrade
-snapshot, and a rollback followed by an upgrade a month later taking a fresh snapshot that contains
-the month's data. The static build succeeds and `make check` passes.
+Expected: all 17 storage tests pass. They include 10 failing restarts leaving exactly one pre-upgrade
+snapshot; a rollback followed by an upgrade a month later taking a fresh snapshot that contains the
+month's data; and a 4-hour crash loop on a half-failing upgrade that leaves the schema untouched and
+keeps a pre-upgrade snapshot at the original schema. The static build succeeds and `make check` passes.
 
 - [ ] **Step 5: Commit and open the PR**
 
