@@ -199,7 +199,7 @@ Each has one job and a documented interface, so team members can own one at a ti
 | `api` | HTTP routing, auth middleware, JSON API (versioned `/api/v1`), OpenAPI spec |
 | `auth` | Accounts, profiles, sessions/tokens, OAuth sign-in (Google, Microsoft, Apple, Facebook, generic OIDC), local admin fallback (Argon2id + TOTP), invites, rate limiting |
 | `library` | Library definitions, file scanning, filesystem watching, ffprobe analysis |
-| `metadata` | Provider interface and providers (TMDB, TVDB, AniList, AniDB, Jikan/MAL, Fanart.tv, MusicBrainz, NFO), ID mapping, artwork cache |
+| `metadata` | Provider interface and providers (TMDB, TVDB, AniList, AniDB, MAL (official API), Fanart.tv, MusicBrainz, NFO), ID mapping, artwork cache |
 | `media` | Items domain model: movies, shows/seasons/episodes, versions, extras, collections |
 | `userdata` | Progress, watched state, watchlist, ratings, history, per-show track prefs |
 | `playback` | Device capability model, playback decision engine, sessions |
@@ -261,7 +261,7 @@ detecting a device is not equivalent to certifying every filter or real-time wor
 - **Anime:**
   - AniList (candidate primary, subject to 3.7: descriptions, art, genres, studios, relations, airing status)
   - AniDB (episode lists, specials/OVAs/episode types; strict rate limiting plus aggressive caching, client registration required)
-  - Jikan/MyAnimeList (scores, fallback)
+  - MyAnimeList scores via the official MAL API only, after its own terms check (Jikan excluded, D06)
   - TMDB/TVDB (fallback artwork)
   - Versioned cross-provider ID/episode mapping, with source coverage and update
     permissions validated under 3.7; no single dataset is assumed to cover all IDs.
@@ -1719,7 +1719,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 | D03 | Which client/device profiles qualify beyond M1? | M1 approved: Chrome/Firefox on Linux/Windows/macOS; record tested versions. TV/mobile/additional client profiles still need qualification | Wider G2/G3 matrix; M1 platform selection settled |
 | D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
 | D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
-| D06 | Are AniList and mapping sources permitted/sufficient? | Validate API terms and dataset coverage; local matching survives provider outage | Specific providers and outbound sync |
+| D06 | Are AniList and mapping sources permitted/sufficient? | Approved by Pete and Lammy, 2026-10-26 (#10): **AniList** direct per install, library-scoped requests only, rate-limited persistent cache, no bulk prefetch or mirroring. **AniDB** via a registered client, at most 1 request per 2 s, heavy per-title caching, ban detected from the XML body with a 24 h+ backoff, no bulk download; default is one shared Lisimflix client/clientver, overridable in settings (option A). **AniDB cache service** (#16): built optional; AniDB asked before public go-live; if refused, retired and installs use direct AniDB (option A). Dev/testing only until AniDB answers; never required (§1.1). **Jikan** excluded (MAL terms bar scraping); MAL data, if ever needed, uses the official MAL API after its own terms check. **Mapping datasets** (Anime-Lists, Fribb) fetched at runtime only, weekly with a configurable URL, never bundled in the image or repo; fixtures synthetic. Local matching works with no provider (§0.3) | Settled for META-2 planning; public use of the cache service waits on AniDB's answer (#16); outbound sync stays G4 |
 | D07 | Initial versus later sign-in rollout | Approved by Pete and Lammy, 2026-10-26 (#9): local username/password accounts first, social providers later; G3 Google/Microsoft and G4 additional providers retain their later gates. Social sign-in needs a public HTTPS domain for redirects, so local-first fits D09 | Initial choice settled; provider qualification later |
 | D08 | Profile PIN / child-policy guarantees? | Server-enforced restricted profile grants; account controller remains privileged; deny unrated by default for kids | Policy UX and security tests |
 | D09 | Local versus remote ingress/TLS | Approved: local HTTP from first launch with no domain/proxy; Linux/Docker server. Remote access requires HTTPS; proxy configuration/certificate ownership is settled before G3 | Initial local mode settled; remote deployment details later |
