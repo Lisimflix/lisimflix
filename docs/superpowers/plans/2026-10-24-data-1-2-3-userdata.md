@@ -1,5 +1,11 @@
 # Phase 1F: User Data & Plex Import Implementation Plan
 
+> **Realigned 2026-10-26: draft reference, not executable as-is.** Feature IDs: DATA-1 (T0–T3), DATA-2 (T4–T6, T8–T11), DATA-3 Plex import (T12–T15). Gates: DATA-1/2 P0 G1; DATA-3 P2 G4.
+> Unclaimed and unapproved. Before claiming, read [the catalogue plans map](2026-10-24-catalogue-plans-map.md):
+> its **alignment deltas** replace this plan's references to the retired phase 1 index and plan 1A
+> (`authctx`, `httpx`, `app.Module`, `dbtest`, `make test`) with CTR-1 contracts, the OPS-1 runtime, OPS-2
+> storage and `make check`. Specific to this plan: T7 must consume the ACC-2 shared policy evaluator. Add ordered progress events with revisions and MIGRATE-01 fixtures (spec §3.8, §10.3).
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Per-profile watch state (progress, watched, play count, history, watchlist, ratings,
@@ -21,8 +27,8 @@ routes. Both packages are `app.Module`s added to `main.go`.
 `encoding/xml` (stdlib). No new third-party dependencies.
 
 **Spec:** `docs/superpowers/specs/2026-10-24-lisimflix-design.md` (sections 3.3, 3.4, 3.5, 5.2, 5.3)
-**Index / shared contracts:** `docs/superpowers/plans/2026-10-24-phase1-index.md`
-**Conventions:** `docs/superpowers/plans/2026-10-24-phase1a-core.md`
+**Index / shared contracts:** `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md`
+**Conventions:** `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md`
 
 ## Global Constraints
 
@@ -187,7 +193,7 @@ server/internal/importer/plex/
 
 server/cmd/lisimflix/main.go       (modify) construct + register both modules
 server/cmd/lisimflix/main_test.go  (modify) routes-mounted test
-docs/superpowers/plans/2026-10-24-phase1-index.md  (modify) index updates above
+docs/superpowers/plans/2026-10-24-catalogue-plans-map.md  (modify) index updates above
 ```
 
 ---
@@ -7616,7 +7622,7 @@ git commit -m "feat(importer): background Plex import jobs and admin API"
 **Files:**
 - Modify: `server/cmd/lisimflix/main.go` (additive: build stores and modules, append them to `app.New`)
 - Modify: `server/cmd/lisimflix/main_test.go` (add one test)
-- Modify: `docs/superpowers/plans/2026-10-24-phase1-index.md` (1F section only)
+- Modify: `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md` (1F section only)
 
 **Interfaces:**
 - Consumes: `userdata.NewStore/LoadRules/NewModule/Deps/Access/TopLevelRatings/AllowedByAge`, `plex.NewManager/NewModule/Deps`,
@@ -7745,7 +7751,7 @@ the dry-run report.
 
 - [ ] **Step 6: Update the phase index (1F section only)**
 
-In `docs/superpowers/plans/2026-10-24-phase1-index.md`, replace the 1F block's `State` struct
+In `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md`, replace the 1F block's `State` struct
 and owned-tables line with:
 ```go
 type State struct {
@@ -7774,11 +7780,11 @@ Routes: individual `/me/...` paths (no `r.Route("/me")`; other modules must not 
 - [ ] **Step 7: Commit, push, open the PR**
 
 ```bash
-git add server/cmd/lisimflix/main.go server/cmd/lisimflix/main_test.go docs/superpowers/plans/2026-10-24-phase1-index.md
+git add server/cmd/lisimflix/main.go server/cmd/lisimflix/main_test.go docs/superpowers/plans/2026-10-24-catalogue-plans-map.md
 git commit -m "feat(userdata): wire user data and Plex import modules into the server"
 git push -u origin feat/1f-userdata-plex
 gh pr create --base main --title "feat(userdata): per-profile watch state, home rows and Plex import" \
-  --body "$(printf '## What changed\nPlan 1F: user data (progress, watched, history, watchlist, ratings, track prefs, home rows) and the admin Plex import (dry run + apply). Adds media lookups in server/internal/media/lookup.go (1C owner please review that file).\n\n## Source\nSpec §3.4, §3.5, §5.2; plan docs/superpowers/plans/2026-10-24-phase1f-userdata-plex.md\n\n## How it was tested\nmake test/vet (fake PMS + plex.tv fixtures); optional dry run against the zraid Plex (Task 16 Step 5)\n')"
+  --body "$(printf '## What changed\nPlan 1F: user data (progress, watched, history, watchlist, ratings, track prefs, home rows) and the admin Plex import (dry run + apply). Adds media lookups in server/internal/media/lookup.go (1C owner please review that file).\n\n## Source\nSpec §3.4, §3.5, §5.2; plan docs/superpowers/plans/2026-10-24-data-1-2-3-userdata.md\n\n## How it was tested\nmake test/vet (fake PMS + plex.tv fixtures); optional dry run against the zraid Plex (Task 16 Step 5)\n')"
 gh pr checks --watch
 ```
 Expected: CI `test` passes. Another member reviews (`/code-review` first pass, then reads it

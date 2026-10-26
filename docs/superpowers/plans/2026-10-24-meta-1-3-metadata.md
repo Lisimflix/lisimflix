@@ -1,5 +1,11 @@
 # Phase 1D: Metadata Core Implementation Plan
 
+> **Realigned 2026-10-26: draft reference, not executable as-is.** Feature IDs: META-1 (T1–T8, T10–T16), META-3 (T9 Fanart.tv). Gates: META-1 P0 G1; META-3 P2 G4.
+> Unclaimed and unapproved. Before claiming, read [the catalogue plans map](2026-10-24-catalogue-plans-map.md):
+> its **alignment deltas** replace this plan's references to the retired phase 1 index and plan 1A
+> (`authctx`, `httpx`, `app.Module`, `dbtest`, `make test`) with CTR-1 contracts, the OPS-1 runtime, OPS-2
+> storage and `make check`. Specific to this plan: Check match provenance, revision and confidence against spec §3.7 before claiming.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Every movie and TV show the 1C scanner finds is matched to TMDB (with Fanart.tv artwork
@@ -17,8 +23,8 @@ downloads images to `cfg.ConfigDir/artwork/` and builds JPEG variants in pure Go
 `golang.org/x/text` (diacritic folding, legacy NFO charsets), `golang.org/x/time/rate`.
 
 **Spec:** `docs/superpowers/specs/2026-10-24-lisimflix-design.md` (section 3.2; also 2.2, 6.2, 7)
-**Index / shared contracts:** `docs/superpowers/plans/2026-10-24-phase1-index.md`
-**Conventions:** `docs/superpowers/plans/2026-10-24-phase1a-core.md`, `CONTRIBUTING.md`, `CLAUDE.md`
+**Index / shared contracts:** `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md`
+**Conventions:** `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md`, `CONTRIBUTING.md`, `CLAUDE.md`
 
 ## Global Constraints
 
@@ -35,7 +41,7 @@ downloads images to `cfg.ConfigDir/artwork/` and builds JPEG variants in pure Go
 
 ## 1C names this plan uses (no contract additions requested)
 
-Plan 1C (`2026-10-24-phase1c-scanner.md`) already provides everything 1D needs, so **no
+Plan 1C (`2026-10-24-lib-1-2-3-scanner.md`) already provides everything 1D needs, so **no
 contract additions are requested**. Besides the index contracts, 1D uses these 1C additions:
 
 - `scanner.ScanListener` / `(*scanner.Scanner).AddListener` live in package `scanner`
@@ -8994,7 +9000,7 @@ providers, cached and rate-limited fetcher, background matcher subscribed to the
 artwork cache with resized variants, and the item metadata, image, fix-match, edit and settings API.
 
 ## Source
-Spec §3.2 Metadata (plan `docs/superpowers/plans/2026-10-24-phase1d-metadata.md`)
+Spec §3.2 Metadata (plan `docs/superpowers/plans/2026-10-24-meta-1-3-metadata.md`)
 
 ## How it was tested
 `make test` and `make vet` (fixtures only, no network); live TMDB test with `-tags live`;
