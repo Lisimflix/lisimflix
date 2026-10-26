@@ -138,3 +138,97 @@ test.describe("viewer shell", () => {
     expect(api.of("GET", "/content")).toHaveLength(0);
   });
 });
+
+test.describe("playback lifecycle", () => {
+  test("playbackAdvancesOnRealShortClip", async ({ page }) => {
+    await FakeAPI.attach(page, smokeClip());
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    const video = page.locator("video");
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.currentTime), { timeout: 10_000 }).toBeGreaterThan(1);
+    expect(await video.evaluate((v: HTMLVideoElement) => v.videoWidth)).toBe(1280);
+  });
+
+  test("autoplayRejectionShowsPlayControl", async ({ page }) => {
+    await page.addInitScript(() => {
+      const real = HTMLMediaElement.prototype.play;
+      let first = true;
+      HTMLMediaElement.prototype.play = function () {
+        if (first) {
+          first = false;
+          return Promise.reject(new DOMException("blocked", "NotAllowedError"));
+        }
+        return real.call(this);
+      };
+    });
+    await FakeAPI.attach(page, smokeClip());
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    const resume = page.locator(".player").getByRole("button", { name: "Play" });
+    await expect(resume).toBeVisible();
+    await resume.click();
+    await expect(resume).toHaveCount(0);
+    await expect.poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime)).toBeGreaterThan(0);
+  });
+
+  test("heartbeatsContinueWithoutReplacingVideoSource", async ({ page }) => {
+    await page.clock.install();
+    const api = await FakeAPI.attach(page, smokeClip());
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    await expect(page.locator("video")).toBeAttached();
+    const src = await page.locator("video").evaluate((v: HTMLVideoElement) => v.src);
+    await page.clock.runFor(35_000);
+    await expect.poll(() => api.of("POST", "/heartbeat").map((c) => (c.body as { sequence: number }).sequence)).toEqual([1, 2, 3]);
+    expect(await page.locator("video").evaluate((v: HTMLVideoElement) => v.src)).toBe(src);
+  });
+
+  test("expiredSessionShowsPlayAgain", async ({ page }) => {
+    await page.clock.install();
+    const api = await FakeAPI.attach(page, smokeClip());
+    api.overrides.push(async (route, call) => {
+      if (!call.path.endsWith("/heartbeat")) return false;
+      await route.fulfill({ status: 410, contentType: "application/json", body: '{"code":"playback_expired","message":"expired","requestId":"r"}' });
+      return true;
+    });
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    await expect(page.locator("video")).toBeAttached();
+    await page.clock.runFor(10_000);
+    await expect(page.getByRole("alert")).toHaveText("Playback has ended. Press Play to start again.");
+    await expect(page.locator("video")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  });
+
+  test("endedStopsSession", async ({ page }) => {
+    const api = await FakeAPI.attach(page, smokeClip());
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    const video = page.locator("video");
+    await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThan(0);
+    await video.evaluate((v: HTMLVideoElement) => { v.currentTime = v.duration - 0.3; });
+    await expect(video).toHaveCount(0, { timeout: 5_000 });
+    expect(api.of("DELETE", "/playback/sessions/play-fixture-1")).toHaveLength(1);
+  });
+
+  test("logoutAndUnmountStopTimers", async ({ page }) => {
+    await page.clock.install();
+    const api = await FakeAPI.attach(page, smokeClip());
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    await expect(page.locator("video")).toBeAttached();
+    await page.clock.runFor(10_000);
+    await expect.poll(() => api.of("POST", "/heartbeat").length).toBe(1);
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+    expect(api.of("DELETE", "/playback/sessions/play-fixture-1")).toHaveLength(1);
+    await page.clock.runFor(30_000);
+    expect(api.of("POST", "/heartbeat")).toHaveLength(1);
+  });
+});
