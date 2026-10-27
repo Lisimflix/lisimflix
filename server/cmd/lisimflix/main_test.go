@@ -46,6 +46,13 @@ type fixture struct {
 // through cmdInit and composes the real modules behind an httptest server.
 func newFixture(t *testing.T, extra ...storage.Source) *fixture {
 	t.Helper()
+	return newFixtureSized(t, 2<<20, extra...)
+}
+
+// newFixtureSized uses a movie of size bytes; streaming tests need one far
+// larger than the socket buffers, or the whole file is sent before they act.
+func newFixtureSized(t *testing.T, size int, extra ...storage.Source) *fixture {
+	t.Helper()
 	f := &fixture{t: t, dir: t.TempDir()}
 	media := filepath.Join(f.dir, "media")
 	cfgDir := filepath.Join(f.dir, "config")
@@ -54,7 +61,7 @@ func newFixture(t *testing.T, extra ...storage.Source) *fixture {
 			t.Fatal(err)
 		}
 	}
-	f.movie = make([]byte, 2<<20)
+	f.movie = make([]byte, size)
 	rand.Read(f.movie)
 	if err := os.WriteFile(filepath.Join(media, "Movies", "movie.mp4"), f.movie, 0o644); err != nil {
 		t.Fatal(err)
@@ -232,7 +239,7 @@ func TestAPINotFoundIsNotSPA(t *testing.T) {
 }
 
 func TestShutdownClosesPlaybackAndRoot(t *testing.T) {
-	f := newFixture(t)
+	f := newFixtureSized(t, 64<<20)
 	b := f.browser()
 	b.signIn()
 	ps := b.start("k1")
