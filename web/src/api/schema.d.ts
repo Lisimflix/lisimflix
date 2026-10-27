@@ -81,7 +81,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start playback. Replaying the same key and payload for an active session returns 200 with that session; the same key with a changed payload is 409. */
+        /** Start playback. Replaying the same key and payload for an active session returns 200 with that session. The same key with a changed payload, or the key of a session that has ended, is 409 idempotency_conflict: start again with a new key. */
         post: operations["createPlaybackSession"];
         delete?: never;
         options?: never;
@@ -206,7 +206,7 @@ export interface components {
         };
     };
     responses: {
-        /** @description Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body; retry with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable. */
+        /** @description Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body, or the key of a session that has ended; start again with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable. */
         Error: {
             headers: {
                 [name: string]: unknown;
