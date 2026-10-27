@@ -248,6 +248,7 @@ func Prune(dir string) ([]string, error) {
 
 // Latest returns the newest completed snapshot's manifest, for backup
 // freshness (warn after 26h without success, spec §11.3).
+// Planned: OPS-5 (the backup freshness warning in diagnostics).
 func Latest(dir string) (Manifest, bool, error) { return latest(dir, "") }
 
 // latest returns the newest completed snapshot, of reason if non-empty.
@@ -299,6 +300,7 @@ func readManifest(snapDir string) (Manifest, error) {
 const StaleAfter = 26 * time.Hour
 
 // Stale reports whether backups need attention at now.
+// Planned: OPS-5 (the backup freshness warning in diagnostics).
 func Stale(latest Manifest, found bool, now time.Time) bool {
 	return !found || now.Sub(latest.CreatedAt) > StaleAfter
 }

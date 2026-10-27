@@ -31,6 +31,7 @@ var ErrInvalidSnapshot = errors.New("storage: invalid snapshot")
 // validation failure the current installation is left untouched. Extra files
 // are replaced one by one after the database; if that fails part-way, restore
 // the pre-restore snapshot. The caller revokes sessions afterwards.
+// Planned: UI-6 (the admin restore action, run while serving is stopped).
 func Restore(ctx context.Context, o RestoreOptions) (preRestore string, err error) {
 	m, err := readManifest(o.SnapshotDir)
 	if err != nil {
