@@ -140,3 +140,10 @@ checkFixtures(catalogueFixtures, [
   ["empty audio profile instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].profile = ""; }],
   ["unknown HDR format", "item-movie.json", (d) => { d.versions[1].video[0].hdr = "hdr12"; }],
 ]);
+
+const profileFixtures = { "profiles.json": "ProfileList" };
+
+checkFixtures(profileFixtures, [
+  ["profile policy without allowUnrated", "profiles.json", (d) => { delete d.items[1].policy.allowUnrated; }],
+  ["null library list in a policy", "profiles.json", (d) => { d.items[1].policy.libraryIds = null; }],
+]);

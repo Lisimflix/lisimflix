@@ -260,6 +260,20 @@
           "500": { "$ref": "#/components/responses/Error" }
         }
       }
+    },
+    "/api/v1/profiles": {
+      "get": {
+        "operationId": "listProfiles",
+        "x-lisimflix": { "owner": "ACC-1", "status": "planned" },
+        "summary": "Profiles of the signed-in account",
+        "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "Profiles", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileList" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
     }
   },
   "components": {
@@ -629,6 +643,37 @@
           "default": { "type": "boolean" },
           "forced": { "type": "boolean" },
           "hearingImpaired": { "type": "boolean" }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "pinRequired", "policy"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "pinRequired": { "type": "boolean" },
+          "policy": { "$ref": "#/components/schemas/ProfilePolicy" }
+        }
+      },
+      "ProfilePolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["libraryIds", "ratingCeiling", "allowUnrated"],
+        "description": "Effective policy: the account's ceiling narrowed by the profile. For display; the server enforces policy on every request.",
+        "properties": {
+          "libraryIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Libraries this profile may see. Empty means none." },
+          "ratingCeiling": { "oneOf": [{ "$ref": "#/components/schemas/ContentRating" }, { "type": "null" }], "description": "Highest allowed rating in its region. Null: no rating limit. A rating from another region counts as unrated." },
+          "allowUnrated": { "type": "boolean" }
+        }
+      },
+      "ProfileList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Profile" } },
+          "nextCursor": { "type": ["string", "null"], "minLength": 1 }
         }
       }
     }
