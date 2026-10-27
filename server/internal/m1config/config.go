@@ -241,7 +241,9 @@ func validSource(c Config, cfgPath string) error {
 	if err != nil {
 		return fmt.Errorf("m1config: config path: %w", err)
 	}
-	if rel, err := filepath.Rel(root, filepath.Dir(cfgAbs)); err == nil && (rel == "." || filepath.IsLocal(rel)) {
+	// Compare real locations, so a symlink on either side can't hide that
+	// the config lives under the media root (#30).
+	if rel, err := filepath.Rel(resolved(root), resolved(filepath.Dir(cfgAbs))); err == nil && (rel == "." || filepath.IsLocal(rel)) {
 		return errors.New("m1config: the config file must not be stored under mediaRoot")
 	}
 	r, err := os.OpenRoot(root)
@@ -260,4 +262,13 @@ func validSource(c Config, cfgPath string) error {
 		return errors.New("m1config: the movie must be a regular file")
 	}
 	return nil
+}
+
+// resolved returns p with symlinks resolved, or p itself if it can't be
+// resolved (for example a folder that doesn't exist yet).
+func resolved(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return p
 }
