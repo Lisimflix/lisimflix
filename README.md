@@ -26,14 +26,15 @@ only: plain HTTP, one viewer and one movie.
 
 ## Checks
 
-Needs Go 1.27.3 and Node 24.22.1 (e.g. via [mise](https://mise.jdx.dev/)).
+Needs Go 1.27.3, Node 24.22.1 (e.g. via [mise](https://mise.jdx.dev/)) and a C compiler such as `gcc`
+(the Go tests run with the race detector, which needs cgo).
 
 ```sh
 npm --prefix web ci
 make check
 ```
 
-`make check` runs gofmt, vet and Go tests, regenerates the API types, then runs the web
+`make check` runs gofmt, vet and Go tests (with `-race`), regenerates the API types, then runs the web
 contract tests, lint, typecheck and build. GitHub Actions runs the same target on every PR.
 It fails if `web/src/api/schema.d.ts` is stale, so commit the regenerated file after
 changing `docs/contracts/m1-openapi.json`.
