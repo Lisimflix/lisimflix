@@ -3,10 +3,13 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -96,5 +99,49 @@ func TestWriteDeadlinesReachThroughTheLogger(t *testing.T) {
 	resp.Body.Close()
 	if string(b) != "ok" {
 		t.Fatalf("SetWriteDeadline through the logger = %q", b)
+	}
+}
+
+// The container healthcheck polls /health/ready every 30 s. A readiness
+// failure is logged once, with its reason, when the state changes, and the
+// polls themselves are not logged (#75).
+func TestReadinessChangesAreLoggedOnce(t *testing.T) {
+	var buf bytes.Buffer
+	e := newEnvWith(t, lanOrigin, slog.New(slog.NewJSONHandler(&buf, nil)))
+	b := e.browser()
+	setReady := func(err error) {
+		e.mu.Lock()
+		e.ready = err
+		e.mu.Unlock()
+	}
+	poll := func(n, want int) {
+		for range n {
+			if resp, _ := b.do("GET", "/health/ready", "", nil); resp.StatusCode != want {
+				t.Fatalf("/health/ready = %d, want %d", resp.StatusCode, want)
+			}
+		}
+	}
+	poll(2, 200)
+	setReady(errors.New("movie missing"))
+	poll(3, 503)
+	setReady(nil)
+	poll(2, 200)
+	b.do("GET", "/health/live", "", nil)
+	b.do("GET", "/health/nope", "", nil)
+
+	var got []string
+	for _, l := range logLines(t, &buf) {
+		switch l["msg"] {
+		case "http.request":
+			if p, _ := l["path"].(string); strings.HasPrefix(p, "/health/") {
+				t.Errorf("health poll logged as a request: %v", l)
+			}
+		case "health.ready":
+			got = append(got, fmt.Sprintf("%v %v %v", l["level"], l["ready"], l["reason"]))
+		}
+	}
+	want := []string{"INFO true <nil>", "ERROR false movie missing", "INFO true <nil>"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("health.ready lines = %q, want %q", got, want)
 	}
 }

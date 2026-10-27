@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"path"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Lisimflix/lisimflix/server/internal/auth"
@@ -47,6 +48,10 @@ func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS
 		return nil, errors.New("app: web assets have no index.html")
 	}
 	public := normalize(origin)
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	readiness := &readiness{log: log}
 
 	api := http.NewServeMux()
 	am.Register(api)
@@ -65,7 +70,7 @@ func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS
 	root.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
 		defer cancel()
-		if ready(ctx) != nil {
+		if err := ready(ctx); readiness.note(err) != nil {
 			health(w, http.StatusServiceUnavailable, "not_ready")
 			return
 		}
@@ -173,4 +178,29 @@ func spa(web fs.FS) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		io.Copy(w, f)
 	})
+}
+
+// readiness logs health.ready when the readiness state changes, with the
+// reason when it fails, so a healthcheck polling every 30 s logs one line per
+// change rather than one per poll (#75).
+type readiness struct {
+	log   *slog.Logger
+	mu    sync.Mutex
+	known bool
+	ok    bool
+}
+
+func (r *readiness) note(err error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.known && r.ok == (err == nil) {
+		return err
+	}
+	r.known, r.ok = true, err == nil
+	if err != nil {
+		r.log.Error("health.ready", "ready", false, "reason", err.Error())
+	} else {
+		r.log.Info("health.ready", "ready", true)
+	}
+	return err
 }

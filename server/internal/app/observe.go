@@ -3,6 +3,7 @@ package app
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Lisimflix/lisimflix/server/internal/obs"
@@ -11,7 +12,8 @@ import (
 // observe gives every request an ID (context and X-Request-Id, which
 // contracts.WriteError reuses) and logs requests that end in an error:
 // 4xx at INFO, 5xx at ERROR. It logs the path without the query string, so
-// content grants never reach the log.
+// content grants never reach the log. Health checks are left out: readiness
+// logs its own changes (#75).
 func observe(log *slog.Logger, next http.Handler) http.Handler {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -26,7 +28,7 @@ func observe(log *slog.Logger, next http.Handler) http.Handler {
 		if status == 0 {
 			status = http.StatusOK
 		}
-		if status < 400 {
+		if status < 400 || strings.HasPrefix(r.URL.Path, "/health/") {
 			return
 		}
 		level := slog.LevelInfo

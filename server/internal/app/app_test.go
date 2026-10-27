@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -74,6 +75,11 @@ type env struct {
 
 func newEnv(t *testing.T, origin string) *env {
 	t.Helper()
+	return newEnvWith(t, origin, nil)
+}
+
+func newEnvWith(t *testing.T, origin string, log *slog.Logger) *env {
+	t.Helper()
 	cfg := m1config.Config{
 		PublicOrigin: origin, CSRFKey: bytes.Repeat([]byte{3}, 32), MediaRoot: "/media/SECRET-ROOT",
 		Viewer: m1config.Viewer{AccountID: "acct-1", ProfileID: "prof-1", Username: "viewer", PasswordHash: viewerHash},
@@ -87,7 +93,7 @@ func newEnv(t *testing.T, origin string) *env {
 		e.mu.Lock()
 		defer e.mu.Unlock()
 		return e.ready
-	}, nil)
+	}, log)
 	if err != nil {
 		t.Fatal(err)
 	}

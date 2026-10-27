@@ -75,6 +75,8 @@ MEDIA_DIR=/path/to/media TZ=Australia/Brisbane docker compose -f deploy/compose.
 - **Logs:** the server writes JSON lines to stderr (`docker compose -f deploy/compose.m1.yml logs`):
   sign-in results, session ends, playback starts and ends, source errors, and requests that
   ended in an error, each with a `request_id` that matches the response's `X-Request-Id`.
+  Health checks aren't logged per request; a `health.ready` line, with the reason,
+  appears when readiness changes.
   Passwords, cookies, CSRF tokens, content grants and query strings are never logged.
 - **Newer database:** if the log says the database is newer than this version,
   start the matching image. M1 has no restore command yet (admin restore is later
