@@ -78,6 +78,9 @@ MEDIA_DIR=/path/to/media TZ=Australia/Brisbane docker compose -f deploy/compose.
   Health checks aren't logged per request; a `health.ready` line, with the reason,
   appears when readiness changes.
   Passwords, cookies, CSRF tokens, content grants and query strings are never logged.
+  The compose file keeps at most 3 log files of 10 MB each, so a password-guessing run or a
+  network scanner can't fill the disk. Running the image another way? Set your own rotation:
+  Docker keeps container logs forever by default.
 - **Newer database:** if the log says the database is newer than this version,
   start the matching image. M1 has no restore command yet (admin restore is later
   work, spec §11.3), so keep the newer image rather than copying snapshot files by hand.
