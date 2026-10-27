@@ -2,6 +2,7 @@ package playback
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
@@ -89,5 +90,51 @@ func TestPlaybackEventsAreLogged(t *testing.T) {
 		if strings.Contains(buf.String(), grant) {
 			t.Fatal("a content grant appears in the log")
 		}
+	}
+}
+
+// lockProbe is a log handler that checks playback's lock is free whenever a
+// line is written (#74): logging under the lock would let a blocked stderr
+// stall every playback request.
+type lockProbe struct {
+	s       **Server
+	mu      sync.Mutex
+	underMu []string
+}
+
+func (h *lockProbe) Enabled(context.Context, slog.Level) bool { return true }
+func (h *lockProbe) WithAttrs([]slog.Attr) slog.Handler       { return h }
+func (h *lockProbe) WithGroup(string) slog.Handler            { return h }
+func (h *lockProbe) Handle(_ context.Context, r slog.Record) error {
+	if s := *h.s; s != nil {
+		if s.mu.TryLock() {
+			s.mu.Unlock()
+		} else {
+			h.mu.Lock()
+			h.underMu = append(h.underMu, r.Message)
+			h.mu.Unlock()
+		}
+	}
+	return nil
+}
+
+func TestEventsAreLoggedOutsideTheLock(t *testing.T) {
+	var srv *Server
+	probe := &lockProbe{s: &srv}
+	e := newEnv(t, 4096, func(o *Options) { o.Log = slog.New(probe) })
+	srv = e.s
+	a := e.mustStart(alice, "k1")
+	e.req(&alice, "DELETE", "/api/v1/playback/sessions/"+a.ID, "", nil) // stopped
+	e.mustStart(alice, "k2")
+	e.s.RevokeAuthSession(alice.AuthSessionID) // revoked
+	e.mustStart(alice2, "k3")
+	e.clock.Advance(idleTimeout + time.Second) // expired, by the sweeper
+	time.Sleep(1500 * time.Millisecond)
+	e.mustStart(alice2, "k4")
+	e.s.Close() // closed
+	probe.mu.Lock()
+	defer probe.mu.Unlock()
+	if len(probe.underMu) > 0 {
+		t.Fatalf("logged while holding playback's lock: %v", probe.underMu)
 	}
 }
