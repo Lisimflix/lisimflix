@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Status:** Approved by @lisim on #19 (2026-10-26) with the changes in [Approved changes](#approved-changes-19), which are written into this plan. Claimed by @Lammy93. Not implemented: no image, playback run or platform qualification has occurred. Closes BASE-01, BASE-02 and BASE-04 together with MOVIE-01–04.
+**Status:** Approved by @lisim on #19 (2026-10-26) with the changes in [Approved changes](#approved-changes-19), which are written into this plan. Claimed by @Lammy93. **Implemented** in #31 (`edd5e9e`) and **qualified**: all four targets pass MOVIE-01–04 ([`docs/testing/m1-results.md`](../../testing/m1-results.md)). Closes BASE-01, BASE-02 and BASE-04 together with MOVIE-01–04.
 **Goal:** Assemble the accepted modules and obtain MOVIE-01–04 evidence for a complete original-quality movie on all four targets (Chrome/Firefox × Linux/macOS; Windows deferred to a later milestone, 2026-10-27, #19).
 **Architecture:** One Linux amd64 container embeds the built web app and composes real configuration/auth, playback and source confinement. M1 uses an owner-provisioned non-admin viewer and one source; it is not the complete first-release onboarding/library product.
 **Tech Stack:** Go 1.27.3, Node 24.22.1 build stage, original MP4 delivery, Docker/Compose.
