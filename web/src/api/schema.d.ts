@@ -243,6 +243,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{itemId}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin only: the item's metadata with provenance and locks. Non-admins get 404. */
+        get: operations["getItemMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -498,6 +515,58 @@ export interface components {
         ProfileList: {
             items: components["schemas"]["Profile"][];
             nextCursor: string | null;
+        };
+        /** @description Admin view of an item's editable metadata with provenance. revision starts at 1 and counts committed changes. */
+        ItemMetadata: {
+            itemId: string;
+            /** Format: int64 */
+            revision: number;
+            /** @enum {string} */
+            matchStatus: "unmatched" | "matched" | "review" | "conflict";
+            fields: components["schemas"]["MetadataFields"];
+            externalIds: components["schemas"]["MetadataExternalId"][];
+        };
+        MetadataFields: {
+            title: components["schemas"]["TextField"];
+            sortTitle: components["schemas"]["TextField"];
+            originalTitle: components["schemas"]["TextField"];
+            overview: components["schemas"]["TextField"];
+            year: components["schemas"]["IntegerField"];
+            contentRating: components["schemas"]["RatingField"];
+            genres: components["schemas"]["TextListField"];
+        };
+        TextField: {
+            value: string | null;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        IntegerField: {
+            value: number | null;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        RatingField: {
+            value: components["schemas"]["ContentRating"] | null;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        TextListField: {
+            value: string[];
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        /** @description Where a value came from: a provider namespace (tmdb, tvdb, anilist ...), nfo for local NFO files, or user for manual edits. */
+        Provenance: {
+            provider: string;
+            providerId: string | null;
+            /** Format: date-time */
+            fetchedAt: string;
+        };
+        MetadataExternalId: {
+            namespace: string;
+            id: string;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
         };
     };
     responses: {
@@ -1070,6 +1139,31 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    getItemMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["ItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemMetadata"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
             500: components["responses"]["Error"];
         };
     };

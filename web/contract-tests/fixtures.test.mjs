@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import test from "node:test";
 import Ajv2020 from "@redocly/ajv/dist/2020.js";
 
@@ -147,3 +147,17 @@ checkFixtures(profileFixtures, [
   ["profile policy without allowUnrated", "profiles.json", (d) => { delete d.items[1].policy.allowUnrated; }],
   ["null library list in a policy", "profiles.json", (d) => { d.items[1].policy.libraryIds = null; }],
 ]);
+
+const metadataFixtures = { "item-metadata.json": "ItemMetadata" };
+
+checkFixtures(metadataFixtures, [
+  ["metadata revision 0", "item-metadata.json", (d) => { d.revision = 0; }],
+  ["upper-case provider", "item-metadata.json", (d) => { d.fields.title.source.provider = "TMDB"; }],
+  ["field without a lock flag", "item-metadata.json", (d) => { delete d.fields.overview.locked; }],
+]);
+
+test("every catalogue fixture is validated", () => {
+  const files = readdirSync(new URL("../../testdata/contracts/catalogue/", import.meta.url)).filter((f) => f.endsWith(".json"));
+  const tested = Object.keys({ ...userDataFixtures, ...catalogueFixtures, ...profileFixtures, ...metadataFixtures });
+  assert.deepEqual(files.sort(), tested.sort());
+});

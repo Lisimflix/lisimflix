@@ -21,6 +21,7 @@ provider keys or personal data here.
 | `item-episode-shared-file.json` | `ItemDetail` | Episode 2: its version's file (`fil-synthetic-0003`) also holds episode 1, and `segment` is null because the boundaries are unknown |
 | `item-show.json` | `ItemDetail` | A show: no user state, no duration, no versions |
 | `profiles.json` | `ProfileList` | An unrestricted profile, and a PIN-protected kids profile limited to one library, AU PG and no unrated items |
+| `item-metadata.json` | `ItemMetadata` | Provenance per field: a locked manual title, TMDB fields, an NFO year and a locked NFO TMDB ID |
 
 The `sourceRevision` values are real `contracts.SourceRevision` outputs for the
 synthetic file IDs, sizes and times, e.g. `fil-synthetic-0001`, 24000000000 bytes,

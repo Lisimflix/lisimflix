@@ -274,6 +274,20 @@
           "500": { "$ref": "#/components/responses/Error" }
         }
       }
+    },
+    "/api/v1/items/{itemId}/metadata": {
+      "get": {
+        "operationId": "getItemMetadata",
+        "x-lisimflix": { "owner": "META-1", "status": "planned" },
+        "summary": "Admin only: the item's metadata with provenance and locks. Non-admins get 404.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Metadata", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemMetadata" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
     }
   },
   "components": {
@@ -674,6 +688,95 @@
         "properties": {
           "items": { "type": "array", "items": { "$ref": "#/components/schemas/Profile" } },
           "nextCursor": { "type": ["string", "null"], "minLength": 1 }
+        }
+      },
+      "ItemMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["itemId", "revision", "matchStatus", "fields", "externalIds"],
+        "description": "Admin view of an item's editable metadata with provenance. revision starts at 1 and counts committed changes.",
+        "properties": {
+          "itemId": { "type": "string", "minLength": 1 },
+          "revision": { "type": "integer", "format": "int64", "minimum": 1 },
+          "matchStatus": { "type": "string", "enum": ["unmatched", "matched", "review", "conflict"] },
+          "fields": { "$ref": "#/components/schemas/MetadataFields" },
+          "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/MetadataExternalId" } }
+        }
+      },
+      "MetadataFields": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "sortTitle", "originalTitle", "overview", "year", "contentRating", "genres"],
+        "properties": {
+          "title": { "$ref": "#/components/schemas/TextField" },
+          "sortTitle": { "$ref": "#/components/schemas/TextField" },
+          "originalTitle": { "$ref": "#/components/schemas/TextField" },
+          "overview": { "$ref": "#/components/schemas/TextField" },
+          "year": { "$ref": "#/components/schemas/IntegerField" },
+          "contentRating": { "$ref": "#/components/schemas/RatingField" },
+          "genres": { "$ref": "#/components/schemas/TextListField" }
+        }
+      },
+      "TextField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "type": ["string", "null"] },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "IntegerField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "type": ["integer", "null"] },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "RatingField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "oneOf": [{ "$ref": "#/components/schemas/ContentRating" }, { "type": "null" }] },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "TextListField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "Provenance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "providerId", "fetchedAt"],
+        "description": "Where a value came from: a provider namespace (tmdb, tvdb, anilist ...), nfo for local NFO files, or user for manual edits.",
+        "properties": {
+          "provider": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,31}$" },
+          "providerId": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+          "fetchedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MetadataExternalId": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["namespace", "id", "source", "locked"],
+        "properties": {
+          "namespace": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,31}$" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
         }
       }
     }

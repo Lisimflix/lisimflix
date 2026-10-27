@@ -181,6 +181,9 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		"MediaVersion": MediaVersion{}, "Segment": Segment{},
 		"VideoStream": VideoStream{}, "AudioStream": AudioStream{}, "SubtitleStream": SubtitleStream{},
 		"Profile": Profile{}, "ProfilePolicy": ProfilePolicy{}, "ProfileList": ProfileList{},
+		"ItemMetadata": ItemMetadata{}, "MetadataFields": MetadataFields{},
+		"TextField": TextField{}, "IntegerField": IntegerField{}, "RatingField": RatingField{}, "TextListField": TextListField{},
+		"Provenance": Provenance{}, "MetadataExternalId": MetadataExternalID{},
 	}
 	for name := range doc.Components.Schemas {
 		if _, ok := types[name]; !ok {
