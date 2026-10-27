@@ -7,6 +7,12 @@ coverage.*
 # Node / web
 node_modules/
 /web/dist/
+# Built web app copied in for embedding (make web-assets)
+/server/internal/webassets/dist/*
+!/server/internal/webassets/dist/.gitkeep
+
+# Private M1 evidence, kept by each tester (docs/testing/m1-evidence-template.md)
+.m1-evidence/
 
 # Local config and secrets
 .env
