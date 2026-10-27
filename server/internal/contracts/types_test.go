@@ -176,6 +176,10 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		// CTR-2
 		"UserItemState": UserItemState{}, "Resume": Resume{}, "Watched": Watched{},
 		"ProgressEvent": ProgressEvent{}, "ProgressResult": ProgressResult{}, "WatchedRequest": WatchedRequest{},
+		"Library": Library{}, "LibraryList": LibraryList{}, "ContentRating": ContentRating{},
+		"ItemSummary": ItemSummary{}, "ItemPage": ItemPage{}, "ExternalId": ExternalID{}, "ItemDetail": ItemDetail{},
+		"MediaVersion": MediaVersion{}, "Segment": Segment{},
+		"VideoStream": VideoStream{}, "AudioStream": AudioStream{}, "SubtitleStream": SubtitleStream{},
 	}
 	for name := range doc.Components.Schemas {
 		if _, ok := types[name]; !ok {

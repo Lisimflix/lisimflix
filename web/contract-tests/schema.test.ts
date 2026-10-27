@@ -8,6 +8,7 @@ type AuthState = components["schemas"]["AuthState"];
 type UserItemState = components["schemas"]["UserItemState"];
 type ProgressEvent = components["schemas"]["ProgressEvent"];
 type ProgressResult = components["schemas"]["ProgressResult"];
+type ItemSummary = components["schemas"]["ItemSummary"];
 
 export const movie = {
   id: "movie-synthetic-0001",
@@ -63,3 +64,22 @@ export const badPosition: ProgressEvent = { ...seek, positionMs: "2400000" };
 
 // @ts-expect-error reject reasons are a closed set
 export const badReason: ProgressResult = { ...duplicate, reason: "late" };
+
+export const episode = {
+  id: "epi-synthetic-0002",
+  kind: "episode",
+  libraryId: "lib-synthetic-anime",
+  parentId: "sea-synthetic-0001",
+  title: "Synthetic Episode Two",
+  sortTitle: "Synthetic Episode Two",
+  year: 2025,
+  index: 2,
+  durationMs: null,
+  contentRating: null,
+  primaryImageUrl: null,
+  backdropUrl: null,
+  userState: freshState,
+} satisfies ItemSummary;
+
+// @ts-expect-error item kinds are a closed set
+export const badKind: ItemSummary = { ...episode, kind: "collection" };

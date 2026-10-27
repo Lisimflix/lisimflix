@@ -113,3 +113,30 @@ checkFixtures(userDataFixtures, [
   ["negative play count", "progress-duplicate.json", (d) => { d.state.playCount = -1; }],
   ["fractional expected revision", "watched-request.json", (d) => { d.expectedRevision = 1.5; }],
 ]);
+
+const catalogueFixtures = {
+  "libraries.json": "LibraryList",
+  "items-movies.json": "ItemPage",
+  "items-episodes.json": "ItemPage",
+  "item-movie.json": "ItemDetail",
+  "item-episode-shared-file.json": "ItemDetail",
+  "item-show.json": "ItemDetail",
+};
+
+checkFixtures(catalogueFixtures, [
+  ["null page items", "libraries.json", (d) => { d.items = null; }],
+  ["unknown library type", "libraries.json", (d) => { d.items[0].type = "music"; }],
+  ["movie with a parent", "items-movies.json", (d) => { d.items[0].parentId = "shw-synthetic-0001"; }],
+  ["episode without a parent", "items-episodes.json", (d) => { d.items[0].parentId = null; }],
+  ["unknown item kind", "items-movies.json", (d) => { d.items[0].kind = "collection"; }],
+  ["show with user state", "item-show.json", (d) => { d.item.userState = catalogue("item-movie.json").item.userState; }],
+  ["show with a duration", "item-show.json", (d) => { d.item.durationMs = 1000; }],
+  ["show with a version", "item-show.json", (d) => { d.versions = catalogue("item-movie.json").versions; }],
+  ["absolute image URL", "items-movies.json", (d) => { d.items[0].primaryImageUrl = "https://example.invalid/poster.jpg"; }],
+  ["lower-case rating region", "items-movies.json", (d) => { d.items[0].contentRating.region = "au"; }],
+  ["non-hex source revision", "item-movie.json", (d) => { d.versions[0].sourceRevision = "rev-synthetic-0001"; }],
+  ["file path on a version", "item-movie.json", (d) => { d.versions[0].path = "/media/movies/synthetic.mkv"; }],
+  ["und language instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].language = "und"; }],
+  ["empty audio profile instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].profile = ""; }],
+  ["unknown HDR format", "item-movie.json", (d) => { d.versions[1].video[0].hdr = "hdr12"; }],
+]);

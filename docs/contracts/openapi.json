@@ -212,6 +212,54 @@
           "500": { "$ref": "#/components/responses/Error" }
         }
       }
+    },
+    "/api/v1/libraries": {
+      "get": {
+        "operationId": "listLibraries",
+        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "summary": "Libraries the current profile may see",
+        "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "Libraries", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LibraryList" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/items": {
+      "get": {
+        "operationId": "listItems",
+        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "summary": "Items the current profile may see, in stable sort-title order. Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. A library or parent the profile may not see is 404.",
+        "parameters": [
+          { "$ref": "#/components/parameters/LibraryIdQuery" },
+          { "$ref": "#/components/parameters/ParentIdQuery" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": { "description": "Items", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPage" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/items/{itemId}": {
+      "get": {
+        "operationId": "getItem",
+        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "summary": "One item with its versions and streams. META-1 fills the descriptive fields and DATA-1 the user state.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Item", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemDetail" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
     }
   },
   "components": {
@@ -224,6 +272,10 @@
       "SessionId": { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
       "Grant": { "name": "grant", "in": "query", "required": true, "description": "Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session", "schema": { "type": "string", "minLength": 1 } },
       "ItemId": { "name": "itemId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "description": "nextCursor from the previous page; opaque", "schema": { "type": "string", "minLength": 1, "maxLength": 512 } },
+      "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+      "LibraryIdQuery": { "name": "libraryId", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1 } },
+      "ParentIdQuery": { "name": "parentId", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1 } },
       "Range": { "name": "Range", "in": "header", "required": false, "schema": { "type": "string" } },
       "IfRange": { "name": "If-Range", "in": "header", "required": false, "schema": { "type": "string" } },
       "IfNoneMatch": { "name": "If-None-Match", "in": "header", "required": false, "schema": { "type": "string" } },
@@ -411,6 +463,172 @@
         "properties": {
           "watched": { "type": "boolean" },
           "expectedRevision": { "type": "integer", "format": "int64", "minimum": 0 }
+        }
+      },
+      "Library": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "type"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "type": { "type": "string", "enum": ["movies", "tv", "anime"] }
+        }
+      },
+      "LibraryList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Library" } },
+          "nextCursor": { "type": ["string", "null"], "minLength": 1 }
+        }
+      },
+      "ContentRating": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["region", "value"],
+        "description": "A certification in one rating region, e.g. AU PG. Ratings from different regions are not comparable.",
+        "properties": {
+          "region": { "type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2" },
+          "value": { "type": "string", "minLength": 1, "maxLength": 32 }
+        }
+      },
+      "ItemSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "libraryId", "parentId", "title", "sortTitle", "year", "index", "durationMs", "contentRating", "primaryImageUrl", "backdropUrl", "userState"],
+        "description": "A logical catalogue item. IDs are opaque and survive renames, provider changes and episode-order changes. title is already in the current profile's title language (spec §3.2). Unknown values are null.",
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["movie", "show", "season", "episode"] },
+          "libraryId": { "type": "string", "minLength": 1 },
+          "parentId": { "type": ["string", "null"], "minLength": 1, "description": "Season: its show. Episode: its season. Null for movies and shows." },
+          "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "sortTitle": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "year": { "type": ["integer", "null"], "minimum": 1800, "maximum": 9999 },
+          "index": { "type": ["integer", "null"], "minimum": 0, "description": "Season or episode number in the library's chosen order (0 = specials). Null for movies and shows, or when unknown." },
+          "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1, "description": "Default version's duration. Null for shows and seasons, or when unknown." },
+          "contentRating": { "oneOf": [{ "$ref": "#/components/schemas/ContentRating" }, { "type": "null" }] },
+          "primaryImageUrl": { "type": ["string", "null"], "pattern": "^/api/v1/", "description": "Poster, or an episode's still. Same-origin relative URL." },
+          "backdropUrl": { "type": ["string", "null"], "pattern": "^/api/v1/" },
+          "userState": { "oneOf": [{ "$ref": "#/components/schemas/UserItemState" }, { "type": "null" }], "description": "The current profile's state. Null for shows and seasons." }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "enum": ["movie", "show"] } } },
+            "then": { "properties": { "parentId": { "type": "null" } } },
+            "else": { "properties": { "parentId": { "type": "string" } } }
+          },
+          {
+            "if": { "properties": { "kind": { "enum": ["show", "season"] } } },
+            "then": { "properties": { "durationMs": { "type": "null" }, "userState": { "type": "null" } } }
+          }
+        ]
+      },
+      "ItemPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ItemSummary" } },
+          "nextCursor": { "type": ["string", "null"], "minLength": 1 }
+        }
+      },
+      "ExternalId": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["namespace", "id"],
+        "description": "A provider ID in its namespace, e.g. tmdb 603. The item's kind says which of the provider's ID spaces it belongs to.",
+        "properties": {
+          "namespace": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,31}$" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "ItemDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "originalTitle", "overview", "genres", "externalIds", "versions"],
+        "properties": {
+          "item": { "$ref": "#/components/schemas/ItemSummary" },
+          "originalTitle": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+          "overview": { "type": ["string", "null"], "maxLength": 10000 },
+          "genres": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+          "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
+          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons, and for a movie or episode with no available file." }
+        },
+        "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
+        "then": { "properties": { "versions": { "maxItems": 0 } } }
+      },
+      "MediaVersion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "fileId", "label", "durationMs", "sourceRevision", "segment", "container", "video", "audio", "subtitles"],
+        "description": "One playable version (cut or quality) of a movie or episode, backed by one file. Episodes that share a file have the same fileId; segment locates the episode when its boundaries are known.",
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "fileId": { "type": "string", "minLength": 1 },
+          "label": { "type": ["string", "null"], "minLength": 1, "maxLength": 100, "description": "e.g. Director's Cut. Null when the item has one unnamed version." },
+          "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1 },
+          "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes." },
+          "segment": { "oneOf": [{ "$ref": "#/components/schemas/Segment" }, { "type": "null" }] },
+          "container": { "type": "string", "minLength": 1, "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm" },
+          "video": { "type": "array", "items": { "$ref": "#/components/schemas/VideoStream" } },
+          "audio": { "type": "array", "items": { "$ref": "#/components/schemas/AudioStream" } },
+          "subtitles": { "type": "array", "items": { "$ref": "#/components/schemas/SubtitleStream" } }
+        }
+      },
+      "Segment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["startMs", "endMs"],
+        "description": "A range of the file's media timeline; endMs is after startMs.",
+        "properties": {
+          "startMs": { "type": "integer", "format": "int64", "minimum": 0 },
+          "endMs": { "type": "integer", "format": "int64", "minimum": 1 }
+        }
+      },
+      "VideoStream": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "codec", "width", "height", "hdr", "default"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0, "description": "Original stream index in the file" },
+          "codec": { "type": "string", "minLength": 1 },
+          "width": { "type": "integer", "minimum": 1 },
+          "height": { "type": "integer", "minimum": 1 },
+          "hdr": { "type": "string", "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolbyVision"] },
+          "default": { "type": "boolean" }
+        }
+      },
+      "AudioStream": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "codec", "profile", "channels", "language", "title", "default", "forced"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "codec": { "type": "string", "minLength": 1 },
+          "profile": { "type": ["string", "null"], "minLength": 1, "description": "ffprobe profile, e.g. LC, Dolby TrueHD + Dolby Atmos, DTS-HD MA. Null when none is reported." },
+          "channels": { "type": "integer", "minimum": 1 },
+          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$", "description": "ISO 639-2 as tagged; null when untagged or und" },
+          "title": { "type": ["string", "null"], "minLength": 1 },
+          "default": { "type": "boolean" },
+          "forced": { "type": "boolean" }
+        }
+      },
+      "SubtitleStream": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "codec", "kind", "language", "title", "default", "forced", "hearingImpaired"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "codec": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["text", "image", "ass"] },
+          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$" },
+          "title": { "type": ["string", "null"], "minLength": 1 },
+          "default": { "type": "boolean" },
+          "forced": { "type": "boolean" },
+          "hearingImpaired": { "type": "boolean" }
         }
       }
     }
