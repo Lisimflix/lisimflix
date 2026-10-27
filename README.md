@@ -44,3 +44,8 @@ changing `docs/contracts/m1-openapi.json`.
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first: pick an unclaimed feature, claim its issue,
 get the plan approved, then open a PR for review. Keep this README current: a PR that changes
 what it describes updates it in the same PR. Agents also follow [`CLAUDE.md`](CLAUDE.md).
+
+## License
+
+[GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). If you run a modified Lisimflix
+server for other people, you must offer them its source (§13).
