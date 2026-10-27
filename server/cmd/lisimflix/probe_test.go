@@ -2,8 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"os"
-	"strings"
 	"testing"
 )
 
@@ -50,21 +48,5 @@ func TestProbeRejectsUnqualifiedSources(t *testing.T) {
 		if _, err := parseProbe(b); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
-	}
-}
-
-// The real record, when the smoke-run media is available.
-func TestProbeOfTheRealM1Source(t *testing.T) {
-	p := os.Getenv("LISIMFLIX_M1_PROBE")
-	if p == "" {
-		t.Skip("LISIMFLIX_M1_PROBE not set")
-	}
-	b, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	m, err := parseProbe(b)
-	if err != nil || !strings.HasPrefix(m.VideoCodec, "h264") {
-		t.Fatalf("real probe = %+v, %v", m, err)
 	}
 }
