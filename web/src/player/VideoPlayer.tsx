@@ -49,9 +49,15 @@ export function VideoPlayer({ client, session, onEnd, onStop }: Props) {
     }, session.heartbeatIntervalSeconds * 1000);
 
     const onPageHide = () => stop();
+    // A bfcache restore brings back this player after pagehide ended its session (#41).
+    const onPageShow = (e: PageTransitionEvent) => {
+      if (e.persisted) onEnd();
+    };
     window.addEventListener("pagehide", onPageHide);
+    window.addEventListener("pageshow", onPageShow);
     return () => {
       window.removeEventListener("pagehide", onPageHide);
+      window.removeEventListener("pageshow", onPageShow);
       stop();
       el.removeAttribute("src");
       el.load();

@@ -87,7 +87,8 @@ export function M1App({ client }: { client: M1Client }) {
     ++generation.current;
     // Unmount the player now, so its stop goes out before the logout.
     flushSync(() => setView({ name: "loading" }));
-    await stopping.current;
+    // Don't hang on Loading if the stop never answers; logout revokes playback anyway (#43).
+    await Promise.race([stopping.current, new Promise((r) => setTimeout(r, 2000))]);
     await client.logout().catch(() => undefined);
     // Logout rotates the CSRF token; fetch the anonymous one before showing the form.
     await client.session().catch(() => undefined);

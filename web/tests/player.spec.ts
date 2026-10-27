@@ -248,4 +248,31 @@ test.describe("playback lifecycle", () => {
     await page.clock.runFor(30_000);
     expect(api.of("POST", "/heartbeat")).toHaveLength(1);
   });
+
+  test("bfcacheRestoreShowsPlay", async ({ page }) => {
+    await FakeAPI.attach(page, smokeClip());
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    await expect(page.locator("video")).toBeAttached();
+    await page.evaluate(() => {
+      window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+      window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }));
+    });
+    await expect(page.locator("video")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Play" })).toBeEnabled();
+  });
+
+  test("logoutDoesNotWaitForAHungStop", async ({ page }) => {
+    const api = await FakeAPI.attach(page, smokeClip());
+    // Never answer the stop request.
+    api.overrides.push(async (_route, call) => call.method === "DELETE");
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    await expect(page.locator("video")).toBeAttached();
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible({ timeout: 4_000 });
+    expect(api.of("POST", "/auth/logout")).toHaveLength(1);
+  });
 });
