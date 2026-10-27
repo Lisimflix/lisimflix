@@ -6,7 +6,9 @@ services:
     build: ..
     image: lisimflix:m1
     user: "${PUID:-1000}:${PGID:-1000}"   # must own CONFIG_DIR; media only needs to be readable
-    ports: ["${LISIMFLIX_PORT:-8420}:8420"]   # host port; the app always listens on 8420 inside
+    # IPv4 only: over IPv6, Docker's userland proxy would hide every client
+    # behind the bridge gateway and they'd share one rate-limit key (#39).
+    ports: ["0.0.0.0:${LISIMFLIX_PORT:-8420}:8420"]   # host port; the app always listens on 8420 inside
     volumes:
       - ${CONFIG_DIR:-./config}:/config
       - ${MEDIA_DIR:?set MEDIA_DIR to your media folder}:/media:ro
