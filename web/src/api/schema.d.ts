@@ -141,6 +141,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{itemId}/watched": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Mark a movie or episode watched or unwatched for the current profile (origin manual). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
+        put: operations["setWatched"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playback/sessions/{sessionId}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report progress for an owned live session. A duplicate or out-of-order sequence is 200 with accepted:false. A session whose source changed is 409 source_changed; an ended session is 410. */
+        post: operations["reportProgress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -204,6 +238,65 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
+        /** @description The current profile's state for one movie or episode. revision counts committed changes (0 = nothing recorded yet); writes send it back as expectedRevision. */
+        UserItemState: {
+            itemId: string;
+            /** Format: int64 */
+            revision: number;
+            resume: components["schemas"]["Resume"] | null;
+            /** @description Null: never marked either way */
+            watched: components["schemas"]["Watched"] | null;
+            /** @description Null when unknown, e.g. after an import that had no count */
+            playCount: number | null;
+            /** Format: date-time */
+            lastPlayedAt: string | null;
+            hiddenFromContinueWatching: boolean;
+        };
+        /** @description A resume position on one version's timeline. A different version or source revision needs confirmation before the position is reused. */
+        Resume: {
+            /** Format: int64 */
+            positionMs: number;
+            /** Format: int64 */
+            durationMs: number;
+            versionId: string;
+            sourceRevision: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description Watched state and where it came from. A manual value is never undone by a later automatic event. */
+        Watched: {
+            value: boolean;
+            /** @enum {string} */
+            origin: "auto" | "manual" | "import";
+            /** Format: date-time */
+            at: string;
+        };
+        /** @description One progress report for a live playback session, sent every 10 s and on pause, seek and stop. The session fixes the item, version and source revision. sequence increases within a session. */
+        ProgressEvent: {
+            /** Format: int64 */
+            sequence: number;
+            /** @enum {string} */
+            kind: "tick" | "pause" | "seek" | "stop";
+            /** Format: int64 */
+            positionMs: number;
+            /**
+             * Format: int64
+             * @description Seeks only: the position before the seek
+             */
+            fromPositionMs: number | null;
+        };
+        /** @description A duplicate or stale event is answered with accepted:false and the unchanged state, not an error. */
+        ProgressResult: {
+            accepted: boolean;
+            /** @enum {string|null} */
+            reason: "duplicate" | "stale" | null;
+            state: components["schemas"]["UserItemState"];
+        };
+        WatchedRequest: {
+            watched: boolean;
+            /** Format: int64 */
+            expectedRevision: number;
+        };
     };
     responses: {
         /** @description Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed, idempotency_conflict (reused key with a different body, or the key of a session that ended recently; start again with a fresh key) or revision_conflict (expectedRevision is not the current revision; reload and retry), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable. */
@@ -223,6 +316,7 @@ export interface components {
         SessionId: string;
         /** @description Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session */
         Grant: string;
+        ItemId: string;
         Range: string;
         IfRange: string;
         IfNoneMatch: string;
@@ -590,6 +684,77 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    setWatched: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Token from AuthState.csrfToken; mismatch is 403 csrf_failed */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                itemId: components["parameters"]["ItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchedRequest"];
+            };
+        };
+        responses: {
+            /** @description New state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserItemState"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    reportProgress: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Token from AuthState.csrfToken; mismatch is 403 csrf_failed */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressEvent"];
+            };
+        };
+        responses: {
+            /** @description Result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            500: components["responses"]["Error"];
         };
     };
 }

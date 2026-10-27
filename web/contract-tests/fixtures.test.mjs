@@ -9,6 +9,8 @@ const ajv = new Ajv2020({ allErrors: true });
 // OpenAPI stores schemas under components; Go decoding checks the int64 range.
 ajv.addKeyword("components");
 ajv.addFormat("int64", true);
+// RFC 3339 instants with an offset, as Go encodes time.Time; Go decoding checks the calendar.
+ajv.addFormat("date-time", /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/);
 ajv.addSchema({ components: contract.components }, "m1");
 
 const fixtures = {
@@ -71,3 +73,43 @@ test("every operation names its owning feature and whether it is implemented", (
     }
   }
 });
+
+// CTR-2 fixtures (testdata/contracts/catalogue). checkFixtures adds one test
+// per fixture and one rejection test per invalid variant.
+const catalogue = (file) => readJSON(`../../testdata/contracts/catalogue/${file}`);
+
+function checkFixtures(fixtures, invalid) {
+  for (const [file, schema] of Object.entries(fixtures)) {
+    test(`catalogue/${file} satisfies ${schema}`, () => {
+      const validate = ajv.getSchema(`m1#/components/schemas/${schema}`);
+      assert.ok(validate(catalogue(file)), `${file}: ${ajv.errorsText(validate.errors)}`);
+    });
+  }
+  for (const [name, file, mutate] of invalid) {
+    test(`rejects ${name}`, () => {
+      const data = catalogue(file);
+      mutate(data);
+      assert.equal(ajv.getSchema(`m1#/components/schemas/${fixtures[file]}`)(data), false, `${name} was accepted`);
+    });
+  }
+}
+
+const userDataFixtures = {
+  "progress-seek.json": "ProgressEvent",
+  "progress-duplicate.json": "ProgressResult",
+  "watched-request.json": "WatchedRequest",
+};
+
+checkFixtures(userDataFixtures, [
+  ["seek without a from position", "progress-seek.json", (d) => { d.fromPositionMs = null; }],
+  ["tick with a from position", "progress-seek.json", (d) => { d.kind = "tick"; }],
+  ["negative position", "progress-seek.json", (d) => { d.positionMs = -1; }],
+  ["rejected event without a reason", "progress-duplicate.json", (d) => { d.reason = null; }],
+  ["accepted event with a reason", "progress-duplicate.json", (d) => { d.accepted = true; }],
+  ["unknown reject reason", "progress-duplicate.json", (d) => { d.reason = "late"; }],
+  ["resume without a source revision", "progress-duplicate.json", (d) => { delete d.state.resume.sourceRevision; }],
+  ["local time without an offset", "progress-duplicate.json", (d) => { d.state.resume.updatedAt = "2026-10-27 08:15:00"; }],
+  ["unknown watched origin", "progress-duplicate.json", (d) => { d.state.watched = { value: true, origin: "plex", at: "2026-10-27T08:15:00Z" }; }],
+  ["negative play count", "progress-duplicate.json", (d) => { d.state.playCount = -1; }],
+  ["fractional expected revision", "watched-request.json", (d) => { d.expectedRevision = 1.5; }],
+]);
