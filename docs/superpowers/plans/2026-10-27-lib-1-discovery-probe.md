@@ -4,9 +4,9 @@
 
 **Goal:** Find video files under a media root without changing them, wait until each one is stable, and probe it with ffprobe under fixed limits. Every result is tagged with the source revision it describes.
 
-**Architecture:** Two new packages, using only the standard library. `probe` runs ffprobe with a deadline and an output cap, reading the file through an `os.Root` handle passed as `/dev/fd/3`, and parses its JSON. `library` walks a root read-only, records each file's revision (size + mtime), and runs probe jobs on a fixed number of workers. Duplicate jobs coalesce. Each job checks the file before probing (quiet period) and after (unchanged revision). Nothing is wired into `serve` yet: LIB-2 adds library definitions, storage and scheduling on top.
+**Architecture:** Two new packages, using only the standard library. `probe` runs ffprobe with a deadline and an output cap, reading the file through an `os.Root` handle passed as `/dev/fd/3`, and parses its JSON. `library` walks a root read-only, records each file's revision (size + mtime), and runs probe jobs on a fixed number of workers. Duplicate jobs coalesce. Each job checks the file before probing (quiet period) and after (unchanged revision). The container image gains a pinned jellyfin-ffmpeg `ffprobe`. Nothing is wired into `serve` yet: LIB-2 adds library definitions, storage and scheduling on top.
 
-**Tech Stack:** Go 1.27.3 standard library (`os.Root`, `io/fs`, `os/exec`). ffprobe/ffmpeg only for the opt-in integration test.
+**Tech Stack:** Go 1.27.3 standard library (`os.Root`, `io/fs`, `os/exec`). jellyfin-ffmpeg 8.1.3-1 portable `ffprobe` in the image. Host ffmpeg/ffprobe for the opt-in integration test.
 
 **Spec:** [`docs/superpowers/specs/2026-10-24-lisimflix-design.md`](../specs/2026-10-24-lisimflix-design.md): §3.6 (scan lifecycle, probe bounds), §9.4 LIB-1 row, §13.4 SAFE-01.
 
@@ -18,13 +18,13 @@
 | Issue | #45 |
 | Owner / reviewer | Pete (claimant) / Lammy |
 | Acceptance | SAFE-01; §3.6 stable-file check, bounded probe, source revisions. Proven with temporary-directory and probe fixtures |
-| File scope | New only: `server/internal/probe/**`, `server/internal/library/**`, one line in `README.md`. No changes to `go.mod`, contracts, existing packages, `Dockerfile` or CI |
+| File scope | New: `server/internal/probe/**`, `server/internal/library/**`. Modified: `Dockerfile` (ffprobe stage; runtime base `static` → `base`), one line in `README.md`. No changes to `go.mod`, contracts, existing packages or CI. The `Dockerfile` came from the M1 integration (#19); Lammy approves the change in this plan's review |
 | Consumes | Nothing from other features (standard library only) |
 | Produces | `probe.Runner`, `probe.Result` (+ stream types), `probe.Parse`; `library.Discover`, `library.File`, `library.Revision`, `library.RevisionOf`, `library.Queue`, `library.NewQueue`, `library.Outcome`, `library.Prober`, `ErrNotStable`/`ErrChanged`/`ErrGone`, `DefaultQuiet`, `DefaultWorkers` |
 | Start dependency | None. Can start now |
 | Standalone test | `mise exec -- go -C server test -race ./internal/probe/ ./internal/library/`, then `make check` |
 | Module proof | Unit tests with temp trees and a fake ffprobe (the test binary), plus `go -C server test -tags integration ./internal/library/` with real ffmpeg/ffprobe (SAFE-01 before/after snapshot) |
-| Integration proof (not in this feature) | LIB-2 wires `Discover` + `Queue` into the catalogue and stores `Outcome`s with compare-and-set on `Rev`. The container image needs an ffprobe binary (OPS/PLY-3 decision; the M1 image has none). Record "module accepted" on #45 when this merges; "integrated" when LIB-2's scan uses it |
+| Integration proof (not in this feature) | LIB-2 wires `Discover` + `Queue` into the catalogue and stores `Outcome`s with compare-and-set on `Rev`, using the image's `/usr/lib/jellyfin-ffmpeg/ffprobe`. Record "module accepted" on #45 when this merges; "integrated" when LIB-2's scan uses it |
 
 ## Global Constraints
 
@@ -46,6 +46,12 @@
 - **Symlinks:** a symlinked *file* is followed only while it stays inside the root. Symlinked *folders* are not walked (`fs.WalkDir` doesn't follow them), which also avoids loops. Escaping or dangling links are skipped.
 - **A partial walk is an error.** Any unreadable folder fails `Discover`, so LIB-2 never marks files missing after an incomplete enumeration (§3.6).
 - **No JSON tags on `probe.Result`.** How results are stored and served is LIB-2/CTR-2's decision (camelCase per the map's delta 9).
+- **ffprobe in the image comes from jellyfin-ffmpeg** (Pete, 2026-10-27; spec §2 picks this build and the `/usr/lib/jellyfin-ffmpeg/` path). The image uses the release's `portable_linux64-gpl` tarball, which holds only `ffmpeg` and `ffprobe` (105 MB each) and links only against glibc. Only `ffprobe` is copied; PLY-3 adds `ffmpeg` and decides on GPU support. Checked with v8.1.3-1:
+  - The build is configured with `--enable-gpl --enable-version3` (GPLv3), plus x264/x265. It's used only as a separate process; no Jellyfin server code is used.
+  - The image ships its `LICENSE.md` and `COPYING.GPLv3` under `/usr/share/doc/jellyfin-ffmpeg/`. Before images are shared publicly, also add a source pointer.
+  - `ADD --unpack=true --checksum=sha256:…` downloads, verifies and unpacks it in one step. This needs `# syntax=docker/dockerfile:1.17` (Docker Dockerfile reference). A wrong checksum fails the build.
+  - The runtime base changes from `distroless/static-debian12` to `distroless/base-debian12` (glibc), pinned by digest. The image grows from ~26 MB to ~205 MB.
+  - **Not tracked by Dependabot.** A comment in the `Dockerfile` says how to bump the version and checksum. Watch jellyfin-ffmpeg releases on GitHub to hear about updates.
 - **Skipped names:** hidden files and folders, non-video extensions (which also covers `.part`, `.!qB` and other in-progress downloads), `@eaDir`-style `@` folders, `#recycle`, `$RECYCLE.BIN`, `lost+found`, `System Volume Information`, `Sample(s)`.
 
 ## File Structure
@@ -62,6 +68,7 @@ server/internal/library/
   queue.go                 Prober, Outcome, Queue (coalescing, bounded workers, stable/changed checks)
   queue_test.go            queue tests with a fake Prober
   integration_test.go      //go:build integration: real ffmpeg/ffprobe, SAFE-01 snapshot
+Dockerfile                 jellyfin-ffmpeg ffprobe stage, glibc distroless base
 README.md                  one line under Checks for the integration test
 ```
 
@@ -1943,7 +1950,113 @@ git commit -m "feat(library): bounded probe queue with stable-file and revision 
 
 ---
 
-### Task 4: Real-ffprobe SAFE-01 test, README, PR
+### Task 4: ffprobe in the container image
+
+**Files:**
+- Modify: `Dockerfile` (whole file below)
+
+**Interfaces:**
+- Consumes: the `Runner` invocation from Task 1 (it reads `/dev/fd/3`, so the image needs `/dev/fd` and a working ffprobe).
+- Produces: `/usr/lib/jellyfin-ffmpeg/ffprobe` in the image, runnable by uid 65532. Licence text in `/usr/share/doc/jellyfin-ffmpeg/`.
+
+- [ ] **Step 1: Replace the `Dockerfile`**
+
+Compared with `main`, this adds the `syntax` line, the `ffmpeg` stage and the two `COPY --from=ffmpeg` lines, and swaps the runtime base from `static-debian12` to `base-debian12`. Everything else is unchanged.
+
+`Dockerfile`:
+```dockerfile
+# syntax=docker/dockerfile:1.17
+# Lisimflix image: amd64, non-root, no shell. Ships ffprobe (LIB-1), no encoder yet.
+# Build with `make image`. Bases are pinned by digest.
+
+FROM node:24.22.1-trixie@sha256:016f604a11c4c725f0a4c62e29ff11adab153d297bf97046c9bf2ddb9f1011d3 AS web
+WORKDIR /src/web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
+WORKDIR /src/server
+COPY server/go.mod server/go.sum ./
+RUN go mod download
+COPY server/ ./
+COPY --from=web /src/web/dist/ ./internal/webassets/dist/
+ARG VERSION=dev
+# TAGS=m1smoke adds a test-only migration, for upgrade smoke tests only.
+ARG TAGS=
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags "$TAGS" \
+      -ldflags="-s -w -X main.version=$VERSION" -o /out/lisimflix ./cmd/lisimflix
+
+# jellyfin-ffmpeg portable build (GPLv3), used only as a separate process.
+# Not tracked by Dependabot: to update, take the new release's
+# portable_linux64-gpl asset and its sha256 from
+# https://github.com/jellyfin/jellyfin-ffmpeg/releases and change both lines.
+FROM scratch AS ffmpeg
+ADD --unpack=true --checksum=sha256:b86dc023c64a5a9a410e6e3a938a970460214fae78f31c1553c9f88f1c289b6a \
+    https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_linux64-gpl.tar.xz /
+ADD --checksum=sha256:8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903 \
+    https://raw.githubusercontent.com/jellyfin/jellyfin-ffmpeg/v8.1.3-1/COPYING.GPLv3 /COPYING.GPLv3
+ADD --checksum=sha256:2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af \
+    https://raw.githubusercontent.com/jellyfin/jellyfin-ffmpeg/v8.1.3-1/LICENSE.md /LICENSE.md
+
+# base (not static): the ffprobe build links against glibc.
+FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b1acf5525439ba251a49ad93c320a061567e5
+COPY --from=build /out/lisimflix /usr/local/bin/lisimflix
+COPY --from=ffmpeg /ffprobe /usr/lib/jellyfin-ffmpeg/ffprobe
+COPY --from=ffmpeg /COPYING.GPLv3 /LICENSE.md /usr/share/doc/jellyfin-ffmpeg/
+USER 65532:65532
+EXPOSE 8420
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/usr/local/bin/lisimflix", "healthcheck"]
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/local/bin/lisimflix"]
+CMD ["serve", "--config", "/config/m1.json"]
+```
+
+- [ ] **Step 2: Build the image**
+
+Run: `make image`
+Expected: the build succeeds and tags `lisimflix:<version>` and `lisimflix:m1`. `docker image ls lisimflix:m1` shows about 205 MB.
+
+- [ ] **Step 3: Check ffprobe inside the image**
+
+Make a 2 s clip, then probe it inside the image, hardened like the compose file (read-only, no capabilities, non-root). Pass it on stdin as `/dev/fd/0`, which also proves the container has `/dev/fd`:
+
+```bash
+ffmpeg -v error -y -f lavfi -i testsrc=duration=2:size=320x240:rate=25 -f lavfi -i sine=duration=2   -c:v libx264 -pix_fmt yuv420p -c:a aac -movflags +faststart /tmp/lib1-clip.mp4
+docker run --rm --entrypoint /usr/lib/jellyfin-ffmpeg/ffprobe lisimflix:m1 -version | head -1
+docker run --rm -i --read-only --cap-drop ALL --entrypoint /usr/lib/jellyfin-ffmpeg/ffprobe lisimflix:m1   -v error -show_entries stream=codec_name -of csv /dev/fd/0 < /tmp/lib1-clip.mp4
+docker create --name lib1chk lisimflix:m1 >/dev/null && docker cp lib1chk:/usr/share/doc/jellyfin-ffmpeg - | tar -t; docker rm lib1chk
+```
+
+Expected:
+- `ffprobe version 8.1.3-Jellyfin ...`
+- `stream,h264` and `stream,aac`
+- `jellyfin-ffmpeg/COPYING.GPLv3` and `jellyfin-ffmpeg/LICENSE.md`
+
+- [ ] **Step 4: Check that a wrong checksum fails the build**
+
+```bash
+sed 's/b86dc023c64a/b86dc023c64b/' Dockerfile > /tmp/Dockerfile.bad
+docker build --no-cache -f /tmp/Dockerfile.bad --target ffmpeg . 2>&1 | grep -m1 'digest mismatch'
+```
+
+Expected: one `digest mismatch` line (the build fails).
+
+- [ ] **Step 5: Re-run the M1 smoke on the new image**
+
+The runtime base changed, so repeat the M1 container start from `deploy/README.md` with the existing `/config/m1.json`. Expected: `serve` starts, `HEALTHCHECK` turns healthy, and the configured movie plays in one browser to the first minute. Record this in the PR. The full M1 rows aren't needed again: the server binary is unchanged.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Dockerfile
+git commit -m "feat(platform): ship jellyfin-ffmpeg ffprobe in the image (LIB-1)"
+```
+
+---
+
+### Task 5: Real-ffprobe SAFE-01 test, README, PR
 
 **Files:**
 - Create: `server/internal/library/integration_test.go`
@@ -2118,6 +2231,7 @@ PR body (template):
 ## Done when
 
 - `make check` passes locally and on Actions; the integration test passes with real ffprobe.
+- `make image` builds; ffprobe runs inside it (Task 4 Step 3); a wrong checksum fails the build; the M1 smoke still passes on the new base.
 - Lammy approves; Pete squash-merges; #45 records "module accepted" and links the PR.
 - LIB-2's plan can use `Discover`, `NewQueue`/`Outcome` and `probe.Runner` as described in Task 3's contract.
 
@@ -2133,7 +2247,8 @@ PR body (template):
   - bounded probes (2 / 30 s / 8 MiB, visible failures): `DefaultWorkers` plus the `Runner` limits and errors.
   - paths stay in roots, symlink escapes rejected: `os.Root` in Tasks 1 and 2.
   - no shell: `exec.Command` argv.
-  - SAFE-01 before/after check: Task 4.
+  - SAFE-01 before/after check: Task 5.
+  - ffprobe available in the deployed image (spec §2 build and path): Task 4.
 - **Deferred to LIB-2 and named in #45:**
   - "stale results cannot overwrite newer data" needs storage (compare-and-set on `Rev`)
   - resumable scans, watcher, schedules, offline-root states, status reasons
@@ -2149,6 +2264,7 @@ PR body (template):
   - passing a path instead of `/dev/fd/3`
   - reporting a caller cancel as a timeout
 - **One mutation has no deterministic test:** removing the extra wake-up in `next()`. The queue still works but can leave a worker idle during a burst of adds.
+- **Image checked before writing it (Task 4):** `docker build` succeeded at 205 MB. ffprobe 8.1.3-Jellyfin probed a clip via `/dev/fd/0` inside the image (read-only, `--cap-drop ALL`, uid 65532). The licence files are present, and a wrong checksum failed with `digest mismatch`. Step 5 (M1 smoke on the new base) hasn't run yet.
 - **Built from this plan's code before writing it:** `go vet`, gofmt, `go test -race -count=5` and the integration test (FFmpeg n9.0.2, Arch) all pass on top of `main` at `96e2c51`.
 - **Placeholders:** none. Every code step is the whole file.
 - **Type consistency:** `Prober.Probe(ctx, *os.Root, string) (probe.Result, error)` matches `probe.Runner.Probe`. `Outcome.Rev`, `RevisionOf` and `File.Rev` are the same `Revision` type.
