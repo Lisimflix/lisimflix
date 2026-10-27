@@ -1,5 +1,5 @@
 // Package contracts holds the public M1 API wire types shared by the runtime,
-// playback and web player. docs/contracts/m1-openapi.json is the source of
+// playback and web player. docs/contracts/openapi.json is the source of
 // truth; TestOpenAPIMatchesGoTypes keeps these structs' field names and
 // required set in step with it (not their types or nullability).
 package contracts

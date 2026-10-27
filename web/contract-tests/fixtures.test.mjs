@@ -4,7 +4,7 @@ import test from "node:test";
 import Ajv2020 from "@redocly/ajv/dist/2020.js";
 
 const readJSON = (path) => JSON.parse(readFileSync(new URL(path, import.meta.url), "utf8"));
-const contract = readJSON("../../docs/contracts/m1-openapi.json");
+const contract = readJSON("../../docs/contracts/openapi.json");
 const ajv = new Ajv2020({ allErrors: true });
 // OpenAPI stores schemas under components; Go decoding checks the int64 range.
 ajv.addKeyword("components");
@@ -61,3 +61,13 @@ for (const [name, file, mutate] of invalidFixtures) {
     assert.equal(validate(data), false, `${name} was accepted`);
   });
 }
+
+test("every operation names its owning feature and whether it is implemented", () => {
+  for (const [path, item] of Object.entries(contract.paths)) {
+    for (const [method, op] of Object.entries(item)) {
+      const x = op["x-lisimflix"] ?? {};
+      assert.match(x.owner ?? "", /^[A-Z]+-\d+$/, `${method} ${path} owner`);
+      assert.ok(["implemented", "planned"].includes(x.status), `${method} ${path} status`);
+    }
+  }
+});

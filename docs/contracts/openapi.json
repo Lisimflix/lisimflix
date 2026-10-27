@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Lisimflix M1 API",
-    "version": "0.1.0",
-    "description": "M1 contract (CTR-1): one authorised viewer plays one original MP4. All /api/v1 responses are private and sent with Cache-Control: no-store. Unsafe browser operations require X-CSRF-Token. Login/logout/session behaviour belongs to the runtime (OPS-1/ACC-1); playback sessions and content belong to PLY-2. Source paths, password hashes, cookies and grants never appear in response bodies other than the grant inside contentUrl."
+    "title": "Lisimflix API",
+    "version": "0.2.0",
+    "description": "Public HTTP contract. M1 (CTR-1): one authorised viewer plays one original MP4. CTR-2 adds the catalogue, user-data, profile and metadata-provenance shapes. Each operation's x-lisimflix names its owning feature and whether it is implemented or still planned. All /api/v1 responses are private and sent with Cache-Control: no-store. Unsafe browser operations require X-CSRF-Token. Login/logout/session behaviour belongs to the runtime (OPS-1/ACC-1); playback sessions and content belong to PLY-2. Source paths, password hashes, cookies and grants never appear in response bodies other than the grant inside contentUrl."
   },
   "servers": [{ "url": "/" }],
   "security": [{ "sessionCookie": [] }],
@@ -11,6 +11,7 @@
     "/api/v1/auth/session": {
       "get": {
         "operationId": "getAuthSession",
+        "x-lisimflix": { "owner": "ACC-1", "status": "implemented" },
         "summary": "Current auth state; anonymous callers get authenticated:false, viewer:null and a CSRF token",
         "security": [{}, { "sessionCookie": [] }],
         "responses": {
@@ -23,6 +24,7 @@
     "/api/v1/auth/login": {
       "post": {
         "operationId": "login",
+        "x-lisimflix": { "owner": "ACC-1", "status": "implemented" },
         "summary": "Sign in; rotates the session cookie and issues a fresh CSRF token",
         "security": [{}],
         "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }],
@@ -44,6 +46,7 @@
     "/api/v1/auth/logout": {
       "post": {
         "operationId": "logout",
+        "x-lisimflix": { "owner": "ACC-1", "status": "implemented" },
         "summary": "Sign out; removes the cookie and revokes the auth session and its playback sessions",
         "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }],
         "responses": {
@@ -57,6 +60,7 @@
     "/api/v1/movies": {
       "get": {
         "operationId": "listMovies",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
         "summary": "Movies the viewer may play (M1: only the configured movie)",
         "responses": {
           "200": { "description": "Movies", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MovieList" } } } },
@@ -69,6 +73,7 @@
     "/api/v1/playback/sessions": {
       "post": {
         "operationId": "createPlaybackSession",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
         "summary": "Start playback. Replaying the same key and payload for an active session returns 200 with that session. The same key with a changed payload, or the key of a session that ended recently (its record is kept for 5 minutes), is 409 idempotency_conflict: start again with a new key.",
         "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSessionRequest" } } } },
@@ -89,6 +94,7 @@
     "/api/v1/playback/sessions/{sessionId}/heartbeat": {
       "post": {
         "operationId": "heartbeatPlaybackSession",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
         "summary": "Keep a live owned session alive; expired sessions return 410 and are not revived",
         "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HeartbeatRequest" } } } },
@@ -106,6 +112,7 @@
     "/api/v1/playback/sessions/{sessionId}": {
       "delete": {
         "operationId": "stopPlaybackSession",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
         "summary": "Stop an owned session; idempotent",
         "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
         "responses": {
@@ -120,6 +127,7 @@
     "/api/v1/playback/sessions/{sessionId}/content": {
       "get": {
         "operationId": "getPlaybackContent",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
         "summary": "Original MP4 bytes, never transformed. Needs both the user cookie and the signed grant.",
         "parameters": [
           { "$ref": "#/components/parameters/SessionId" },
@@ -144,6 +152,7 @@
       },
       "head": {
         "operationId": "headPlaybackContent",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
         "summary": "Headers of the original MP4 (length, ranges, validators) without a body",
         "parameters": [
           { "$ref": "#/components/parameters/SessionId" },
@@ -184,7 +193,7 @@
     },
     "responses": {
       "Error": {
-        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body, or the key of a session that ended recently; start again with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
+        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed, idempotency_conflict (reused key with a different body, or the key of a session that ended recently; start again with a fresh key) or revision_conflict (expectedRevision is not the current revision; reload and retry), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } }
       }
     },
@@ -258,7 +267,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "enum": ["invalid_request", "unauthenticated", "csrf_failed", "not_found", "source_changed", "idempotency_conflict", "playback_expired", "capacity_unavailable", "rate_limited", "source_unavailable", "internal_error"]
+            "enum": ["invalid_request", "unauthenticated", "csrf_failed", "not_found", "source_changed", "idempotency_conflict", "revision_conflict", "playback_expired", "capacity_unavailable", "rate_limited", "source_unavailable", "internal_error"]
           },
           "message": { "type": "string", "maxLength": 256 },
           "requestId": { "type": "string", "minLength": 1 }

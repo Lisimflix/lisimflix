@@ -1,7 +1,7 @@
 # M1 contract fixtures
 
 Synthetic examples of the public M1 API shapes in
-[`docs/contracts/m1-openapi.json`](../../../docs/contracts/m1-openapi.json).
+[`docs/contracts/openapi.json`](../../../docs/contracts/openapi.json).
 Go (`server/internal/contracts`) round-trips them; `npm --prefix web run test:contracts`
 validates these same files against OpenAPI and rejects invalid examples. `make check`
 runs both checks plus the generated TypeScript assertions. All IDs, tokens and

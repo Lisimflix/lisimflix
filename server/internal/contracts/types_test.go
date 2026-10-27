@@ -153,7 +153,7 @@ func TestWriteErrorRejectsUnknownCodeAndLongMessage(t *testing.T) {
 // the generated TypeScript types) on the same field names and required set. It
 // does not compare field types or nullability.
 func TestOpenAPIMatchesGoTypes(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "m1-openapi.json"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "openapi.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,6 +173,11 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		"Viewer": Viewer{}, "AuthState": AuthState{}, "Movie": Movie{}, "MovieList": MovieList{},
 		"PlaybackSession": PlaybackSession{}, "APIError": APIError{},
 		"LoginRequest": LoginRequest{}, "PlaybackSessionRequest": PlaybackSessionRequest{}, "HeartbeatRequest": HeartbeatRequest{},
+	}
+	for name := range doc.Components.Schemas {
+		if _, ok := types[name]; !ok {
+			t.Errorf("schema %s has no Go type in this test", name)
+		}
 	}
 	for name, v := range types {
 		s, ok := doc.Components.Schemas[name]
@@ -229,7 +234,7 @@ func TestPrincipalWithEmptyIDIsUnauthenticated(t *testing.T) {
 }
 
 func TestErrorCodesMatchOpenAPI(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "m1-openapi.json"))
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "openapi.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,5 +270,17 @@ func TestWriteErrorSendsCodeStatus(t *testing.T) {
 		if w.Code != status || e.Code != code {
 			t.Errorf("%s: got %d %q, want %d", code, w.Code, e.Code, status)
 		}
+	}
+}
+
+// CTR-2: a write whose expectedRevision is stale is a 409 the client resolves
+// by reloading.
+func TestRevisionConflictIsAConflict(t *testing.T) {
+	w := httptest.NewRecorder()
+	WriteError(w, httptest.NewRequest(http.MethodPut, "/", nil), CodeRevisionConflict, "Reload and try again.")
+	var e APIError
+	decodeStrict(t, w.Body.Bytes(), &e)
+	if w.Code != http.StatusConflict || e.Code != "revision_conflict" {
+		t.Fatalf("got %d %q", w.Code, e.Code)
 	}
 }
