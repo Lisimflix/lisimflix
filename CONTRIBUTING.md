@@ -86,6 +86,9 @@ Never bypass it with `--no-verify`.
 - Hand-offs and decisions go in issue or PR comments, not only in chat.
 - Non-blocking review notes, and issues noticed in passing, get their own issue
   (area labels, linking the PR or review) before the PR merges. A comment alone gets lost.
+- Code added for a later feature, with no production caller yet, gets a one-line comment
+  naming its future user: `// Planned: <Feature ID> (<what will call it>).` Remove it when
+  the caller lands. Reviews and audits treat untagged code with no caller as dead.
 
 ## Naming
 
