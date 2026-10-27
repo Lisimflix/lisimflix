@@ -239,7 +239,9 @@ func (m *Manager) create(ctx context.Context) (token string, s *session, err err
 	}
 	m.sessions[sha256.Sum256([]byte(token))] = s
 	m.mu.Unlock()
-	m.revoke(ctx, "expired", expiredIDs...)
+	// Expired sessions are only swept here; they aren't this request's doing,
+	// so they're logged without its request ID. The eviction is (#86).
+	m.revoke(context.Background(), "expired", expiredIDs...)
 	m.revoke(ctx, "evicted", evicted...)
 	return token, s, nil
 }
