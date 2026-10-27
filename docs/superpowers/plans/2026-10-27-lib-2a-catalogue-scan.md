@@ -53,10 +53,17 @@ A pure `library/naming` package turns paths into items from Plex/Radarr/Sonarr a
 ## Decisions taken in this plan (please review)
 
 1. **Package layout.** The catalogue lives in LIB-1's `library` package; spec §10.2 says `library` owns discovery and probe updates. Name parsing is a separate pure package, `library/naming`, because it has no I/O and lots of table tests.
-2. **Item identity comes from names, not paths.**
-   - A movie's key is its normalised title plus year (`movie:heat|1995`). A show's key is the same for the show; seasons and episodes extend it (`…|s1|e2`, or `…|d2024-03-01` for daily shows).
-   - So a Radarr/Sonarr rename (`Heat.1995.1080p` → `Heat (1995) {tmdb-949}`) keeps the item, and a moved file becomes a new version of the same item. That's the "trusted evidence" spec §3.6 asks for, without guessing from file sizes.
-   - **Known limit:** two different films with the same title and year join into one item. ID hints are stored per item, keeping conflicting values, so META-1 can flag that for review.
+2. **Item identity: names, plus a folder rule (Pete, #90).**
+   - A movie's key is its normalised title plus year (`movie:heat|1995`); a show's is the same for the show. Seasons and episodes extend it (`…|s1|e2`, or `…|d2024-03-01` for daily shows). Each file also records the **folder** its name came from (`naming.Entry.Folder`), and `library_folders` maps each folder to its item.
+   - **Two folders that exist at the same time are never merged by the scanner**, even when their names or ID hints match. Examples: a `Doctor Who` folder with no year (1963 or 2005?), or a remake. The new folder gets its own provisional item and a pending pair.
+   - **After a completed scan, each pending pair is settled:**
+     - **Rename or move:** if the existing item has no present file left, the new folder replaced the old one. It's folded in, keeping every item ID, so this case needs no admin.
+     - **Two real folders:** otherwise both folders exist, and the pair is **flagged**.
+   - **The admin decides each flag**, with `Decide(id, merge)`:
+     - **Merge:** one item, with both folders' versions; matching episodes get both, and the rest move across.
+     - **Keep separate.**
+     - Either way the folder mapping is kept, so the flag doesn't return, and new files in a merged folder join the merged item. The admin screen is LIB-2c.
+   - **Limit:** a move between two roots of one library is flagged rather than folded, because the old root isn't rescanned in the same run. The admin merges it.
 3. **SCAN-01 rules:**
 
    | Situation | Run | Root | Files |
@@ -74,6 +81,7 @@ A pure `library/naming` package turns paths into items from Plex/Radarr/Sonarr a
 5. **Probes.**
    - `ProbeDue` probes present files whose stored probe revision differs from their current size and mtime.
    - **Results:** saved only if the file still has that revision (compare-and-set). Otherwise they're counted `Stale` and dropped.
+   - **Only forward:** a "still changing" outcome may only move a file's recorded revision forward (`mtime_ns <= new`), so it can't overwrite a newer one a concurrent scan recorded (Pete's note on #90).
    - **Still changing:** `ErrNotStable` or `ErrChanged` records the newer revision and a not-before time of mtime + quiet period, so nothing spins. That fixes #62 without changing LIB-1.
    - **Errors:** kept, up to 500 bytes, for the admin list. They aren't retried until the file changes or `RetryProbe` clears them.
    - `probe_json` holds `probe.Result` as Go encodes it. It's internal; LIB-2c maps it to CTR-2's stream shapes.
@@ -97,6 +105,7 @@ server/internal/library/
   migrations/20261027120000_library_catalogue.sql
   store.go, store_test.go   Migrations, Store, CreateLibrary, Library, MarkInterrupted
   scan.go, scan_test.go     Scanner, ScanRoot, Run; placing files on items and versions
+  duplicates.go, duplicates_test.go  folder → item mapping, possible duplicates, rename folding, Duplicates, Decide
   probes.go, probes_test.go ProbeDue, ProbeRun, RetryProbe
   retire.go, retire_test.go RetireAfter, RetirementCandidates, Retire
 ```
@@ -277,6 +286,20 @@ func TestSortTitle(t *testing.T) {
 		}
 	}
 }
+
+func TestClassifyFolder(t *testing.T) {
+	for _, c := range []struct{ lib, rel, want string }{
+		{Movies, "Heat (1995)/Heat (1995).mkv", "Heat (1995)"},
+		{Movies, "Movies A-Z/Alien (1979)/Alien.mkv", "Movies A-Z/Alien (1979)"},
+		{Movies, "Loose Movie (2001).mkv", ""},
+		{TV, "Show (2019)/Season 01/Show - S01E01.mkv", "Show (2019)"},
+		{TV, "Loose.Show.S01E01.mkv", ""},
+	} {
+		if e, err := Classify(c.lib, c.rel, 2<<30); err != nil || e.Folder != c.want {
+			t.Errorf("Classify(%q).Folder = %q, %v; want %q", c.rel, e.Folder, err, c.want)
+		}
+	}
+}
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -323,12 +346,14 @@ var (
 	ErrSample       = errors.New("naming: sample file")
 )
 
-// Entry is where one video file belongs. Key identifies the movie or show
-// within its library: normalised title plus year, so cosmetic renames
-// ("Heat.1995" → "Heat (1995) {tmdb-949}") keep the same item (spec §3.6).
+// Entry is where one video file belongs. Key names the movie or show:
+// normalised title plus year, so cosmetic renames ("Heat.1995" → "Heat (1995)
+// {tmdb-949}") give the same key. Folder is the folder the name came from;
+// the store uses it to tell a rename from two folders that clash (spec §3.6).
 type Entry struct {
 	Kind    Kind
 	Key     string            // "movie:heat|1995" or "show:show|2019"
+	Folder  string            // the movie's folder or the show's top folder, inside the root; "" for loose files
 	Title   string            // movie or show title
 	Year    int               // 0 when unknown
 	IDs     map[string]string // provider ID hints from the names, e.g. tmdb → 949
@@ -413,7 +438,7 @@ func classifyMovie(dirs []string, stem string) Entry {
 			}
 		}
 	}
-	return Entry{Kind: Movie, Key: "movie:" + key(ni.Title) + "|" + strconv.Itoa(ni.Year),
+	return Entry{Kind: Movie, Key: "movie:" + key(ni.Title) + "|" + strconv.Itoa(ni.Year), Folder: strings.Join(dirs, "/"),
 		Title: ni.Title, Year: ni.Year, IDs: ni.IDs, Version: versionLabel(stem)}
 }
 
@@ -541,6 +566,7 @@ func classifyEpisode(anime bool, dirs []string, stem string) (Entry, error) {
 	var ni nameInfo
 	if len(dirs) > 0 {
 		ni = parseName(dirs[0])
+		e.Folder = dirs[0]
 	} else {
 		ni = parseName(showPart)
 	}
@@ -947,6 +973,32 @@ CREATE TABLE library_id_hints (
     value     TEXT NOT NULL,
     PRIMARY KEY (item_id, namespace, value)
 ) STRICT;
+
+-- Which movie or show each naming folder belongs to (Entry.Folder; '' for
+-- loose files in the root). Once a folder is mapped, its files always go to
+-- that item, so a decision about a possible duplicate sticks.
+CREATE TABLE library_folders (
+    root_id  TEXT NOT NULL REFERENCES library_roots(id) ON DELETE CASCADE,
+    folder   TEXT NOT NULL,
+    scan_key TEXT NOT NULL,          -- the naming key the folder produced
+    item_id  TEXT NOT NULL REFERENCES library_items(id) ON DELETE CASCADE,
+    PRIMARY KEY (root_id, folder, scan_key)
+) STRICT;
+
+-- A folder whose name matches an existing item from another folder gets its
+-- own provisional item (other_id). After a completed scan, a pair whose
+-- existing item has no present files was a rename or move and is folded
+-- together; otherwise both folders exist and the pair is flagged for the
+-- admin to merge or keep separate. Nothing merges two coexisting folders
+-- automatically.
+CREATE TABLE library_duplicates (
+    id       TEXT PRIMARY KEY,
+    root_id  TEXT NOT NULL REFERENCES library_roots(id) ON DELETE CASCADE, -- the other folder's root
+    item_id  TEXT NOT NULL REFERENCES library_items(id) ON DELETE CASCADE, -- the existing item
+    other_id TEXT NOT NULL REFERENCES library_items(id) ON DELETE CASCADE, -- the provisional item
+    state    TEXT NOT NULL CHECK (state IN ('pending', 'flagged', 'separate')),
+    UNIQUE (item_id, other_id)
+) STRICT;
 ```
 
 **Create `server/internal/library/store.go`:**
@@ -1197,17 +1249,149 @@ git commit -m "feat(library): catalogue schema and library store (LIB-2a)"
 
 ---
 
-### Task 3: Offline-safe scans into items and versions
+### Task 3: Offline-safe scans into items, versions and duplicate flags
 
 **Files:**
+- Create: `server/internal/library/duplicates.go`
 - Create: `server/internal/library/scan.go`
+- Test: `server/internal/library/duplicates_test.go`
 - Test: `server/internal/library/scan_test.go`
 
 **Interfaces:**
 - Consumes: Task 2's `Store` internals and `newStore`; Task 1's `Classify`; LIB-1's `Discover`, `File`.
-- Produces: `Scanner{Store, Media *os.Root, Discover}`; `(*Scanner).ScanRoot(ctx, rootID) (Run, error)`; `Run{ID, Status, Reason, Seen, Added, Changed, Returned, Missing, Unplaced}`; `RunRunning`/`RunCompleted`/`RunFailed`/`RunCancelled`/`RunInterrupted`; `ReasonRootUnavailable`/`ReasonRootEmpty`/`ReasonEnumerationFailed`; internal `setRoot` (used by Task 2's `MarkInterrupted`, now tested). Test helpers `newMedia`, `(*media).write`, `(*media).scanner`, `scan`, `counts`, `(*Store).fileStates`, `(*Store).tree`, `rootState`.
+- Produces: `Scanner{Store, Media *os.Root, Discover}`; `(*Scanner).ScanRoot(ctx, rootID) (Run, error)`; `Duplicate{ID, ItemID, OtherID, Title}`, `(*Store).Duplicates(ctx, libID) ([]Duplicate, error)`, `(*Store).Decide(ctx, dupID string, merge bool) error`; internal `groupItem`, `settle`, `fold`, `moveInto`, `hasPresentFile`; `Run{ID, Status, Reason, Seen, Added, Changed, Returned, Missing, Unplaced}`; `RunRunning`/`RunCompleted`/`RunFailed`/`RunCancelled`/`RunInterrupted`; `ReasonRootUnavailable`/`ReasonRootEmpty`/`ReasonEnumerationFailed`; internal `setRoot` (used by Task 2's `MarkInterrupted`, now tested). Test helpers `newMedia`, `(*media).write`, `(*media).scanner`, `scan`, `counts`, `(*Store).fileStates`, `(*Store).tree`, `rootState`.
 
 - [ ] **Step 1: Write the failing test**
+
+**Create `server/internal/library/duplicates_test.go`:**
+
+```go
+package library
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+)
+
+func itemID(t *testing.T, s *Store, key string) string {
+	t.Helper()
+	var id string
+	if err := s.db.QueryRow(`SELECT id FROM library_items WHERE scan_key = ?`, key).Scan(&id); err != nil {
+		t.Fatalf("item %s: %v", key, err)
+	}
+	return id
+}
+
+func dups(t *testing.T, s *Store, libID string) []Duplicate {
+	t.Helper()
+	d, err := s.Duplicates(context.Background(), libID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+// Two folders that exist at the same time and give the same name ("Doctor
+// Who" with no year: 1963 or 2005?) are never merged by the scanner.
+func TestCoexistingFoldersAreFlaggedNotMerged(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Doctor Who/Season 01/Doctor Who - S01E01.mkv", 10)
+	m.write("TV/Doctor.Who/Season 01/Doctor.Who.S01E01.mkv", 20)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+
+	want := []string{"episode Episode 1 1 v1", "episode Episode 1 1 v1", "season Season 1 1 v0", "season Season 1 1 v0", "show Doctor Who - v0", "show Doctor Who - v0"}
+	if got := s.tree(t, lib.ID); !slices.Equal(got, want) {
+		t.Fatalf("items %v, want two separate shows", got)
+	}
+	d := dups(t, s, lib.ID)
+	if len(d) != 1 {
+		t.Fatalf("duplicates %+v", d)
+	}
+	if err := s.Decide(ctx, d[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	scan(t, sc, lib.Roots[0].ID)
+	if got := s.tree(t, lib.ID); !slices.Equal(got, want) || len(dups(t, s, lib.ID)) != 0 {
+		t.Fatalf("after keeping them separate: %v, flags %v", got, dups(t, s, lib.ID))
+	}
+	if err := s.Decide(ctx, d[0].ID, true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("deciding twice: %v", err)
+	}
+	if err := s.Decide(ctx, "dup-nope", true); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown pair: %v", err)
+	}
+}
+
+// Merging folds the other folder's show into the existing one: matching
+// episodes get both versions, the rest move across, and the existing IDs stay.
+func TestMergeDecisionFoldsItemsTogether(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Doctor Who/Season 01/Doctor Who - S01E01.mkv", 10)
+	m.write("TV/Doctor.Who/Season 01/Doctor.Who.S01E01.mkv", 20)
+	m.write("TV/Doctor.Who/Season 01/Doctor.Who.S01E02.mkv", 30)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+	show, ep1 := itemID(t, s, "show:doctor who|0"), itemID(t, s, "show:doctor who|0|s1|e1")
+
+	d := dups(t, s, lib.ID)
+	if len(d) != 1 || d[0].ItemID != show {
+		t.Fatalf("duplicates %+v", d)
+	}
+	if err := s.Decide(ctx, d[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"episode Episode 1 1 v2", "episode Episode 2 2 v1", "season Season 1 1 v0", "show Doctor Who - v0"}
+	if got := s.tree(t, lib.ID); !slices.Equal(got, want) {
+		t.Fatalf("after merge %v, want %v", got, want)
+	}
+	if itemID(t, s, "show:doctor who|0") != show || itemID(t, s, "show:doctor who|0|s1|e1") != ep1 {
+		t.Fatal("the existing items' IDs changed")
+	}
+	// The decision sticks: the next scan neither splits nor flags them, and a
+	// new episode in the merged folder joins the same show.
+	m.write("TV/Doctor.Who/Season 01/Doctor.Who.S01E03.mkv", 40)
+	scan(t, sc, lib.Roots[0].ID)
+	want = append(want[:2:2], append([]string{"episode Episode 3 3 v1"}, want[2:]...)...)
+	if got := s.tree(t, lib.ID); !slices.Equal(got, want) || len(dups(t, s, lib.ID)) != 0 {
+		t.Fatalf("after rescan %v, want %v; flags %v", got, want, dups(t, s, lib.ID))
+	}
+}
+
+// A rename is not a duplicate: the old folder is gone by the end of the scan,
+// so the new folder folds into the existing items and every ID is kept.
+func TestRenamedFolderKeepsItemIDs(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Show.Name/Season 1/Show.Name.S01E01.mkv", 10)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+	show, ep := itemID(t, s, "show:show name|0"), itemID(t, s, "show:show name|0|s1|e1")
+
+	os.RemoveAll(filepath.Join(m.dir, "TV/Show.Name"))
+	m.write("TV/Show Name/Season 01/Show Name - S01E01.mkv", 10)
+	scan(t, sc, lib.Roots[0].ID)
+	if itemID(t, s, "show:show name|0") != show || itemID(t, s, "show:show name|0|s1|e1") != ep {
+		t.Fatal("rename changed the item IDs")
+	}
+	want := []string{"episode Episode 1 1 v2", "season Season 1 1 v0", "show Show Name - v0"}
+	if got := s.tree(t, lib.ID); !slices.Equal(got, want) || len(dups(t, s, lib.ID)) != 0 {
+		t.Fatalf("after rename %v, flags %v", got, dups(t, s, lib.ID))
+	}
+}
+```
 
 **Create `server/internal/library/scan_test.go`:**
 
@@ -1326,7 +1510,7 @@ func TestScanBuildsItemsFromNames(t *testing.T) {
 	m := newMedia(t)
 	m.write("Movies/Heat (1995) {tmdb-949}/Heat (1995) - 1080p.mkv", 10)
 	m.write("Movies/Heat (1995) {tmdb-949}/Heat (1995) - 2160p.mkv", 20)
-	m.write("Movies/Heat.1995.Remux/Heat.1995.Remux.mkv", 30) // same film, other folder: one more version
+	m.write("Movies/Heat.1995.Remux/Heat.1995.Remux.mkv", 30) // same name, another folder: flagged, not merged
 	m.write("Movies/Heat (1995) {tmdb-949}/Featurettes/Making Of.mkv", 5)
 	m.write("TV/Show (2019)/Season 01/Show - S01E01E02 - Pilot.mkv", 40)
 	m.write("TV/Show (2019)/Season 01/Show - S01E03.mkv", 50)
@@ -1338,8 +1522,11 @@ func TestScanBuildsItemsFromNames(t *testing.T) {
 	if got := counts(scan(t, sc, movies.Roots[0].ID)); got != [6]int{4, 4, 0, 0, 0, 1} {
 		t.Fatalf("movies run %v", got)
 	}
-	if got, want := s.tree(t, movies.ID), []string{"movie Heat - v3"}; !slices.Equal(got, want) {
+	if got, want := s.tree(t, movies.ID), []string{"movie Heat - v1", "movie Heat - v2"}; !slices.Equal(got, want) {
 		t.Fatalf("movies %v, want %v", got, want)
+	}
+	if dups, err := s.Duplicates(ctx, movies.ID); err != nil || len(dups) != 1 || dups[0].Title != "Heat" {
+		t.Fatalf("duplicates %+v %v", dups, err)
 	}
 	var hint string
 	if err := s.db.QueryRow(`SELECT namespace || '-' || value FROM library_id_hints`).Scan(&hint); err != nil || hint != "tmdb-949" {
@@ -1580,9 +1767,247 @@ func TestUnplacedFilesArePlacedAgain(t *testing.T) {
 go -C server test -race -count=1 ./internal/library/...
 ```
 
-Expected: FAIL to build: `undefined: Scanner`, `undefined: Run`, `undefined: RunFailed` in `scan_test.go`.
+Expected: FAIL to build: `undefined: Duplicate`, `s.Duplicates undefined`, `s.Decide undefined` in `duplicates_test.go` (and `undefined: Scanner`, `Run`, `RunFailed` in `scan_test.go`).
 
 - [ ] **Step 3: Implement**
+
+**Create `server/internal/library/duplicates.go`:**
+
+```go
+package library
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library/naming"
+)
+
+// groupItem returns the movie or show item for e's folder, creating it if
+// needed. A folder already mapped to an item always uses it. A new folder
+// whose key another folder's item already has gets a provisional item of its
+// own and a pending duplicate pair, which settle resolves after a completed
+// scan (Pete's rule on #90: two folders that exist at once are never merged
+// automatically).
+func (s *Store) groupItem(ctx context.Context, tx *sql.Tx, root Root, e naming.Entry, it item) (id, key string, err error) {
+	err = tx.QueryRowContext(ctx, `SELECT f.item_id, i.scan_key FROM library_folders f JOIN library_items i ON i.id = f.item_id
+		WHERE f.root_id = ? AND f.folder = ? AND f.scan_key = ?`, root.ID, e.Folder, e.Key).Scan(&id, &key)
+	if err == nil || !errors.Is(err, sql.ErrNoRows) {
+		return id, key, err
+	}
+	var existing string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM library_items WHERE library_id = ? AND scan_key = ?`, root.LibraryID, e.Key).Scan(&existing)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		it.key = e.Key
+	case err != nil:
+		return "", "", err
+	default:
+		// Provisional until settle decides. It must not start with e.Key + "|",
+		// or it would look like one of the existing item's seasons.
+		it.key = "dup:" + root.ID + ":" + e.Folder + ":" + e.Key
+	}
+	if id, err = s.item(ctx, tx, root.LibraryID, it); err != nil {
+		return "", "", err
+	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO library_folders(root_id, folder, scan_key, item_id) VALUES(?, ?, ?, ?)`,
+		root.ID, e.Folder, e.Key, id); err != nil {
+		return "", "", err
+	}
+	if existing != "" {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO library_duplicates(id, root_id, item_id, other_id, state) VALUES(?, ?, ?, ?, 'pending')`,
+			newID("dup"), root.ID, existing, id); err != nil {
+			return "", "", err
+		}
+	}
+	return id, it.key, nil
+}
+
+// settle resolves the root's pending duplicate pairs after a completed scan,
+// once files that weren't found have been marked missing. If the existing
+// item has no present file left, the new folder replaced it (a rename or
+// move) and is folded in, keeping the item's identity. Otherwise both folders
+// exist and the pair is flagged for the admin.
+func (s *Store) settle(ctx context.Context, rootID string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT id, item_id, other_id FROM library_duplicates WHERE root_id = ? AND state = 'pending'`, rootID)
+	if err != nil {
+		return err
+	}
+	type pair struct{ id, item, other string }
+	var pairs []pair
+	for rows.Next() {
+		var p pair
+		if err := rows.Scan(&p.id, &p.item, &p.other); err != nil {
+			rows.Close()
+			return err
+		}
+		pairs = append(pairs, p)
+	}
+	rows.Close()
+	for _, p := range pairs {
+		alive, err := hasPresentFile(ctx, tx, p.item)
+		if err != nil {
+			return err
+		}
+		if alive {
+			_, err = tx.ExecContext(ctx, `UPDATE library_duplicates SET state = 'flagged' WHERE id = ?`, p.id)
+		} else {
+			err = fold(ctx, tx, p.item, p.other)
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// hasPresentFile reports whether any version under the item (or, for a
+// show, under its seasons and episodes) is on a present file.
+func hasPresentFile(ctx context.Context, tx *sql.Tx, itemID string) (bool, error) {
+	var ok bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM library_versions v
+		JOIN library_files f ON f.id = v.file_id JOIN library_items i ON i.id = v.item_id
+		JOIN library_items top ON top.id = ?
+		WHERE f.state = 'present' AND (i.id = top.id OR substr(i.scan_key, 1, length(top.scan_key) + 1) = top.scan_key || '|'))`, itemID).Scan(&ok)
+	return ok, err
+}
+
+// fold moves everything under item other into item into: versions, ID hints,
+// folder mappings and, for a show, its seasons and episodes (merged with ones
+// into already has, by key). Then other is deleted, with its pair.
+func fold(ctx context.Context, tx *sql.Tx, into, other string) error {
+	var intoKey, otherKey string
+	if err := tx.QueryRowContext(ctx, `SELECT scan_key FROM library_items WHERE id = ?`, into).Scan(&intoKey); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `SELECT scan_key FROM library_items WHERE id = ?`, other).Scan(&otherKey); err != nil {
+		return err
+	}
+	// Children in key order, so a season is handled before its episodes.
+	rows, err := tx.QueryContext(ctx, `SELECT id, scan_key FROM library_items
+		WHERE substr(scan_key, 1, length(?) + 1) = ? || '|' ORDER BY length(scan_key)`, otherKey, otherKey)
+	if err != nil {
+		return err
+	}
+	type child struct{ id, key string }
+	var children []child
+	for rows.Next() {
+		var c child
+		if err := rows.Scan(&c.id, &c.key); err != nil {
+			rows.Close()
+			return err
+		}
+		children = append(children, c)
+	}
+	rows.Close()
+	for _, c := range children {
+		target := intoKey + strings.TrimPrefix(c.key, otherKey)
+		var existing string
+		err := tx.QueryRowContext(ctx, `SELECT id FROM library_items WHERE scan_key = ? AND library_id = (SELECT library_id FROM library_items WHERE id = ?)`,
+			target, into).Scan(&existing)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Move it across: new key, parent = the item now at its parent key.
+			parentKey := target[:strings.LastIndex(target, "|")]
+			if _, err := tx.ExecContext(ctx, `UPDATE library_items SET scan_key = ?, parent_id = (SELECT id FROM library_items
+				WHERE scan_key = ? AND library_id = library_items.library_id) WHERE id = ?`, target, parentKey, c.id); err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		default:
+			if err := moveInto(ctx, tx, existing, c.id); err != nil {
+				return err
+			}
+		}
+	}
+	// Move the folder mappings before moveInto deletes other: they cascade.
+	if _, err := tx.ExecContext(ctx, `UPDATE library_folders SET item_id = ? WHERE item_id = ?`, into, other); err != nil {
+		return err
+	}
+	return moveInto(ctx, tx, into, other)
+}
+
+// moveInto gives item into the versions and ID hints of item from, then
+// deletes from (its children have already been moved).
+func moveInto(ctx context.Context, tx *sql.Tx, into, from string) error {
+	for _, q := range []string{
+		`UPDATE OR IGNORE library_versions SET item_id = ? WHERE item_id = ?`,
+		`INSERT OR IGNORE INTO library_id_hints(item_id, namespace, value) SELECT ?, namespace, value FROM library_id_hints WHERE item_id = ?`,
+		`UPDATE library_items SET parent_id = ? WHERE parent_id = ?`,
+	} {
+		if _, err := tx.ExecContext(ctx, q, into, from); err != nil {
+			return err
+		}
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM library_items WHERE id = ?`, from)
+	return err
+}
+
+// Duplicate is a possible duplicate the admin decides: two folders of the
+// library whose names give the same movie or show.
+type Duplicate struct {
+	ID, ItemID, OtherID, Title string
+}
+
+// Duplicates lists the library's flagged pairs.
+// Planned: LIB-2c (the admin duplicates screen).
+func (s *Store) Duplicates(ctx context.Context, libID string) ([]Duplicate, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.item_id, d.other_id, i.title FROM library_duplicates d
+		JOIN library_items i ON i.id = d.item_id WHERE i.library_id = ? AND d.state = 'flagged' ORDER BY i.sort_title, d.id`, libID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Duplicate
+	for rows.Next() {
+		var d Duplicate
+		if err := rows.Scan(&d.ID, &d.ItemID, &d.OtherID, &d.Title); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// Decide records the admin's decision on a flagged pair. Merge folds the
+// other folder's item into the existing one (one item, both folders'
+// versions); otherwise both stay separate. Either way the folders keep their
+// mapping, so the pair isn't flagged again.
+// Planned: LIB-2c (the admin duplicates screen).
+func (s *Store) Decide(ctx context.Context, dupID string, merge bool) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var item, other string
+	err = tx.QueryRowContext(ctx, `SELECT item_id, other_id FROM library_duplicates WHERE id = ? AND state = 'flagged'`, dupID).Scan(&item, &other)
+	if errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("%w: no flagged duplicate %s", ErrNotFound, dupID)
+	}
+	if err != nil {
+		return err
+	}
+	if merge {
+		err = fold(ctx, tx, item, other)
+	} else {
+		_, err = tx.ExecContext(ctx, `UPDATE library_duplicates SET state = 'separate' WHERE id = ?`, dupID)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+```
 
 **Create `server/internal/library/scan.go`:**
 
@@ -1712,6 +2137,9 @@ func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
 	}
 	n, _ := res.RowsAffected()
 	run.Missing = int(n)
+	if err := st.settle(bg, rootID); err != nil {
+		return run, err
+	}
 	return sc.finish(bg, root, run, RunCompleted, "", RootAvailable)
 }
 
@@ -1785,7 +2213,7 @@ func (s *Store) applyBatch(ctx context.Context, root Root, libType, runID string
 				continue // already placed
 			}
 		}
-		if err := s.place(ctx, tx, root.LibraryID, libType, id, f, run); err != nil {
+		if err := s.place(ctx, tx, root, libType, id, f, run); err != nil {
 			return err
 		}
 	}
@@ -1794,7 +2222,8 @@ func (s *Store) applyBatch(ctx context.Context, root Root, libType, runID string
 
 // place attaches a file to its items (creating them as needed), or records
 // why naming couldn't place it.
-func (s *Store) place(ctx context.Context, tx *sql.Tx, libID, libType, fileID string, f File, run *Run) error {
+func (s *Store) place(ctx context.Context, tx *sql.Tx, root Root, libType, fileID string, f File, run *Run) error {
+	libID := root.LibraryID
 	e, err := naming.Classify(libType, f.Path, f.Rev.Size)
 	if err != nil {
 		run.Unplaced++
@@ -1816,7 +2245,7 @@ func (s *Store) place(ctx context.Context, tx *sql.Tx, libID, libType, fileID st
 		year = e.Year
 	}
 	if e.Kind == naming.Movie {
-		movie, err := s.item(ctx, tx, libID, item{kind: "movie", key: e.Key, title: e.Title, year: year})
+		movie, _, err := s.groupItem(ctx, tx, root, e, item{kind: "movie", title: e.Title, year: year})
 		if err != nil {
 			return err
 		}
@@ -1825,7 +2254,7 @@ func (s *Store) place(ctx context.Context, tx *sql.Tx, libID, libType, fileID st
 		}
 		return s.version(ctx, tx, movie, fileID, e.Version)
 	}
-	show, err := s.item(ctx, tx, libID, item{kind: "show", key: e.Key, title: e.Title, year: year})
+	show, showKey, err := s.groupItem(ctx, tx, root, e, item{kind: "show", title: e.Title, year: year})
 	if err != nil {
 		return err
 	}
@@ -1836,7 +2265,7 @@ func (s *Store) place(ctx context.Context, tx *sql.Tx, libID, libType, fileID st
 	if e.Season == 0 {
 		seasonTitle = "Specials"
 	}
-	seasonKey := e.Key + "|s" + strconv.Itoa(e.Season)
+	seasonKey := showKey + "|s" + strconv.Itoa(e.Season)
 	season, err := s.item(ctx, tx, libID, item{kind: "season", key: seasonKey, title: seasonTitle, parent: show, idx: e.Season})
 	if err != nil {
 		return err
@@ -1933,8 +2362,8 @@ Expected: `ok` for both packages.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/internal/library/scan.go server/internal/library/scan_test.go
-git commit -m "feat(library): offline-safe scans into items and versions (LIB-2a)"
+git add server/internal/library/duplicates.go server/internal/library/duplicates_test.go server/internal/library/scan.go server/internal/library/scan_test.go
+git commit -m "feat(library): offline-safe scans into items, versions and duplicate flags (LIB-2a)"
 ```
 
 ---
@@ -2128,6 +2557,25 @@ func TestFileChangedDuringProbeIsDeferred(t *testing.T) {
 		t.Fatalf("catalogue size %d, want the new revision's 99", size)
 	}
 }
+
+// A deferred outcome never replaces a newer revision a scan recorded while
+// the probe ran (#90 review).
+func TestDeferredRevisionNeverMovesBackwards(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
+	const later = int64(1) << 62
+	p := &scriptedProber{during: func(rel string) {
+		m.write("Movies/"+rel, 99)                                // the probe sees the file change...
+		s.db.Exec(`UPDATE library_files SET mtime_ns = ?`, later) // ...and a scan records a newer revision
+	}}
+	if run := probeDue(t, sc, root, p); run.Deferred != 1 {
+		t.Fatalf("%+v", run)
+	}
+	var mtime int64
+	s.db.QueryRow(`SELECT mtime_ns FROM library_files`).Scan(&mtime)
+	if mtime != later {
+		t.Fatalf("mtime_ns %d: the deferred outcome overwrote the newer revision", mtime)
+	}
+}
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -2240,8 +2688,9 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 	case errors.Is(o.Err, ErrNotStable), errors.Is(o.Err, ErrChanged):
 		// Record the newer revision and wait until it has been quiet.
 		after := time.Unix(0, o.Rev.ModTime).Add(quiet)
-		_, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_after = ? WHERE root_id = ? AND path = ?`,
-			o.Rev.Size, o.Rev.ModTime, ms(after), rootID, o.Path)
+		// Only ever forward: a scan may already have recorded a newer revision.
+		_, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_after = ?
+			WHERE root_id = ? AND path = ? AND mtime_ns <= ?`, o.Rev.Size, o.Rev.ModTime, ms(after), rootID, o.Path, o.Rev.ModTime)
 		if err != nil {
 			return err
 		}
@@ -2534,7 +2983,7 @@ gh pr create --title "feat(library): catalogue store and offline-safe scans (LIB
 | §3.6: a size/mtime change invalidates the probe; stale results can't overwrite newer data | Task 4 (stale-revision selection, compare-and-set) |
 | §3.6: growing files retried after a quiet period | Task 4 (not-before time, #62) |
 | §3.6: broken files listed, never abort a scan; admin retry | Task 4 (`probe_error`, `RetryProbe`) |
-| §3.6: moves keep identity where evidence exists; no guessing from size | Task 1 keys, Task 3 moved-file test |
+| §3.6: moves keep identity where evidence exists; ambiguous cases go to review; no guessing from size | Task 1 keys and folders; Task 3 rename folding, coexisting-folder flags and admin decisions |
 | §3.1: Sonarr/Radarr naming, ID hints, versions | Task 1 |
 | §10.1: separate item, version and file identities; files keep a revision and probe | Tasks 2–3 |
 | §10.2: short transactions | Task 3 (batches of 500) |
@@ -2543,7 +2992,7 @@ gh pr create --title "feat(library): catalogue store and offline-safe scans (LIB
 **Verified while writing this plan:**
 - **Prototype:** all of this ran on LIB-1's plan code. `make check` passed, and the library tests passed 5 times in a row under `-race`.
 - **Rebuild:** each task was rebuilt in order on that base. Each failed with the Step 2 messages before its implementation and passed after. The result is identical to the prototype.
-- **Mutation check:** each of these made exactly the matching test fail:
+- **Mutation check:** each of these 17 made exactly the matching test fail:
   - an empty root treated as fine
   - a partial walk treated as complete
   - a cancelled scan marking files missing
@@ -2555,5 +3004,12 @@ gh pr create --title "feat(library): catalogue store and offline-safe scans (LIB
   - no 24 h gap before retirement
   - overlapping folders allowed
   - unplaced files never tried again
+  - coexisting folders merged automatically
+  - renames never folded
+  - the folder mapping ignored
+  - a merge forgetting the folder mapping
+  - a provisional key that looks like the existing item's child
+  - a deferred outcome moving a revision backwards
 - **Placeholders:** none.
 - **Names and types** match between tasks: Task 3 uses Task 2's `newStore`, and Tasks 4–5 share `setupMovies`.
+- **Found while writing:** strengthening the merge test (a new episode arrives in a merged folder) exposed a real bug. `fold` deleted the merged item before moving its folder mappings, which the cascade then dropped. Now fixed and covered.
