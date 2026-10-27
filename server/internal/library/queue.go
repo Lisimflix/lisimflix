@@ -54,6 +54,7 @@ type Queue struct {
 
 // NewQueue returns a queue over root. done is called from worker goroutines,
 // possibly at the same time, once per finished job.
+// Planned: LIB-2 (the catalogue scan queues discovered files for probing).
 func NewQueue(root *os.Root, p Prober, quiet time.Duration, done func(Outcome)) *Queue {
 	return &Queue{root: root, prober: p, quiet: quiet, done: done,
 		pending: map[string]bool{}, wake: make(chan struct{}, 1)}
