@@ -40,10 +40,10 @@ template.)
 | Interruptions after start | None. Row 2's only `waiting` was before the first frame; Play → `ended` took 734.4 s for a 734.167 s movie | None |
 | Audio | Audible and in sync, by ear | Audible and in sync, by ear |
 | Actual end reached | Yes, no seeking | Yes, no seeking |
-| `canPlayType` (probe-built string) | `probably` | Not recorded per run; Chrome 156 and Firefox 155 return `probably` for `video/mp4; codecs="avc1.4D0028, mp3"` in the pre-check |
+| `canPlayType` (probe-built string) | `probably` | Not recorded on the MacBook. The earlier headless pre-check (Playwright: Chrome 156, Firefox **155**, not the 158 used for row 4) returned `probably` for `video/mp4; codecs="avc1.4D0028, mp3"` |
 | Range bytes | 4 × 1 MiB ranges (start, 1 MiB, middle, last 1 MiB): all `206` and byte-identical to the source | 3 × 1 MiB ranges (start, middle, end) over the same path: byte-identical to the source |
 | Route / encoder | `route=direct`; the image has no encoder | `route=direct`; the image has no encoder |
-| Revocation | Logout, then content: `401` | Not re-checked after these runs; verified on the same build in #31's image smoke and real-browser UI smoke runs (`401` after logout) |
+| Revocation | Logout, then content: `401` | Re-checked on the same server over the same Tailscale path (2026-10-27): content `206` before logout, logout `204`, then content `401` with no cookie and `401` with the old session cookie |
 | Source sha256 after | Unchanged | Unchanged |
 | Server state | Healthy, 0 restarts, no OOM, no error log lines | Healthy, 0 restarts, no ERROR/WARN lines; during row 4, 31 samples at 30 s intervals showed memory ≤ 51 MiB and about 520 MB delivered steadily |
 
@@ -68,8 +68,9 @@ health and shutdown work.
   through a different video stack (#64).
 - The server logs no auth or playback events, so start times came from the
   browser or the tester (#37).
-- Seen during the runs: with Docker's default port publishing, IPv6 clients
-  arrive through `docker-proxy` and share one rate-limit key (#39). The runs
-  used IPv4.
+- Seen during the runs, and **fixed by #68**: with Docker's default port
+  publishing, IPv6 clients arrived through `docker-proxy` and shared one
+  rate-limit key (#39). The runs used IPv4; `deploy/compose.m1.yml` now
+  publishes IPv4 only.
 - One mistyped-password lockout before row 4 was the login limiter working as
   designed, not a playback fault.
