@@ -50,7 +50,7 @@
   - The build is configured with `--enable-gpl --enable-version3` (GPLv3), plus x264/x265. It's used only as a separate process; no Jellyfin server code is used.
   - The image ships its `LICENSE.md` and `COPYING.GPLv3` under `/usr/share/doc/jellyfin-ffmpeg/`. Before images are shared publicly, also add a source pointer.
   - `ADD --unpack=true --checksum=sha256:…` downloads, verifies and unpacks it in one step. This needs `# syntax=docker/dockerfile:1.17` (Docker Dockerfile reference). A wrong checksum fails the build.
-  - The runtime base changes from `distroless/static-debian12` to `distroless/base-debian12` (glibc), pinned by digest. The image grows from ~26 MB to ~205 MB.
+  - The runtime base changes from `distroless/static-debian12` to `distroless/base-debian12` (glibc), pinned by digest. The image grows from ~15 MB to ~205 MB.
   - **Not tracked by Dependabot.** A comment in the `Dockerfile` says how to bump the version and checksum. Watch jellyfin-ffmpeg releases on GitHub to hear about updates.
 - **Skipped names:** hidden files and folders, non-video extensions (which also covers `.part`, `.!qB` and other in-progress downloads), `@eaDir`-style `@` folders, `#recycle`, `$RECYCLE.BIN`, `lost+found`, `System Volume Information`, `Sample(s)`.
 
@@ -699,6 +699,7 @@ The runner tests use the test binary as a fake ffprobe: `TestMain` checks `FAKE_
 - `echo`: proves ffprobe gets the open file as `/dev/fd/3`
 - `slow`: for the timeout and cancel tests
 - `flood`: for the output cap
+- `noisy`: lots of stderr before valid JSON, which must still parse
 - `fail`: ffprobe's error is reported
 
 `server/internal/probe/runner_test.go`:
@@ -706,6 +707,7 @@ The runner tests use the test binary as a fake ffprobe: `TestMain` checks `FAKE_
 package probe
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -744,6 +746,9 @@ func fakeFFprobe(mode string) int {
 	case "flood":
 		os.Stdout.Write(make([]byte, 2<<10))
 		time.Sleep(time.Minute)
+	case "noisy": // damaged-but-playable files can print lots of -v error lines
+		os.Stderr.Write(bytes.Repeat([]byte("x"), 5000))
+		fmt.Print(`{"format":{"format_name":"matroska"}}`)
 	case "fail":
 		fmt.Fprintln(os.Stderr, "/dev/fd/3: Invalid data found when processing input")
 		return 1
@@ -820,6 +825,14 @@ func TestRunnerOutputLimit(t *testing.T) {
 	}
 	if time.Since(start) > 3*time.Second {
 		t.Fatalf("ffprobe was not stopped promptly: %v", time.Since(start))
+	}
+}
+
+func TestRunnerIgnoresNoisyStderr(t *testing.T) {
+	r, root := fakeRunner(t, "noisy")
+	res, err := r.Probe(context.Background(), root, "movie.mkv")
+	if err != nil || res.Container != "matroska" {
+		t.Fatalf("got %+v, %v", res, err)
 	}
 }
 
@@ -1001,7 +1014,7 @@ func (r Runner) Probe(ctx context.Context, root *os.Root, rel string) (Result, e
 	runCtx, cancel := context.WithTimeout(ctx, cmp.Or(r.Timeout, DefaultTimeout))
 	defer cancel()
 	stdout := &capped{max: cmp.Or(r.MaxOutput, DefaultMaxOutput), over: cancel}
-	stderr := &capped{max: 4 << 10, over: func() {}}
+	stderr := &capped{max: 4 << 10, truncate: true} // only stdout is a result
 	cmd := exec.CommandContext(runCtx, r.Path,
 		"-v", "error", "-print_format", "json",
 		"-show_format", "-show_streams", "-show_chapters",
@@ -1023,17 +1036,23 @@ func (r Runner) Probe(ctx context.Context, root *os.Root, rel string) (Result, e
 	return Parse(stdout.buf.Bytes())
 }
 
-// capped keeps up to max bytes. One byte more calls over (which kills
-// ffprobe) and fails the write, so an oversized result is never parsed.
+// capped keeps up to max bytes. With truncate, the rest is dropped. Otherwise
+// one byte more calls over (which kills ffprobe) and fails the write, so an
+// oversized result is never parsed.
 type capped struct {
 	buf      bytes.Buffer
 	max      int
+	truncate bool
 	exceeded bool
 	over     func()
 }
 
 func (c *capped) Write(p []byte) (int, error) {
-	if c.buf.Len()+len(p) > c.max {
+	if room := c.max - c.buf.Len(); len(p) > room {
+		if c.truncate {
+			c.buf.Write(p[:room])
+			return len(p), nil
+		}
 		c.exceeded = true
 		c.over()
 		return 0, ErrOutputTooLarge
