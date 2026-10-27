@@ -6,7 +6,7 @@ replacement that anyone can run on their own Linux/Docker host.
 **Status:** early development. The first milestone (M1) is playing one 1080p H.264 MP4
 movie at its original quality, with no re-encoding, in Chrome and Firefox on Linux and macOS
 (Windows follows in a later milestone). The M1 server, web player and container are on `main`,
-and playback passes on all four targets (#19).
+and playback passes on all four targets ([results](docs/testing/m1-results.md), #19).
 
 To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
 only: plain HTTP, one viewer and one movie.
@@ -18,7 +18,7 @@ only: plain HTTP, one viewer and one movie.
 | `docs/superpowers/specs/` | Design spec: scope, feature catalogue (§9.4), decisions (§14) |
 | `docs/superpowers/plans/` | Implementation plans, one per claimed feature |
 | `docs/contracts/` | OpenAPI contract (`m1-openapi.json`) |
-| `docs/testing/` | Test evidence templates and reference installations |
+| `docs/testing/` | Test evidence templates, results and reference installations |
 | `deploy/` | Container compose file and run guide |
 | `server/` | Go server |
 | `web/` | React + Vite web app |
