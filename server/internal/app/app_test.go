@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -74,6 +75,11 @@ type env struct {
 
 func newEnv(t *testing.T, origin string) *env {
 	t.Helper()
+	return newEnvWith(t, origin, nil)
+}
+
+func newEnvWith(t *testing.T, origin string, log *slog.Logger) *env {
+	t.Helper()
 	cfg := m1config.Config{
 		PublicOrigin: origin, CSRFKey: bytes.Repeat([]byte{3}, 32), MediaRoot: "/media/SECRET-ROOT",
 		Viewer: m1config.Viewer{AccountID: "acct-1", ProfileID: "prof-1", Username: "viewer", PasswordHash: viewerHash},
@@ -87,7 +93,7 @@ func newEnv(t *testing.T, origin string) *env {
 		e.mu.Lock()
 		defer e.mu.Unlock()
 		return e.ready
-	})
+	}, log)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,16 +331,16 @@ func TestNewRejectsInconsistentInputs(t *testing.T) {
 	plainAM, _ := auth.NewManager(cfg.Viewer, false, func(string) {})
 	ready := func(context.Context) error { return nil }
 	play := &fakePlayback{}
-	if _, err := New(cfg, secureAM, play, web, ready); err == nil {
+	if _, err := New(cfg, secureAM, play, web, ready, nil); err == nil {
 		t.Error("accepted Secure cookies on an http origin")
 	}
 	for name, fn := range map[string]func() error{
-		"nil auth":     func() error { _, err := New(cfg, nil, play, web, ready); return err },
-		"nil playback": func() error { _, err := New(cfg, plainAM, nil, web, ready); return err },
-		"nil web":      func() error { _, err := New(cfg, plainAM, play, nil, ready); return err },
-		"nil ready":    func() error { _, err := New(cfg, plainAM, play, web, nil); return err },
+		"nil auth":     func() error { _, err := New(cfg, nil, play, web, ready, nil); return err },
+		"nil playback": func() error { _, err := New(cfg, plainAM, nil, web, ready, nil); return err },
+		"nil web":      func() error { _, err := New(cfg, plainAM, play, nil, ready, nil); return err },
+		"nil ready":    func() error { _, err := New(cfg, plainAM, play, web, nil, nil); return err },
 		"no index": func() error {
-			_, err := New(cfg, plainAM, play, fstest.MapFS{"a.js": {Data: []byte("x")}}, ready)
+			_, err := New(cfg, plainAM, play, fstest.MapFS{"a.js": {Data: []byte("x")}}, ready, nil)
 			return err
 		},
 	} {

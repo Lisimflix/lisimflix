@@ -1,6 +1,7 @@
 package playback
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -34,6 +36,7 @@ type Options struct {
 	GrantKey    []byte
 	MaxSessions int
 	Authorize   func(contracts.Principal, string) bool
+	Log         *slog.Logger // session events and source errors; nil discards
 }
 
 type session struct {
@@ -65,11 +68,13 @@ type Server struct {
 	max       int
 	authorize func(contracts.Principal, string) bool
 	now       func() time.Time
+	log       *slog.Logger
 
 	inflight atomic.Int64 // content handlers still running, revoked or not
 	written  atomic.Int64 // content bytes written, for tests
 
 	mu       sync.Mutex
+	ends     []endEvent          // playback.end events to log once mu is released (#74)
 	sessions map[string]*session // active sessions and tombstones, by ID
 	byKey    map[string]*session
 	closed   bool
@@ -98,7 +103,7 @@ func New(root *os.Root, opts Options) (*Server, error) {
 	}
 	s := &Server{
 		root: root, src: opts.Source, grantKey: append([]byte(nil), opts.GrantKey...), max: opts.MaxSessions,
-		authorize: opts.Authorize, now: time.Now,
+		authorize: opts.Authorize, now: time.Now, log: cmp.Or(opts.Log, slog.New(slog.DiscardHandler)),
 		sessions: map[string]*session{}, byKey: map[string]*session{}, done: make(chan struct{}),
 	}
 	go s.sweeper()
@@ -117,7 +122,7 @@ func (s *Server) sweeper() {
 		case <-t.C:
 			s.mu.Lock()
 			s.sweepLocked(s.now())
-			s.mu.Unlock()
+			s.unlock()
 		}
 	}
 }
@@ -141,13 +146,29 @@ func (sess *session) public() contracts.PlaybackSession {
 	}
 }
 
+// endEvent is a playback.end waiting to be logged after unlock.
+type endEvent struct{ id, auth, reason string }
+
+// unlock releases s.mu, then logs the playback.end events recorded while it
+// was held, so a slow or blocked log never stalls playback (#74).
+func (s *Server) unlock() {
+	ends := s.ends
+	s.ends = nil
+	s.mu.Unlock()
+	for _, e := range ends {
+		s.log.Info("playback.end", "session_id", e.id, "auth_session", e.auth, "reason", e.reason)
+	}
+}
+
 // endLocked turns an active session into a tombstone and cuts off its
-// deliveries. s.mu must be held.
-func (s *Server) endLocked(sess *session, now time.Time) {
+// deliveries, recording why (stopped, expired, revoked or closed) for unlock
+// to log. s.mu must be held.
+func (s *Server) endLocked(sess *session, now time.Time, reason string) {
 	if !sess.ended.IsZero() {
 		return
 	}
 	sess.ended = now
+	s.ends = append(s.ends, endEvent{id: sess.id, auth: sess.owner.AuthSessionID, reason: reason})
 	// Cancel first, then set the deadline: a write that set its own deadline
 	// before this one is unblocked by it, and a write that sets its deadline
 	// after sees the cancel (deliveryWriter.Write rechecks).
@@ -184,7 +205,7 @@ func (s *Server) boundTombstonesLocked() {
 // has passed.
 func (s *Server) liveLocked(sess *session, now time.Time) bool {
 	if sess.ended.IsZero() && now.After(sess.deadline) {
-		s.endLocked(sess, now)
+		s.endLocked(sess, now, "expired")
 	}
 	return sess.ended.IsZero()
 }
@@ -220,11 +241,11 @@ func (s *Server) activeLocked() int {
 // and cuts off their deliveries. auth.Manager calls it on logout and expiry.
 func (s *Server) RevokeAuthSession(authSessionID string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	now := s.now()
 	for _, sess := range s.sessions {
 		if sess.owner.AuthSessionID == authSessionID {
-			s.endLocked(sess, now)
+			s.endLocked(sess, now, "revoked")
 		}
 	}
 }
@@ -234,11 +255,11 @@ func (s *Server) RevokeAuthSession(authSessionID string) {
 func (s *Server) Close() error {
 	s.closeOnce.Do(func() { close(s.done) })
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	s.closed = true
 	now := s.now()
 	for _, sess := range s.sessions {
-		s.endLocked(sess, now)
+		s.endLocked(sess, now, "closed")
 	}
 	return nil
 }
@@ -247,7 +268,7 @@ func (s *Server) activeDeliveries() int { return int(s.inflight.Load()) }
 
 func (s *Server) tombstoneCount() int {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	n := 0
 	for _, sess := range s.sessions {
 		if !sess.ended.IsZero() {

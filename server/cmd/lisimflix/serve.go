@@ -61,7 +61,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	v := cfg.Viewer
 	pb, err := playback.New(root, playback.Options{
 		Source: playback.Source{Movie: cfg.Movie(), RelativePath: cfg.RelativePath}, GrantKey: grantKey,
-		MaxSessions: cfg.MaxPlaybackSessions,
+		MaxSessions: cfg.MaxPlaybackSessions, Log: log,
 		Authorize: func(p contracts.Principal, movieID string) bool {
 			return p.AccountID == v.AccountID && p.ProfileID == v.ProfileID && movieID == cfg.MovieID
 		},
@@ -76,6 +76,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		root.Close()
 		return nil, err
 	}
+	am.SetLogger(log)
 
 	s := &server{cfg: cfg, pb: pb, root: root, nightlyDone: make(chan struct{})}
 	dbPath, backups = storagePaths(cfgPath, dbPath, backups)
@@ -106,7 +107,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		}
 		return pb.Check()
 	}
-	s.handler, err = app.New(cfg, am, pb.Handler(), web, ready)
+	s.handler, err = app.New(cfg, am, pb.Handler(), web, ready, log)
 	if err != nil {
 		s.shutdown(ctx, nil)
 		return nil, err

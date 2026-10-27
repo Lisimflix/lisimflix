@@ -16,6 +16,7 @@ import (
 	"github.com/gorilla/csrf"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
+	"github.com/Lisimflix/lisimflix/server/internal/obs"
 )
 
 // CookieName is the session cookie from the CTR-1 contract.
@@ -79,7 +80,7 @@ func (m *Manager) fromRequest(r *http.Request) (*session, bool) {
 	if err != nil {
 		return nil, false
 	}
-	return m.lookup(c.Value)
+	return m.lookup(r.Context(), c.Value)
 }
 
 func (m *Manager) state(r *http.Request, signedIn bool) contracts.AuthState {
@@ -97,37 +98,46 @@ func (m *Manager) handleSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
+	log := obs.Log(r.Context(), m.log)
+	peer := peerKey(r.RemoteAddr)
+	// Failures never log the username: a mistyped password often lands there.
+	fail := func(reason string) { log.Info("auth.login", "result", "fail", "reason", reason, "peer", peer) }
 	req, ok := decodeLogin(w, r)
 	if !ok {
+		fail("invalid_request")
 		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Send a JSON username and password.")
 		return
 	}
-	key := strings.ToLower(req.Username) + "|" + peerKey(r.RemoteAddr)
+	key := strings.ToLower(req.Username) + "|" + peer
 	if limited, wait := m.limited(key); limited {
+		fail("rate_limited")
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 		contracts.WriteError(w, r, contracts.CodeRateLimited, "Too many sign-in attempts. Try again later.")
 		return
 	}
-	good, err := m.checkPassword(r.Context(), peerKey(r.RemoteAddr), req.Username, []byte(req.Password))
+	good, err := m.checkPassword(r.Context(), peer, req.Username, []byte(req.Password))
 	if err != nil {
+		fail("busy")
 		w.Header().Set("Retry-After", "1")
 		contracts.WriteError(w, r, contracts.CodeRateLimited, "Sign-in is busy. Try again in a moment.")
 		return
 	}
 	if !good {
+		fail("bad_credentials")
 		m.failed(key)
 		contracts.WriteError(w, r, contracts.CodeUnauthenticated, "Invalid username or password.")
 		return
 	}
 	m.succeeded(key)
 	if c, err := r.Cookie(CookieName); err == nil {
-		m.remove(c.Value) // rotate: the old session ends
+		m.remove(r.Context(), c.Value, "rotated") // the old session ends
 	}
-	token, s, err := m.create()
+	token, s, err := m.create(r.Context())
 	if err != nil {
 		contracts.WriteError(w, r, contracts.CodeInternalError, "Internal error.")
 		return
 	}
+	log.Info("auth.login", "result", "ok", "username", req.Username, "session_id", s.id, "peer", peer)
 	http.SetCookie(w, &http.Cookie{
 		Name: CookieName, Value: token, Path: "/", Expires: s.created.Add(absoluteTimeout),
 		HttpOnly: true, Secure: m.secure, SameSite: http.SameSiteLaxMode,
@@ -137,7 +147,7 @@ func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 func (m *Manager) handleLogout(w http.ResponseWriter, r *http.Request) {
 	c, err := r.Cookie(CookieName)
-	if err != nil || !m.remove(c.Value) {
+	if err != nil || !m.remove(r.Context(), c.Value, "logout") {
 		contracts.WriteError(w, r, contracts.CodeUnauthenticated, "Sign in to continue.")
 		return
 	}

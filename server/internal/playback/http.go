@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
+	"github.com/Lisimflix/lisimflix/server/internal/obs"
 )
 
 const (
@@ -51,7 +52,7 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, contra
 		}
 		s.mu.Lock()
 		closed := s.closed
-		s.mu.Unlock()
+		s.unlock()
 		if closed {
 			contracts.WriteError(w, r, contracts.CodeSourceUnavailable, "Playback is shutting down.")
 			return
@@ -98,19 +99,19 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 	}
 	info, err := s.statSource()
 	if err != nil {
-		sourceError(w, r, err)
+		s.sourceError(w, r, err, "")
 		return
 	}
 	s.mu.Lock()
 	now := s.now()
 	s.sweepLocked(now)
 	if prev, ok := s.byKey[scoped]; ok { // a concurrent start with the same key won
-		s.mu.Unlock()
+		s.unlock()
 		s.replayed(w, r, prev, req.MovieID)
 		return
 	}
 	if s.activeLocked() >= s.max {
-		s.mu.Unlock()
+		s.unlock()
 		contracts.WriteError(w, r, contracts.CodeCapacityUnavailable, "Too many active playback sessions. Stop one and try again.")
 		return
 	}
@@ -122,7 +123,8 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 	s.sessions[sess.id] = sess
 	s.byKey[scoped] = sess
 	out := sess.public()
-	s.mu.Unlock()
+	s.unlock()
+	obs.Log(r.Context(), s.log).Info("playback.start", "session_id", sess.id, "auth_session", p.AuthSessionID, "movie_id", req.MovieID)
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -132,7 +134,7 @@ func (s *Server) replay(w http.ResponseWriter, r *http.Request, scoped, movieID 
 	s.mu.Lock()
 	s.sweepLocked(s.now())
 	prev, ok := s.byKey[scoped]
-	s.mu.Unlock()
+	s.unlock()
 	if ok {
 		s.replayed(w, r, prev, movieID)
 	}
@@ -145,7 +147,7 @@ func (s *Server) replayed(w http.ResponseWriter, r *http.Request, prev *session,
 	s.mu.Lock()
 	live := s.liveLocked(prev, s.now())
 	out := prev.public()
-	s.mu.Unlock()
+	s.unlock()
 	if prev.movieID != movieID {
 		contracts.WriteError(w, r, contracts.CodeIdempotencyConflict, "This Idempotency-Key was already used for another request.")
 		return
@@ -178,7 +180,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, p contracts.P
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	now := s.now()
 	sess, err := s.owned(r, p)
 	switch {
@@ -199,13 +201,13 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, p contracts.P
 
 func (s *Server) stop(w http.ResponseWriter, r *http.Request, p contracts.Principal) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer s.unlock()
 	sess, err := s.owned(r, p)
 	if err != nil {
 		contracts.WriteError(w, r, contracts.CodeNotFound, "Playback session not found.")
 		return
 	}
-	s.endLocked(sess, s.now())
+	s.endLocked(sess, s.now(), "stopped")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -218,12 +220,12 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 		err = errNotFound
 	}
 	if err != nil {
-		s.mu.Unlock()
+		s.unlock()
 		contracts.WriteError(w, r, contracts.CodeNotFound, "Playback session not found.")
 		return
 	}
 	live := s.liveLocked(sess, s.now())
-	s.mu.Unlock()
+	s.unlock()
 	if !live {
 		contracts.WriteError(w, r, contracts.CodePlaybackExpired, "Playback session ended. Start playback again.")
 		return
@@ -234,7 +236,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 	}
 	f, info, err := s.open(sess)
 	if err != nil {
-		sourceError(w, r, err)
+		s.sourceError(w, r, err, sess.id)
 		return
 	}
 	defer f.Close()
@@ -244,16 +246,16 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 	d := &delivery{cancel: cancel, rc: http.NewResponseController(w)}
 	s.mu.Lock()
 	if !s.liveLocked(sess, s.now()) {
-		s.mu.Unlock()
+		s.unlock()
 		contracts.WriteError(w, r, contracts.CodePlaybackExpired, "Playback session ended. Start playback again.")
 		return
 	}
 	sess.deliveries[d] = struct{}{}
-	s.mu.Unlock()
+	s.unlock()
 	defer func() {
 		s.mu.Lock()
 		delete(sess.deliveries, d)
-		s.mu.Unlock()
+		s.unlock()
 		_ = d.rc.SetWriteDeadline(time.Time{}) // don't leave a deadline on a kept-alive connection
 	}()
 
@@ -264,7 +266,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 	h.Set("X-Content-Type-Options", "nosniff")
 	dw := &deliveryWriter{ResponseWriter: w, ctx: ctx, rc: d.rc, written: &s.written, alive: func() bool {
 		s.mu.Lock()
-		defer s.mu.Unlock()
+		defer s.unlock()
 		return s.liveLocked(sess, s.now())
 	}}
 	http.ServeContent(dw, r.WithContext(ctx), "", info.ModTime(), f)
@@ -302,12 +304,15 @@ func (d *deliveryWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func sourceError(w http.ResponseWriter, r *http.Request, err error) {
+// sourceError answers and logs a missing or changed source. sessionID is ""
+// for a start.
+func (s *Server) sourceError(w http.ResponseWriter, r *http.Request, err error, sessionID string) {
+	code, msg := contracts.CodeSourceUnavailable, "The movie file is not available."
 	if errors.Is(err, errSourceChanged) {
-		contracts.WriteError(w, r, contracts.CodeSourceChanged, "The movie file changed. Start playback again.")
-		return
+		code, msg = contracts.CodeSourceChanged, "The movie file changed. Start playback again."
 	}
-	contracts.WriteError(w, r, contracts.CodeSourceUnavailable, "The movie file is not available.")
+	obs.Log(r.Context(), s.log).Warn("playback.source_error", "code", code, "session_id", sessionID, "movie_id", s.src.Movie.ID)
+	contracts.WriteError(w, r, code, msg)
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
