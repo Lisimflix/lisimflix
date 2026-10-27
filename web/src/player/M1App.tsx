@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import { ApiError, newIdempotencyKey, type M1Client, type Movie, type PlaybackSession } from "../api/client";
 import { VideoPlayer } from "./VideoPlayer";
 
@@ -19,6 +20,8 @@ export function M1App({ client }: { client: M1Client }) {
   const generation = useRef(0);
   // Kept for a retry of the same start; replaced after any answer that settles it.
   const startKey = useRef<string | null>(null);
+  // The player's last stop request; logout waits for it so the stop isn't sent after the session ends.
+  const stopping = useRef<Promise<unknown>>(Promise.resolve());
 
   async function loadMovies(username: string, signal?: AbortSignal) {
     const gen = ++generation.current;
@@ -82,7 +85,9 @@ export function M1App({ client }: { client: M1Client }) {
 
   async function onLogout() {
     ++generation.current;
-    setView({ name: "loading" });
+    // Unmount the player now, so its stop goes out before the logout.
+    flushSync(() => setView({ name: "loading" }));
+    await stopping.current;
     await client.logout().catch(() => undefined);
     // Logout rotates the CSRF token; fetch the anonymous one before showing the form.
     await client.session().catch(() => undefined);
@@ -98,7 +103,7 @@ export function M1App({ client }: { client: M1Client }) {
         <form onSubmit={onLogin} aria-label="Sign in">
           <label>
             Username
-            <input name="username" autoComplete="username" required maxLength={128} />
+            <input name="username" autoComplete="username" required maxLength={64} />
           </label>
           <label>
             Password
@@ -126,6 +131,7 @@ export function M1App({ client }: { client: M1Client }) {
         <VideoPlayer
           client={client}
           session={view.session}
+          onStop={(request) => { stopping.current = request; }}
           onEnd={(error) => {
             ++generation.current;
             setView({ name: "ready", username: view.username, movie: view.movie, error });

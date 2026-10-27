@@ -6,9 +6,11 @@ interface Props {
   session: PlaybackSession;
   // Called once when playback finishes; error is set when it stopped abnormally.
   onEnd: (error?: string) => void;
+  // Called with the stop request, so the app can wait for it (e.g. before logout).
+  onStop: (request: Promise<unknown>) => void;
 }
 
-export function VideoPlayer({ client, session, onEnd }: Props) {
+export function VideoPlayer({ client, session, onEnd, onStop }: Props) {
   const video = useRef<HTMLVideoElement>(null);
   const [blocked, setBlocked] = useState(false);
   const finish = useRef<(error?: string) => void>(() => undefined);
@@ -22,7 +24,7 @@ export function VideoPlayer({ client, session, onEnd }: Props) {
       done = true;
       clearInterval(timer);
       abort.abort();
-      void client.stop(session.id).catch(() => undefined);
+      onStop(client.stop(session.id).catch(() => undefined));
     };
     finish.current = (error) => {
       if (done) return;
