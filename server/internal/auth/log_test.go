@@ -2,12 +2,15 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/obs"
 )
 
 // syncBuffer lets the background sweep and handlers log concurrently.
@@ -118,5 +121,37 @@ func TestRateLimitedLoginIsLogged(t *testing.T) {
 	}
 	if find(buf.lines(t), "auth.login", "result", "fail", "reason", "rate_limited") == nil {
 		t.Fatalf("no rate_limited event: %s", buf.String())
+	}
+}
+
+// Sessions that merely expire while someone logs in are logged without that
+// login's request ID; an eviction, which the login caused, keeps it (#86).
+func TestSweptSessionsDontBorrowTheLoginsRequestID(t *testing.T) {
+	h := newHarness(t, false)
+	var buf syncBuffer
+	h.m.SetLogger(slog.New(slog.NewJSONHandler(&buf, nil)))
+	ctx := context.Background()
+	_, old, err := h.m.create(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.clock.Advance(idleTimeout + time.Second)
+	if _, _, err := h.m.create(obs.WithRequestID(ctx, "req-login")); err != nil {
+		t.Fatal(err)
+	}
+	if l := find(buf.lines(t), "auth.session_end", "reason", "expired", "session_id", old.id); l == nil || l["request_id"] != nil {
+		t.Fatalf("swept session logged as %v; it must have no request_id", l)
+	}
+
+	for h.m.sessionCount() < maxSessions {
+		if _, _, err := h.m.create(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := h.m.create(obs.WithRequestID(ctx, "req-evict")); err != nil {
+		t.Fatal(err)
+	}
+	if l := find(buf.lines(t), "auth.session_end", "reason", "evicted"); l == nil || l["request_id"] != "req-evict" {
+		t.Fatalf("eviction logged as %v; it should carry the login's request_id", l)
 	}
 }
