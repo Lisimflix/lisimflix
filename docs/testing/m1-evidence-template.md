@@ -1,6 +1,6 @@
 # M1 playback evidence
 
-M1 passes only when all six rows below pass MOVIE-01–04 with the same source,
+M1 passes only when all four rows below pass MOVIE-01–04 with the same source,
 each run played from the beginning to the actual end without seeking (spec
 §9.3). One row never stands in for another. A failed row stays open and is
 rerun after a fix.
@@ -21,10 +21,11 @@ MP3 stereo 44.1 kHz. Source bitrate about 6.4 Mb/s. sha256
 |---|---|---|---|---|
 | 1 | Chrome | Linux | @lisim | not run |
 | 2 | Firefox | Linux | @lisim | not run |
-| 3 | Chrome | Windows | @Lammy93 | not run |
-| 4 | Firefox | Windows | @Lammy93 | not run |
-| 5 | Chrome | macOS | @Lammy93 | not run |
-| 6 | Firefox | macOS | @Lammy93 | not run |
+| 3 | Chrome | macOS | @Lammy93 | not run |
+| 4 | Firefox | macOS | @Lammy93 | not run |
+
+Chrome and Firefox on Windows are not M1 rows: Windows is deferred to a later
+milestone (Pete and Lammy, 2026-10-27; #19).
 
 Status is one of: **not run**, **pass**, **fail** (with the failing MOVIE ID).
 
