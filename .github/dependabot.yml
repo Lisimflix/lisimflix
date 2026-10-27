@@ -22,9 +22,10 @@ updates:
       # Types follow the Node major we run (.node-version); bump them with it.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
-      # typescript-eslint 8.x supports TypeScript <6.1.0. Lift when it does more.
+      # openapi-typescript 7.13.0 needs TypeScript ^5 (and typescript-eslint
+      # 8.72.0 <6.1.0). Lift when both support a newer major.
       - dependency-name: typescript
-        versions: [">=6.1.0"]
+        versions: [">=6.0.0"]
   # Dockerfile base images, pinned by digest. A golang/node bump must match
   # server/go.mod's toolchain and .node-version in the same PR.
   - package-ecosystem: docker
