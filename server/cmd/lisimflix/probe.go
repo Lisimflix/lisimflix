@@ -13,6 +13,7 @@ type probed struct {
 	VideoCodec, AudioCodec string
 	Width, Height          int
 	DurationMS             int64
+	Size                   int64 // bytes, from format.size; 0 if the record has none
 }
 
 type probeJSON struct {
@@ -27,6 +28,10 @@ type probeJSON struct {
 	Format struct {
 		FormatName string `json:"format_name"`
 		Duration   string `json:"duration"`
+		Size       string `json:"size"`
+		Tags       struct {
+			MajorBrand string `json:"major_brand"`
+		} `json:"tags"`
 	} `json:"format"`
 }
 
@@ -42,7 +47,9 @@ func parseProbe(b []byte) (probed, error) {
 	if err := json.Unmarshal(b, &p); err != nil {
 		return probed{}, errors.New("probe: not ffprobe JSON (-show_format -show_streams -of json)")
 	}
-	if !strings.Contains(","+p.Format.FormatName+",", ",mp4,") {
+	// ffprobe gives QuickTime .mov the same format_name as MP4; the brand
+	// (padded, e.g. "qt  ") tells them apart.
+	if !strings.Contains(","+p.Format.FormatName+",", ",mp4,") || strings.TrimSpace(p.Format.Tags.MajorBrand) == "qt" {
 		return probed{}, errors.New("probe: the source is not an MP4")
 	}
 	var out probed
@@ -80,5 +87,8 @@ func parseProbe(b []byte) (probed, error) {
 		return probed{}, errors.New("probe: duration must be positive")
 	}
 	out.DurationMS = int64(math.Round(d * 1000))
+	if p.Format.Size != "" {
+		out.Size, _ = strconv.ParseInt(p.Format.Size, 10, 64)
+	}
 	return out, nil
 }

@@ -7,10 +7,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/m1config"
 )
 
 // version is set at build time with -ldflags "-X main.version=…".
@@ -56,14 +59,32 @@ func storagePaths(cfgPath, db, backups string) (string, string) {
 	return db, backups
 }
 
+// cmdHealthcheck asks the local server for readiness, at the listen address
+// in the config (an empty or unspecified host means loopback), or at --addr.
 func cmdHealthcheck(args []string) error {
 	fl := flag.NewFlagSet("healthcheck", flag.ContinueOnError)
-	addr := fl.String("addr", "127.0.0.1:8420", "loopback address of the server")
+	cfgPath := fl.String("config", "/config/m1.json", "config file, for the listen address")
+	addr := fl.String("addr", "", "address to check instead of the config's listen address")
 	if err := fl.Parse(args); err != nil {
 		return err
 	}
+	target := *addr
+	if target == "" {
+		cfg, err := m1config.Load(*cfgPath)
+		if err != nil {
+			return err
+		}
+		host, port, err := net.SplitHostPort(cfg.ListenAddr)
+		if err != nil {
+			return err
+		}
+		if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
+			host = "127.0.0.1"
+		}
+		target = net.JoinHostPort(host, port)
+	}
 	c := &http.Client{Timeout: 3 * time.Second}
-	resp, err := c.Get("http://" + *addr + "/health/ready")
+	resp, err := c.Get("http://" + target + "/health/ready")
 	if err != nil {
 		return errors.New("not reachable")
 	}

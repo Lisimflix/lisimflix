@@ -44,7 +44,9 @@ MEDIA_DIR=/path/to/media docker compose -f deploy/compose.m1.yml run --rm -T lis
 rm pwfile
 ```
 
-`--origin` is the address browsers use, with the port. `init` refuses to
+`--origin` is the address browsers use, with the **host** port: compose
+publishes `LISIMFLIX_PORT` (default 8420) to the app's fixed 8420 inside the
+container, so keep `init`'s `--listen` at its default. `init` refuses to
 overwrite an existing config. Passwords are 12–1024 bytes.
 
 ## 4. Run

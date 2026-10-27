@@ -9,6 +9,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -183,6 +184,47 @@ func TestInitRefusesOverwriteAndPlaintextOutput(t *testing.T) {
 		if _, statErr := os.Stat(p); err == nil || statErr == nil {
 			t.Errorf("%s: init = %v and wrote a config", name, err)
 		}
+	}
+}
+
+// Pete's note on #31: a probe record for another file is refused.
+func TestInitRejectsAProbeForAnotherFile(t *testing.T) {
+	f := newFixture(t)
+	probe := filepath.Join(t.TempDir(), "other.json")
+	os.WriteFile(probe, []byte(strings.Replace(testProbe, `"duration":"12.5"`, `"duration":"12.5","size":"999"`, 1)), 0o600)
+	cfg := filepath.Join(t.TempDir(), "m1.json")
+	err := cmdInit([]string{"--config", cfg, "--origin", "http://127.0.0.1:1", "--media-root", filepath.Join(f.dir, "media"),
+		"--movie", "Movies/movie.mp4", "--probe-json", probe, "--username", "viewer"}, strings.NewReader(password+"\n"+password+"\n"), io.Discard)
+	if _, statErr := os.Stat(cfg); err == nil || statErr == nil {
+		t.Fatalf("init with a probe of another size = %v; it must refuse and write nothing", err)
+	}
+}
+
+// healthcheck reads the listen address from the config (#31): an empty host
+// means loopback.
+func TestHealthcheckUsesTheConfiguredListenAddress(t *testing.T) {
+	f := newFixture(t)
+	_, port, _ := net.SplitHostPort(f.ts.Listener.Addr().String())
+	for name, listen := range map[string]string{"host and port": "127.0.0.1:" + port, "port only": ":" + port} {
+		t.Run(name, func(t *testing.T) {
+			cfg := filepath.Join(t.TempDir(), "m1.json")
+			if err := cmdInit([]string{"--config", cfg, "--origin", f.ts.URL, "--media-root", filepath.Join(f.dir, "media"),
+				"--movie", "Movies/movie.mp4", "--probe-json", filepath.Join(f.dir, "probe.json"), "--username", "viewer", "--listen", listen},
+				strings.NewReader(password+"\n"+password+"\n"), io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmdHealthcheck([]string{"--config", cfg}); err != nil {
+				t.Fatalf("healthcheck = %v", err)
+			}
+		})
+	}
+	f.ts.Close()
+	cfg := filepath.Join(t.TempDir(), "m1.json")
+	cmdInit([]string{"--config", cfg, "--origin", f.ts.URL, "--media-root", filepath.Join(f.dir, "media"),
+		"--movie", "Movies/movie.mp4", "--probe-json", filepath.Join(f.dir, "probe.json"), "--username", "viewer", "--listen", "127.0.0.1:" + port},
+		strings.NewReader(password+"\n"+password+"\n"), io.Discard)
+	if err := cmdHealthcheck([]string{"--config", cfg}); err == nil {
+		t.Fatal("healthcheck passed with the server stopped")
 	}
 }
 

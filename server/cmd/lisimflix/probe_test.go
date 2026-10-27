@@ -19,6 +19,15 @@ func TestProbeAcceptsUntaggedSDR(t *testing.T) {
 	if m.VideoCodec != "h264" || m.AudioCodec != "mp3" || m.Width != 1920 || m.Height != 800 || m.DurationMS != 734167 {
 		t.Fatalf("probe = %+v", m)
 	}
+	// An MP4 brand and a recorded size are accepted and kept.
+	var v map[string]any
+	json.Unmarshal([]byte(tos), &v)
+	v["format"].(map[string]any)["tags"] = map[string]any{"major_brand": "isom"}
+	v["format"].(map[string]any)["size"] = "583770545"
+	b, _ := json.Marshal(v)
+	if m, err := parseProbe(b); err != nil || m.Size != 583770545 {
+		t.Fatalf("isom probe = %+v, %v", m, err)
+	}
 }
 
 func TestProbeRejectsUnqualifiedSources(t *testing.T) {
@@ -44,6 +53,8 @@ func TestProbeRejectsUnqualifiedSources(t *testing.T) {
 		"bad duration": edit(func(v map[string]any) { v["format"].(map[string]any)["duration"] = "abc" }),
 		"ac3 audio":    edit(func(v map[string]any) { stream(v, 1)["codec_name"] = "ac3" }),
 		"not json":     []byte("nope"),
+		// QuickTime .mov shares format_name with MP4; ffprobe pads the brand.
+		"quicktime brand": edit(func(v map[string]any) { v["format"].(map[string]any)["tags"] = map[string]any{"major_brand": "qt  "} }),
 	} {
 		if _, err := parseProbe(b); err == nil {
 			t.Errorf("%s: accepted", name)

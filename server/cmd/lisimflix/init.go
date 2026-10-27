@@ -53,6 +53,9 @@ func cmdInit(args []string, stdin io.Reader, stdout io.Writer) error {
 	if err != nil {
 		return errors.New("the movie is not readable inside the media root")
 	}
+	if pr.Size > 0 && pr.Size != info.Size() {
+		return errors.New("the probe record is for a different file (its size doesn't match the movie)")
+	}
 	pw, err := readPassword(stdin, stdout)
 	if err != nil {
 		return err
