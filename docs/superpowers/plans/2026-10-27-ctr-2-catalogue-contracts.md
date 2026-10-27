@@ -78,7 +78,7 @@ The planned operations go into the contract now, each tagged with its owning fea
    - Each field has a `value`, a `source` (provider, provider ID, fetch time) and a `locked` flag.
    - `source` is null when no origin is recorded. Manual edits use the provider `user`, and NFO files use `nfo`.
    - Reading it is admin-only (non-admins get 404). The edit operation is META-1's to plan; it takes `expectedRevision`.
-10. **Streams on the wire are a display subset** of LIB-1's `probe.Result`: index, codec, language, flags and HDR.
+10. **Streams on the wire are a display subset** of LIB-1's `probe.Result`: index, codec, audio profile, language, flags and HDR. The audio `profile` is what tells TrueHD Atmos or DTS-HD MA apart (Pete, #81).
     - PLY-1 decides playback from `probe.Result` itself, not from this shape.
     - `probe` keeps no JSON tags (LIB-1's decision), so LIB-2 maps the values.
     - Untagged and `und` languages are `null`.
@@ -124,7 +124,7 @@ The nine M1 operations get `x-lisimflix` with status `implemented`: ACC-1 for au
 | `MediaVersion` | `id`, `fileId`, `label?`, `durationMs?`, `sourceRevision` (64 hex), `segment?`, `container`, `video[]`, `audio[]`, `subtitles[]` |
 | `Segment` | `startMs`, `endMs` |
 | `VideoStream` | `index`, `codec`, `width`, `height`, `hdr` (`sdr` \| `hdr10` \| `hdr10plus` \| `hlg` \| `dolbyVision`), `default` |
-| `AudioStream` | `index`, `codec`, `channels`, `language?` (ISO 639-2, not `und`), `title?`, `default`, `forced` |
+| `AudioStream` | `index`, `codec`, `profile?` (e.g. `Dolby TrueHD + Dolby Atmos`, `DTS-HD MA`), `channels`, `language?` (ISO 639-2, not `und`), `title?`, `default`, `forced` |
 | `SubtitleStream` | `index`, `codec`, `kind` (`text` \| `image` \| `ass`), `language?`, `title?`, `default`, `forced`, `hearingImpaired` |
 | `UserItemState` | `itemId`, `revision` (≥ 0), `resume?`, `watched?`, `playCount?`, `lastPlayedAt?`, `hiddenFromContinueWatching` |
 | `Resume` | `positionMs`, `durationMs`, `versionId`, `sourceRevision`, `updatedAt` |
@@ -144,7 +144,7 @@ The nine M1 operations get `x-lisimflix` with status `implemented`: ACC-1 for au
 
 ### Revision rules
 
-- **R1. Source revision.** `sourceRevision` is the lowercase hex SHA-256 of `fileId 0x00 size 0x00 mtimeUnixNano`, with the numbers in decimal (`contracts.SourceRevision`). It changes exactly when the file's size or modification time changes. M1's movie uses its movie ID as the file ID, so M1 values don't change.
+- **R1. Source revision.** `sourceRevision` is the lowercase hex SHA-256 of `fileId 0x00 size 0x00 mtimeUnixNano`, with the numbers in decimal (`contracts.SourceRevision`). It changes exactly when the file's size or modification time changes. M1's movie uses its movie ID as the file ID, so M1 values don't change. `fileId` is LIB-2's stable opaque file ID, never a path. When LIB-2 takes over M1's movie file and gives it its own `fileId`, the revision changes once. An M1 playback session still open at that moment gets `source_changed`, which is intended: the player starts a new session.
 - **R2. One rule everywhere.** LIB-1/LIB-2 store `library.Revision{Size, ModTime}` and derive the wire string with R1. Playback compares R1 strings. Progress keeps the R1 string it was recorded against. A resume position from another version or source revision needs confirmation before it's reused (spec §3.8).
 - **R3. Resource revisions.** `UserItemState.revision` and `ItemMetadata.revision` go up by 1 on every committed change. A write with a different `expectedRevision` gets 409 `revision_conflict`, and nothing changes.
 - **R4. Progress order.** Within a playback session, `sequence` must increase. A repeated sequence is answered `accepted:false, reason:"duplicate"`, and a lower one `reason:"stale"`. If the session's source revision no longer matches the file, the answer is 409 `source_changed`. An automatic update never overwrites a manual `watched` value.
@@ -562,7 +562,7 @@ index 80f325e..f4b2d22 100644
 
 ```diff
 diff --git a/README.md b/README.md
-index fe6f5f7..86357a7 100644
+index e732179..a25f025 100644
 --- a/README.md
 +++ b/README.md
 @@ -17,7 +17,7 @@ only: plain HTTP, one viewer and one movie.
@@ -1340,7 +1340,7 @@ func TestCatalogueEnumsMatchOpenAPI(t *testing.T) {
       "segment": null,
       "container": "matroska,webm",
       "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],
-      "audio": [{ "index": 1, "codec": "aac", "channels": 2, "language": "jpn", "title": null, "default": true, "forced": false }],
+      "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "jpn", "title": null, "default": true, "forced": false }],
       "subtitles": [{ "index": 2, "codec": "ass", "kind": "ass", "language": "eng", "title": "Full", "default": true, "forced": false, "hearingImpaired": false }]
     }
   ]
@@ -1388,7 +1388,7 @@ func TestCatalogueEnumsMatchOpenAPI(t *testing.T) {
       "segment": null,
       "container": "mov,mp4,m4a,3gp,3g2,mj2",
       "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],
-      "audio": [{ "index": 1, "codec": "aac", "channels": 2, "language": "eng", "title": null, "default": true, "forced": false }],
+      "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "eng", "title": null, "default": true, "forced": false }],
       "subtitles": [{ "index": 2, "codec": "mov_text", "kind": "text", "language": "eng", "title": "English", "default": false, "forced": false, "hearingImpaired": false }]
     },
     {
@@ -1401,8 +1401,8 @@ func TestCatalogueEnumsMatchOpenAPI(t *testing.T) {
       "container": "matroska,webm",
       "video": [{ "index": 0, "codec": "hevc", "width": 3840, "height": 2160, "hdr": "hdr10", "default": true }],
       "audio": [
-        { "index": 1, "codec": "truehd", "channels": 8, "language": "eng", "title": "Atmos", "default": true, "forced": false },
-        { "index": 2, "codec": "ac3", "channels": 6, "language": null, "title": null, "default": false, "forced": false }
+        { "index": 1, "codec": "truehd", "profile": "Dolby TrueHD + Dolby Atmos", "channels": 8, "language": "eng", "title": "Atmos", "default": true, "forced": false },
+        { "index": 2, "codec": "ac3", "profile": null, "channels": 6, "language": null, "title": null, "default": false, "forced": false }
       ],
       "subtitles": [{ "index": 3, "codec": "hdmv_pgs_subtitle", "kind": "image", "language": "eng", "title": null, "default": false, "forced": true, "hearingImpaired": false }]
     }
@@ -1568,7 +1568,7 @@ index 12049e8..060f406 100644
 
 ```diff
 diff --git a/testdata/contracts/catalogue/README.md b/testdata/contracts/catalogue/README.md
-index 1aa7614..66012b8 100644
+index 1aa7614..8ac52bc 100644
 --- a/testdata/contracts/catalogue/README.md
 +++ b/testdata/contracts/catalogue/README.md
 @@ -14,6 +14,12 @@ provider keys or personal data here.
@@ -1578,7 +1578,7 @@ index 1aa7614..66012b8 100644
 +| `libraries.json` | `LibraryList` | A movie library and an anime library |
 +| `items-movies.json` | `ItemPage` | A partly watched movie with a resume position, and a next page |
 +| `items-episodes.json` | `ItemPage` | Episodes 1–2 of a season. Both live in one file with unknown boundaries, so neither has a duration; episode 1 was marked watched by hand |
-+| `item-movie.json` | `ItemDetail` | A movie with two versions: a 1080p MP4 and a 4K HDR10 Director's Cut with TrueHD, an untagged AC-3 track and forced PGS subtitles |
++| `item-movie.json` | `ItemDetail` | A movie with two versions: a 1080p MP4 and a 4K HDR10 Director's Cut with TrueHD Atmos (audio `profile`), an untagged AC-3 track with no profile and forced PGS subtitles |
 +| `item-episode-shared-file.json` | `ItemDetail` | Episode 2: its version's file (`fil-synthetic-0003`) also holds episode 1, and `segment` is null because the boundaries are unknown |
 +| `item-show.json` | `ItemDetail` | A show: no user state, no duration, no versions |
  
@@ -1590,10 +1590,10 @@ index 1aa7614..66012b8 100644
 
 ```diff
 diff --git a/web/contract-tests/fixtures.test.mjs b/web/contract-tests/fixtures.test.mjs
-index dc2b054..37d9330 100644
+index dc2b054..f7eba8b 100644
 --- a/web/contract-tests/fixtures.test.mjs
 +++ b/web/contract-tests/fixtures.test.mjs
-@@ -113,3 +113,29 @@ checkFixtures(userDataFixtures, [
+@@ -113,3 +113,30 @@ checkFixtures(userDataFixtures, [
    ["negative play count", "progress-duplicate.json", (d) => { d.state.playCount = -1; }],
    ["fractional expected revision", "watched-request.json", (d) => { d.expectedRevision = 1.5; }],
  ]);
@@ -1621,6 +1621,7 @@ index dc2b054..37d9330 100644
 +  ["non-hex source revision", "item-movie.json", (d) => { d.versions[0].sourceRevision = "rev-synthetic-0001"; }],
 +  ["file path on a version", "item-movie.json", (d) => { d.versions[0].path = "/media/movies/synthetic.mkv"; }],
 +  ["und language instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].language = "und"; }],
++  ["empty audio profile instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].profile = ""; }],
 +  ["unknown HDR format", "item-movie.json", (d) => { d.versions[1].video[0].hdr = "hdr12"; }],
 +]);
 ```
@@ -1672,7 +1673,7 @@ go -C server test -count=1 ./internal/contracts ./internal/playback
 npm --prefix web run generate:api && npm --prefix web run test:contracts && npm --prefix web run typecheck
 ```
 
-Expected: Go FAILs to build (`undefined: LibraryList`, `ItemPage`, `ItemDetail`). `test:contracts`: 55 tests, 20 fail: 6 fixtures and 14 rejections. `typecheck`: `Property 'ItemSummary' does not exist`.
+Expected: Go FAILs to build (`undefined: LibraryList`, `ItemPage`, `ItemDetail`). `test:contracts`: 56 tests, 21 fail: 6 fixtures and 15 rejections. `typecheck`: `Property 'ItemSummary' does not exist`.
 
 - [ ] **Step 3: Implement**
 
@@ -1823,6 +1824,7 @@ type VideoStream struct {
 type AudioStream struct {
 	Index    int     `json:"index"`
 	Codec    string  `json:"codec"`
+	Profile  *string `json:"profile"` // e.g. "Dolby TrueHD + Dolby Atmos", "DTS-HD MA"; null when ffprobe reports none
 	Channels int     `json:"channels"`
 	Language *string `json:"language"` // ISO 639-2 as tagged; null when untagged or "und"
 	Title    *string `json:"title"`
@@ -1846,7 +1848,7 @@ type SubtitleStream struct {
 
 ```diff
 diff --git a/docs/contracts/openapi.json b/docs/contracts/openapi.json
-index 8fa6028..344e40e 100644
+index 8fa6028..c9d69b6 100644
 --- a/docs/contracts/openapi.json
 +++ b/docs/contracts/openapi.json
 @@ -212,6 +212,54 @@
@@ -1915,7 +1917,7 @@ index 8fa6028..344e40e 100644
        "Range": { "name": "Range", "in": "header", "required": false, "schema": { "type": "string" } },
        "IfRange": { "name": "If-Range", "in": "header", "required": false, "schema": { "type": "string" } },
        "IfNoneMatch": { "name": "If-None-Match", "in": "header", "required": false, "schema": { "type": "string" } },
-@@ -412,6 +464,171 @@
+@@ -412,6 +464,172 @@
            "watched": { "type": "boolean" },
            "expectedRevision": { "type": "integer", "format": "int64", "minimum": 0 }
          }
@@ -2059,10 +2061,11 @@ index 8fa6028..344e40e 100644
 +      "AudioStream": {
 +        "type": "object",
 +        "additionalProperties": false,
-+        "required": ["index", "codec", "channels", "language", "title", "default", "forced"],
++        "required": ["index", "codec", "profile", "channels", "language", "title", "default", "forced"],
 +        "properties": {
 +          "index": { "type": "integer", "minimum": 0 },
 +          "codec": { "type": "string", "minLength": 1 },
++          "profile": { "type": ["string", "null"], "minLength": 1, "description": "ffprobe profile, e.g. LC, Dolby TrueHD + Dolby Atmos, DTS-HD MA. Null when none is reported." },
 +          "channels": { "type": "integer", "minimum": 1 },
 +          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$", "description": "ISO 639-2 as tagged; null when untagged or und" },
 +          "title": { "type": ["string", "null"], "minLength": 1 },
@@ -2097,7 +2100,7 @@ npm --prefix web run generate:api && npm --prefix web run test:contracts && npm 
 npm --prefix web run lint
 ```
 
-Expected: Go `ok`; `test:contracts`: 55 tests, 55 pass; typecheck and lint pass.
+Expected: Go `ok`; `test:contracts`: 56 tests, 56 pass; typecheck and lint pass.
 
 - [ ] **Step 5: Commit**
 
@@ -2183,11 +2186,11 @@ index 060f406..21c8547 100644
 
 ```diff
 diff --git a/testdata/contracts/catalogue/README.md b/testdata/contracts/catalogue/README.md
-index 66012b8..f59d2f4 100644
+index 8ac52bc..b09c256 100644
 --- a/testdata/contracts/catalogue/README.md
 +++ b/testdata/contracts/catalogue/README.md
 @@ -20,6 +20,7 @@ provider keys or personal data here.
- | `item-movie.json` | `ItemDetail` | A movie with two versions: a 1080p MP4 and a 4K HDR10 Director's Cut with TrueHD, an untagged AC-3 track and forced PGS subtitles |
+ | `item-movie.json` | `ItemDetail` | A movie with two versions: a 1080p MP4 and a 4K HDR10 Director's Cut with TrueHD Atmos (audio `profile`), an untagged AC-3 track with no profile and forced PGS subtitles |
  | `item-episode-shared-file.json` | `ItemDetail` | Episode 2: its version's file (`fil-synthetic-0003`) also holds episode 1, and `segment` is null because the boundaries are unknown |
  | `item-show.json` | `ItemDetail` | A show: no user state, no duration, no versions |
 +| `profiles.json` | `ProfileList` | An unrestricted profile, and a PIN-protected kids profile limited to one library, AU PG and no unrated items |
@@ -2200,11 +2203,11 @@ index 66012b8..f59d2f4 100644
 
 ```diff
 diff --git a/web/contract-tests/fixtures.test.mjs b/web/contract-tests/fixtures.test.mjs
-index 37d9330..d7334d8 100644
+index f7eba8b..758b4eb 100644
 --- a/web/contract-tests/fixtures.test.mjs
 +++ b/web/contract-tests/fixtures.test.mjs
-@@ -139,3 +139,10 @@ checkFixtures(catalogueFixtures, [
-   ["und language instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].language = "und"; }],
+@@ -140,3 +140,10 @@ checkFixtures(catalogueFixtures, [
+   ["empty audio profile instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].profile = ""; }],
    ["unknown HDR format", "item-movie.json", (d) => { d.versions[1].video[0].hdr = "hdr12"; }],
  ]);
 +
@@ -2223,7 +2226,7 @@ go -C server test -count=1 ./internal/contracts ./internal/playback
 npm --prefix web run generate:api && npm --prefix web run test:contracts && npm --prefix web run typecheck
 ```
 
-Expected: Go FAILs to build (`undefined: ProfileList`, `Profile`, `ProfilePolicy`). `test:contracts`: 58 tests, 3 fail: the fixture and 2 rejections.
+Expected: Go FAILs to build (`undefined: ProfileList`, `Profile`, `ProfilePolicy`). `test:contracts`: 59 tests, 3 fail: the fixture and 2 rejections.
 
 - [ ] **Step 3: Implement**
 
@@ -2258,7 +2261,7 @@ type ProfileList = Page[Profile]
 
 ```diff
 diff --git a/docs/contracts/openapi.json b/docs/contracts/openapi.json
-index 344e40e..d2c7eb9 100644
+index c9d69b6..5784d1f 100644
 --- a/docs/contracts/openapi.json
 +++ b/docs/contracts/openapi.json
 @@ -260,6 +260,20 @@
@@ -2282,7 +2285,7 @@ index 344e40e..d2c7eb9 100644
      }
    },
    "components": {
-@@ -629,6 +643,37 @@
+@@ -630,6 +644,37 @@
            "forced": { "type": "boolean" },
            "hearingImpaired": { "type": "boolean" }
          }
@@ -2330,7 +2333,7 @@ npm --prefix web run generate:api && npm --prefix web run test:contracts && npm 
 npm --prefix web run lint
 ```
 
-Expected: Go `ok`; `test:contracts`: 58 tests, 58 pass; typecheck and lint pass.
+Expected: Go `ok`; `test:contracts`: 59 tests, 59 pass; typecheck and lint pass.
 
 - [ ] **Step 5: Commit**
 
@@ -2454,7 +2457,7 @@ index 21c8547..15c4bc1 100644
 
 ```diff
 diff --git a/testdata/contracts/catalogue/README.md b/testdata/contracts/catalogue/README.md
-index f59d2f4..b29eb8d 100644
+index b09c256..a5d2804 100644
 --- a/testdata/contracts/catalogue/README.md
 +++ b/testdata/contracts/catalogue/README.md
 @@ -21,6 +21,7 @@ provider keys or personal data here.
@@ -2471,7 +2474,7 @@ index f59d2f4..b29eb8d 100644
 
 ```diff
 diff --git a/web/contract-tests/fixtures.test.mjs b/web/contract-tests/fixtures.test.mjs
-index d7334d8..6733a2e 100644
+index 758b4eb..62f4e88 100644
 --- a/web/contract-tests/fixtures.test.mjs
 +++ b/web/contract-tests/fixtures.test.mjs
 @@ -1,5 +1,5 @@
@@ -2481,7 +2484,7 @@ index d7334d8..6733a2e 100644
  import test from "node:test";
  import Ajv2020 from "@redocly/ajv/dist/2020.js";
  
-@@ -146,3 +146,17 @@ checkFixtures(profileFixtures, [
+@@ -147,3 +147,17 @@ checkFixtures(profileFixtures, [
    ["profile policy without allowUnrated", "profiles.json", (d) => { delete d.items[1].policy.allowUnrated; }],
    ["null library list in a policy", "profiles.json", (d) => { d.items[1].policy.libraryIds = null; }],
  ]);
@@ -2508,7 +2511,7 @@ go -C server test -count=1 ./internal/contracts ./internal/playback
 npm --prefix web run generate:api && npm --prefix web run test:contracts && npm --prefix web run typecheck
 ```
 
-Expected: Go FAILs to build (`undefined: ItemMetadata`, `MatchUnmatched` …). `test:contracts`: 63 tests, 4 fail: the fixture and 3 rejections.
+Expected: Go FAILs to build (`undefined: ItemMetadata`, `MatchUnmatched` …). `test:contracts`: 64 tests, 4 fail: the fixture and 3 rejections.
 
 - [ ] **Step 3: Implement**
 
@@ -2587,7 +2590,7 @@ type MetadataExternalID struct {
 
 ```diff
 diff --git a/docs/contracts/openapi.json b/docs/contracts/openapi.json
-index d2c7eb9..88d971f 100644
+index 5784d1f..92c2637 100644
 --- a/docs/contracts/openapi.json
 +++ b/docs/contracts/openapi.json
 @@ -274,6 +274,20 @@
@@ -2611,7 +2614,7 @@ index d2c7eb9..88d971f 100644
      }
    },
    "components": {
-@@ -674,6 +688,95 @@
+@@ -675,6 +689,95 @@
            "items": { "type": "array", "items": { "$ref": "#/components/schemas/Profile" } },
            "nextCursor": { "type": ["string", "null"], "minLength": 1 }
          }
@@ -2717,7 +2720,7 @@ npm --prefix web run generate:api && npm --prefix web run test:contracts && npm 
 npm --prefix web run lint
 ```
 
-Expected: Go `ok`; `test:contracts`: 63 tests, 63 pass; typecheck and lint pass.
+Expected: Go `ok`; `test:contracts`: 64 tests, 64 pass; typecheck and lint pass.
 
 - [ ] **Step 5: Commit**
 
@@ -2738,7 +2741,7 @@ make check
 ```
 
 Expected:
-- PASS, with 63 contract tests in `test:contracts`.
+- PASS, with 64 contract tests in `test:contracts`.
 - Every Go package `ok` under `-race`.
 - No diff in `web/src/api/schema.d.ts`.
 
@@ -2778,7 +2781,7 @@ gh pr create --title "feat(api): catalogue and identity contracts (CTR-2)" --bod
 | §8.3 the shared contract hotspot changes in one small PR, additively | This plan: M1 shapes unchanged, rename only |
 
 **Verified while writing this plan:**
-- **Prototype:** the plan's code ran as a prototype, and `make check` passed: every Go package under `-race`, and 63 web contract tests.
+- **Prototype:** the plan's code ran as a prototype, and `make check` passed: every Go package under `-race`, and 64 web contract tests.
 - **Rebuild:** each task was rebuilt from `main` in order. Each failed with the Step 2 messages before its implementation and passed after. The rebuilt contract equals the prototype's, compared as JSON.
 - **Mutation check:** removing the conditional rules (parent by kind, null duration and user state for containers, no versions on containers, `fromPositionMs` only for seeks, a reason exactly when rejected) and the `und` exclusion made exactly the 10 matching rejection tests fail. Changing the `SourceRevision` separator made the pinned test fail.
 - **Placeholders:** none.
