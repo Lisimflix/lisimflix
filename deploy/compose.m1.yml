@@ -20,4 +20,9 @@ services:
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     stop_grace_period: 15s
+    # Failed sign-ins and error requests are logged (OPS-5), and Docker's
+    # json-file default keeps logs forever: cap them at 3 × 10 MB (#85).
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     restart: unless-stopped
