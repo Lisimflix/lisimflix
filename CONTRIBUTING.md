@@ -53,6 +53,11 @@ Never bypass it with `--no-verify`.
 - CI minutes are limited (2,000/month on the free plan), so workflows must:
   use Linux runners only (`ubuntu-latest`), cache Go modules and node packages,
   and cancel superseded runs on the same PR.
+- Dependabot (`.github/dependabot.yml`) opens weekly update PRs for Go modules, npm,
+  Dockerfile base images and Actions: minor/patch bumps grouped per ecosystem, majors
+  alone. Review them like any PR; `make check` must pass. A dependency added outside
+  these (e.g. a binary installed in the `Dockerfile`) needs a pinned version and a
+  note on how it gets updated.
 
 ## Owners
 
