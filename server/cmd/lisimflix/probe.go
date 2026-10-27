@@ -88,7 +88,11 @@ func parseProbe(b []byte) (probed, error) {
 	}
 	out.DurationMS = int64(math.Round(d * 1000))
 	if p.Format.Size != "" {
-		out.Size, _ = strconv.ParseInt(p.Format.Size, 10, 64)
+		n, err := strconv.ParseInt(p.Format.Size, 10, 64)
+		if err != nil || n < 0 {
+			return probed{}, errors.New("probe: size must be a byte count")
+		}
+		out.Size = n
 	}
 	return out, nil
 }
