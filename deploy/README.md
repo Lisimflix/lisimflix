@@ -49,6 +49,14 @@ publishes `LISIMFLIX_PORT` (default 8420) to the app's fixed 8420 inside the
 container, so keep `init`'s `--listen` at its default. `init` refuses to
 overwrite an existing config. Passwords are 12–1024 bytes.
 
+**IPv4 only.** The compose file publishes the port on IPv4 only. With Docker's
+default publishing, IPv6 clients reach the app through Docker's userland proxy,
+so the app sees the Docker bridge gateway instead of the client. Every IPv6
+client would then share one sign-in rate limit and one password-check slot. If
+you need IPv6, run with `network_mode: host` instead (then remove `ports:`; the
+app listens on `--listen`, port 8420 by default). Clients that connect by name
+still work: they fall back to IPv4.
+
 ## 4. Run
 
 ```sh
