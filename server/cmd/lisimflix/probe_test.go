@@ -54,6 +54,9 @@ func TestProbeRejectsUnqualifiedSources(t *testing.T) {
 		"ac3 audio":    edit(func(v map[string]any) { stream(v, 1)["codec_name"] = "ac3" }),
 		"not json":     []byte("nope"),
 		// QuickTime .mov shares format_name with MP4; ffprobe pads the brand.
+		// A size that doesn't parse must not silently skip init's size check.
+		"bad size":        edit(func(v map[string]any) { v["format"].(map[string]any)["size"] = "12abc" }),
+		"negative size":   edit(func(v map[string]any) { v["format"].(map[string]any)["size"] = "-5" }),
 		"quicktime brand": edit(func(v map[string]any) { v["format"].(map[string]any)["tags"] = map[string]any{"major_brand": "qt  "} }),
 	} {
 		if _, err := parseProbe(b); err == nil {
