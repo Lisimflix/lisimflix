@@ -84,6 +84,8 @@ Never bypass it with `--no-verify`.
   update the contract and affected consumers together rather than editing in parallel.
 - Don't edit a spec or plan someone else is writing. Open an issue for them instead.
 - Hand-offs and decisions go in issue or PR comments, not only in chat.
+- Non-blocking review notes, and issues noticed in passing, get their own issue
+  (area labels, linking the PR or review) before the PR merges. A comment alone gets lost.
 
 ## Naming
 
