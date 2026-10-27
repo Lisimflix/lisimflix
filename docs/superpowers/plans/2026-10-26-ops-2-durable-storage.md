@@ -22,8 +22,9 @@ acceptance BASE-03, OPS-01 (G1 storage part), PERF-07 inputs.
 
 - Feature **OPS-2** (P0 / G1). Initial target **Linux x86-64/amd64 containers**. The database lives
   under `/config` on **local disk, never SMB/NFS** (spec §10.2). WAL permits one writer at a time.
-- `CGO_ENABLED=0` builds. The driver version is pinned to **v1.60.1** (released 2026-09-29; v1.61.0
-  was less than a week old when this was written).
+- `CGO_ENABLED=0` builds. The driver version was pinned to **v1.60.1** (released 2026-09-29; v1.61.0
+  was less than a week old when this was written). Dependabot has since moved it to v1.61.0 (#49);
+  `server/go.mod` is the current source, and Dependabot's 14-day cooldown enforces the age rule (#66).
 - Source media is never touched. Snapshots exclude media and `/cache` (spec §11.3).
 - Migrations: one `Source` per module, file names `YYYYMMDDHHMMSS_<module>_<what>.sql` (UTC), the
   module prefix must match its `Source`, and timestamps are unique across all modules. A merged
