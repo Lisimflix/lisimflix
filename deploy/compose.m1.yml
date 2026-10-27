@@ -1,0 +1,21 @@
+# M1 deployment: one container on a trusted private network.
+# Plain HTTP has no transport encryption (spec §6.6): don't expose this port
+# to the internet. Setup steps and permissions: deploy/README.md.
+services:
+  lisimflix:
+    build: ..
+    image: lisimflix:m1
+    user: "${PUID:-1000}:${PGID:-1000}"   # must own CONFIG_DIR; media only needs to be readable
+    ports: ["${LISIMFLIX_PORT:-8420}:8420"]   # host port; the app always listens on 8420 inside
+    volumes:
+      - ${CONFIG_DIR:-./config}:/config
+      - ${MEDIA_DIR:?set MEDIA_DIR to your media folder}:/media:ro
+    environment:
+      TZ: ${TZ:-UTC}                     # the nightly snapshot runs at 03:00 in this zone
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777         # SQLite spills large sorts/index builds here
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 15s
+    restart: unless-stopped

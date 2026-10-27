@@ -1,0 +1,13 @@
+# Allow-list: only the sources the image needs. Media, config, evidence,
+# docs and dependencies never enter the build context.
+*
+!server/
+!web/
+server/bin/
+server/internal/webassets/dist/
+web/node_modules/
+web/dist/
+web/test-results/
+web/playwright-report/
+**/*.mp4
+**/.env*

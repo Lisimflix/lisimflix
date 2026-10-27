@@ -58,13 +58,20 @@ type harness struct {
 
 // newHarness serves the auth routes plus a protected /api/v1/movies that
 // echoes the principal, behind the same CSRF middleware the app uses.
-func newHarness(t *testing.T, tls bool) *harness {
+func newHarness(t *testing.T, tls bool) *harness { return newHarnessWith(t, tls, nil, nil) }
+
+// newHarnessWith also passes revocations to onRevoke and lets routes mount
+// more handlers before the CSRF wrapper.
+func newHarnessWith(t *testing.T, tls bool, onRevoke func(string), routes func(*http.ServeMux, *Manager)) *harness {
 	t.Helper()
 	h := &harness{t: t, clock: &clock{t: time.Date(2026, 10, 27, 9, 0, 0, 0, time.UTC)}}
 	m, err := NewManager(testViewer(t), tls, func(id string) {
 		h.mu.Lock()
 		h.revoked = append(h.revoked, id)
 		h.mu.Unlock()
+		if onRevoke != nil {
+			onRevoke(id)
+		}
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,6 +87,9 @@ func newHarness(t *testing.T, tls bool) *harness {
 		}
 		json.NewEncoder(w).Encode(map[string]string{"account": p.AccountID, "profile": p.ProfileID, "session": p.AuthSessionID})
 	})))
+	if routes != nil {
+		routes(mux, m)
+	}
 	handler := CSRF(bytes.Repeat([]byte{9}, 32), tls)(mux)
 	if tls {
 		h.srv = httptest.NewTLSServer(handler)
