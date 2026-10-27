@@ -270,6 +270,10 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 	http.ServeContent(dw, r.WithContext(ctx), "", info.ModTime(), f)
 }
 
+// testHookAfterAlive, when set by a test, runs between a write's liveness
+// check and its deadline, the window where a revoke can race the write.
+var testHookAfterAlive func()
+
 // deliveryWriter stops a response as soon as its session ends, and gives each
 // write its own deadline so a stalled client can't hold a revoked stream open.
 // It deliberately doesn't implement io.ReaderFrom, so every chunk goes through
@@ -277,7 +281,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 type deliveryWriter struct {
 	http.ResponseWriter
 	ctx     context.Context
-	rc      *http.ResponseController
+	rc      writeDeadliner
 	alive   func() bool
 	written *atomic.Int64
 }
@@ -286,7 +290,13 @@ func (d *deliveryWriter) Write(p []byte) (int, error) {
 	if d.ctx.Err() != nil || !d.alive() {
 		return 0, errRevoked
 	}
+	if testHookAfterAlive != nil {
+		testHookAfterAlive()
+	}
 	_ = d.rc.SetWriteDeadline(time.Now().Add(writeStall))
+	if d.ctx.Err() != nil { // a revoke landed after the check above
+		return 0, errRevoked
+	}
 	n, err := d.ResponseWriter.Write(p)
 	d.written.Add(int64(n))
 	return n, err

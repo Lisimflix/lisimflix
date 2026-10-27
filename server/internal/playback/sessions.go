@@ -8,7 +8,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"io/fs"
-	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -52,8 +51,11 @@ type session struct {
 // delivery is one in-flight content response that revocation can cut off.
 type delivery struct {
 	cancel context.CancelFunc
-	rc     *http.ResponseController
+	rc     writeDeadliner
 }
+
+// writeDeadliner is the part of http.ResponseController a delivery uses.
+type writeDeadliner interface{ SetWriteDeadline(time.Time) error }
 
 // Server holds the playback sessions for one source.
 type Server struct {
@@ -146,9 +148,12 @@ func (s *Server) endLocked(sess *session, now time.Time) {
 		return
 	}
 	sess.ended = now
+	// Cancel first, then set the deadline: a write that set its own deadline
+	// before this one is unblocked by it, and a write that sets its deadline
+	// after sees the cancel (deliveryWriter.Write rechecks).
 	for d := range sess.deliveries {
-		_ = d.rc.SetWriteDeadline(time.Now()) // unblock a write stuck on a slow client
 		d.cancel()
+		_ = d.rc.SetWriteDeadline(time.Now()) // unblock a write stuck on a slow client
 	}
 	sess.deliveries = nil
 	s.boundTombstonesLocked()

@@ -2,11 +2,14 @@ package playback
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -312,5 +315,61 @@ func TestIdempotencyKeyIsScopedToAuthSession(t *testing.T) {
 	code, ps, b := e.start(alice, "same-key")
 	if code == 200 || code == 201 && ps.ID == a.ID {
 		t.Fatalf("replay after logout = %d %s", code, b)
+	}
+}
+
+// fakeDeadline records the write deadlines a delivery sets.
+type fakeDeadline struct {
+	mu   sync.Mutex
+	last time.Time
+}
+
+func (f *fakeDeadline) SetWriteDeadline(t time.Time) error {
+	f.mu.Lock()
+	f.last = t
+	f.mu.Unlock()
+	return nil
+}
+
+// #27 (Pete): a revoke that lands between a write's liveness check and its
+// deadline must still stop that write. Otherwise the write's 30 s deadline
+// replaces the revoke's "now" and a stalled client holds the stream.
+func TestRevokeBeatsInFlightWriteDeadline(t *testing.T) {
+	e := newEnv(t, 16)
+	ps := e.mustStart(alice, "k1")
+	e.s.mu.Lock()
+	sess := e.s.sessions[ps.ID]
+	e.s.mu.Unlock()
+
+	fd := &fakeDeadline{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	d := &delivery{cancel: cancel, rc: fd}
+	e.s.mu.Lock()
+	sess.deliveries[d] = struct{}{}
+	e.s.mu.Unlock()
+	rec := httptest.NewRecorder()
+	dw := &deliveryWriter{ResponseWriter: rec, ctx: ctx, rc: fd, written: &e.s.written, alive: func() bool {
+		e.s.mu.Lock()
+		defer e.s.mu.Unlock()
+		return e.s.liveLocked(sess, e.s.now())
+	}}
+
+	paused, release := make(chan struct{}), make(chan struct{})
+	testHookAfterAlive = func() { close(paused); <-release }
+	defer func() { testHookAfterAlive = nil }()
+	type result struct {
+		n   int
+		err error
+	}
+	done := make(chan result, 1)
+	go func() { n, err := dw.Write([]byte("bytes after revoke")); done <- result{n, err} }()
+
+	<-paused
+	e.s.RevokeAuthSession(alice.AuthSessionID) // revoke inside the window
+	close(release)
+	r := <-done
+	if r.err != errRevoked || r.n != 0 || rec.Body.Len() != 0 {
+		t.Fatalf("write after an in-window revoke = %d, %v, %d bytes sent; it must stop without writing", r.n, r.err, rec.Body.Len())
 	}
 }
