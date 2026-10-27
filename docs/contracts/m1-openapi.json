@@ -69,7 +69,7 @@
     "/api/v1/playback/sessions": {
       "post": {
         "operationId": "createPlaybackSession",
-        "summary": "Start playback. Replaying the same key and payload for an active session returns 200 with that session; the same key with a changed payload is 409.",
+        "summary": "Start playback. Replaying the same key and payload for an active session returns 200 with that session. The same key with a changed payload, or the key of a session that ended recently (its record is kept for 5 minutes), is 409 idempotency_conflict: start again with a new key.",
         "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSessionRequest" } } } },
         "responses": {
@@ -184,7 +184,7 @@
     },
     "responses": {
       "Error": {
-        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body; retry with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
+        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body, or the key of a session that ended recently; start again with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
         "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } }
       }
     },
