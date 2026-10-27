@@ -68,7 +68,7 @@ The planned operations go into the contract now, each tagged with its owning fea
    - Whether progress also renews the playback session is PLY-4's decision. Until then, the player sends both.
 7. **Watched is separate from resume.**
    - `watched` is null when the item has never been marked either way.
-   - `origin` is `auto`, `manual` or `import`. A manual value is never undone by an automatic event.
+   - `origin` is `auto`, `manual` or `import`. A manual *watched* mark is never undone by an automatic event. Marking *unwatched* is a reset: `watched` and `resume` become null, so the next play starts from the beginning and finishing it marks it watched again (changed in the #87 review).
    - `playCount` is nullable for imports that have no count.
 8. **Policy on the wire is for display.** `ProfilePolicy` is the effective policy, after the account ceiling (spec §6.3); the server enforces it on every request.
    - Ratings are scoped to a region, and a rating from another region counts as unrated.
@@ -148,6 +148,7 @@ The nine M1 operations get `x-lisimflix` with status `implemented`: ACC-1 for au
 - **R2. One rule everywhere.** LIB-1/LIB-2 store `library.Revision{Size, ModTime}` and derive the wire string with R1. Playback compares R1 strings. Progress keeps the R1 string it was recorded against. A resume position from another version or source revision needs confirmation before it's reused (spec §3.8).
 - **R3. Resource revisions.** `UserItemState.revision` and `ItemMetadata.revision` go up by 1 on every committed change. A write with a different `expectedRevision` gets 409 `revision_conflict`, and nothing changes.
 - **R4. Progress order.** Within a playback session, `sequence` must increase. A repeated sequence is answered `accepted:false, reason:"duplicate"`, and a lower one `reason:"stale"`. If the session's source revision no longer matches the file, the answer is 409 `source_changed`. An automatic update never overwrites a manual `watched` value.
+  - **Changed in the #87 review (Pete):** only a manual *watched* mark is protected from automatic updates. Marking *unwatched* resets the item (`watched: null`, `resume: null`), so later playback can mark it watched again (`origin: auto`) and the next play starts from the beginning. DATA-1 implements this; the contract wording in `openapi.json` and `userdata.go` says so. The task code below shows the wording as originally approved.
 
 ## Review focus
 

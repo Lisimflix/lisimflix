@@ -149,7 +149,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Mark a movie or episode watched or unwatched for the current profile (origin manual). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
+        /** Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning and finishing it marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
         put: operations["setWatched"];
         post?: never;
         delete?: never;
@@ -329,7 +329,7 @@ export interface components {
             /** Format: int64 */
             revision: number;
             resume: components["schemas"]["Resume"] | null;
-            /** @description Null: never marked either way */
+            /** @description Null: not watched yet, or reset by marking unwatched */
             watched: components["schemas"]["Watched"] | null;
             /** @description Null when unknown, e.g. after an import that had no count */
             playCount: number | null;
@@ -348,7 +348,7 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
-        /** @description Watched state and where it came from. A manual value is never undone by a later automatic event. */
+        /** @description Watched state and where it came from. A manual watched mark is never undone by later playback. Marking unwatched is a reset (watched and resume become null), not a sticky value:false. */
         Watched: {
             value: boolean;
             /** @enum {string} */

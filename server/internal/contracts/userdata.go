@@ -34,7 +34,7 @@ type UserItemState struct {
 	ItemID                     string     `json:"itemId"`
 	Revision                   int64      `json:"revision"`
 	Resume                     *Resume    `json:"resume"`
-	Watched                    *Watched   `json:"watched"` // null: never marked either way
+	Watched                    *Watched   `json:"watched"` // null: not watched yet, or reset by marking unwatched
 	PlayCount                  *int       `json:"playCount"`
 	LastPlayedAt               *time.Time `json:"lastPlayedAt"`
 	HiddenFromContinueWatching bool       `json:"hiddenFromContinueWatching"`
@@ -49,8 +49,10 @@ type Resume struct {
 	UpdatedAt      time.Time `json:"updatedAt"`
 }
 
-// Watched is the watched state and where it came from. A manual value is
-// never undone by a later automatic event.
+// Watched is the watched state and where it came from. A manual watched mark
+// is never undone by later playback. Marking unwatched is a reset instead:
+// watched and resume become null, so finishing the item marks it watched again
+// (origin auto).
 type Watched struct {
 	Value  bool      `json:"value"`
 	Origin string    `json:"origin"`

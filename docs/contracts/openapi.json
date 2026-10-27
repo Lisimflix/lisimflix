@@ -180,7 +180,7 @@
       "put": {
         "operationId": "setWatched",
         "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
-        "summary": "Mark a movie or episode watched or unwatched for the current profile (origin manual). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes.",
+        "summary": "Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning and finishing it marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes.",
         "parameters": [{ "$ref": "#/components/parameters/ItemId" }, { "$ref": "#/components/parameters/CSRFToken" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WatchedRequest" } } } },
         "responses": {
@@ -425,7 +425,7 @@
           "itemId": { "type": "string", "minLength": 1 },
           "revision": { "type": "integer", "format": "int64", "minimum": 0 },
           "resume": { "oneOf": [{ "$ref": "#/components/schemas/Resume" }, { "type": "null" }] },
-          "watched": { "oneOf": [{ "$ref": "#/components/schemas/Watched" }, { "type": "null" }], "description": "Null: never marked either way" },
+          "watched": { "oneOf": [{ "$ref": "#/components/schemas/Watched" }, { "type": "null" }], "description": "Null: not watched yet, or reset by marking unwatched" },
           "playCount": { "type": ["integer", "null"], "minimum": 0, "description": "Null when unknown, e.g. after an import that had no count" },
           "lastPlayedAt": { "type": ["string", "null"], "format": "date-time" },
           "hiddenFromContinueWatching": { "type": "boolean" }
@@ -448,7 +448,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["value", "origin", "at"],
-        "description": "Watched state and where it came from. A manual value is never undone by a later automatic event.",
+        "description": "Watched state and where it came from. A manual watched mark is never undone by later playback. Marking unwatched is a reset (watched and resume become null), not a sticky value:false.",
         "properties": {
           "value": { "type": "boolean" },
           "origin": { "type": "string", "enum": ["auto", "manual", "import"] },
