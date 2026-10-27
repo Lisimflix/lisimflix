@@ -3,9 +3,13 @@
 A self-hosted, multi-user media server for movies, TV and anime: a Plex/Jellyfin
 replacement that anyone can run on their own Linux/Docker host.
 
-**Status:** early development. There is no working server yet. The first milestone (M1)
-is playing one 1080p H.264 MP4 movie at its original quality, with no re-encoding, in Chrome
-and Firefox on Linux and macOS (Windows follows in a later milestone). The M1 API contract and workspace seed are on `main`.
+**Status:** early development. The first milestone (M1) is playing one 1080p H.264 MP4
+movie at its original quality, with no re-encoding, in Chrome and Firefox on Linux and macOS
+(Windows follows in a later milestone). The M1 server, web player and container are on `main`,
+and playback passes on all four targets (#19).
+
+To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
+only: plain HTTP, one viewer and one movie.
 
 ## Layout
 
@@ -14,6 +18,8 @@ and Firefox on Linux and macOS (Windows follows in a later milestone). The M1 AP
 | `docs/superpowers/specs/` | Design spec: scope, feature catalogue (§9.4), decisions (§14) |
 | `docs/superpowers/plans/` | Implementation plans, one per claimed feature |
 | `docs/contracts/` | OpenAPI contract (`m1-openapi.json`) |
+| `docs/testing/` | Test evidence templates and reference installations |
+| `deploy/` | Container compose file and run guide |
 | `server/` | Go server |
 | `web/` | React + Vite web app |
 | `testdata/` | Synthetic fixtures (no real media) |
@@ -35,4 +41,5 @@ changing `docs/contracts/m1-openapi.json`.
 ## Contributing
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first: pick an unclaimed feature, claim its issue,
-get the plan approved, then open a PR for review. Agents also follow [`CLAUDE.md`](CLAUDE.md).
+get the plan approved, then open a PR for review. Keep this README current: a PR that changes
+what it describes updates it in the same PR. Agents also follow [`CLAUDE.md`](CLAUDE.md).

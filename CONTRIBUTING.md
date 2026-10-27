@@ -24,8 +24,11 @@ Never bypass it with `--no-verify`.
 3. Commit small and often.
 4. Push the branch and open a PR. Fill in the template: `Closes #N` for an issue,
    or the spec section you built.
+   If the PR changes anything `README.md` describes (status, layout, setup,
+   commands or checks), update `README.md` in the same PR.
 5. Another member reviews: run `/code-review` in Claude Code on the PR branch as a
    first pass, then read it yourself and approve or request changes.
+   Check that `README.md` still matches the branch before approving.
    Don't merge your own PR unreviewed (except owners, see below).
 6. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
 

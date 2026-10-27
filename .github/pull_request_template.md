@@ -5,3 +5,6 @@
 
 ## How it was tested
 <!-- For code PRs, state the local make check command/result (run before publishing) separately from the actual GitHub Actions result, including on the CI-bootstrap PR. If Actions did not run, investigate the trigger/settings. Separate module/integration proof; name fixtures, pending integration and affected consumers/contracts. -->
+
+## README
+- [ ] `README.md` still matches this branch (status, layout, setup, commands, checks), or this PR updates it.
