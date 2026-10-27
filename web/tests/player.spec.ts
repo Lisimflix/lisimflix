@@ -23,6 +23,7 @@ test.describe("viewer shell", () => {
   test("loginRequiresValidCredentials", async ({ page }) => {
     await FakeAPI.attach(page);
     await page.goto("/");
+    await expect(page.getByLabel("Username")).toHaveAttribute("maxlength", "64");
     await signIn(page, "wrong");
     await expect(page.getByRole("alert")).toHaveText("fixture unauthenticated");
     await signIn(page);
@@ -213,6 +214,22 @@ test.describe("playback lifecycle", () => {
     await expect.poll(() => video.evaluate((v: HTMLVideoElement) => v.readyState)).toBeGreaterThan(0);
     await video.evaluate((v: HTMLVideoElement) => { v.currentTime = v.duration - 0.3; });
     await expect(video).toHaveCount(0, { timeout: 5_000 });
+    expect(api.of("DELETE", "/playback/sessions/play-fixture-1")).toHaveLength(1);
+  });
+
+  test("logoutStopsPlaybackBeforeSigningOut", async ({ page }) => {
+    const api = await FakeAPI.attach(page, smokeClip());
+    await page.goto("/");
+    await signIn(page);
+    await play(page);
+    await expect(page.locator("video")).toBeAttached();
+    await page.getByRole("button", { name: "Sign out" }).click();
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+    const order = api.calls.map((c) => `${c.method} ${c.path}`);
+    const stop = order.indexOf("DELETE /api/v1/playback/sessions/play-fixture-1");
+    const logout = order.indexOf("POST /api/v1/auth/logout");
+    expect(stop).toBeGreaterThan(-1);
+    expect(stop).toBeLessThan(logout);
     expect(api.of("DELETE", "/playback/sessions/play-fixture-1")).toHaveLength(1);
   });
 
