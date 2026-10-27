@@ -26,6 +26,10 @@ import (
 
 const shutdownGrace = 15 * time.Second
 
+// authSweepEvery is how often expired auth sessions are ended and their
+// streams cut, without waiting for a request (#30).
+const authSweepEvery = time.Minute
+
 // server is the composed M1 application and everything shutdown must close.
 type server struct {
 	cfg        m1config.Config
@@ -35,7 +39,7 @@ type server struct {
 	db         *storage.DB // nil when storage failed to start
 	storageErr error
 
-	stopNightly context.CancelFunc
+	stopNightly context.CancelFunc // stops the nightly job and the auth sweep
 	nightlyDone chan struct{}
 	once        sync.Once
 }
@@ -84,7 +88,8 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		log.Error("not ready: storage failed to start", "err", s.storageErr)
 	}
 	nctx, cancel := context.WithCancel(context.Background())
-	s.stopNightly = cancel
+	s.stopNightly = cancel // also stops the auth sweep
+	go am.Run(nctx, authSweepEvery)
 	if s.db != nil {
 		// Hour 0 means the default, 03:00 in the container's TZ (UTC if unset).
 		go func() {

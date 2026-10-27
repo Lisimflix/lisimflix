@@ -286,6 +286,29 @@ func expired(s *session, now time.Time) bool {
 	return now.Sub(s.at) > idleTimeout || now.Sub(s.created) > absoluteTimeout
 }
 
+// Sweep ends every expired session and calls onRevoke for each, so expiry
+// cuts a session's streams without waiting for its next request (#30).
+func (m *Manager) Sweep() {
+	m.mu.Lock()
+	ids := m.sweepLocked(m.now())
+	m.mu.Unlock()
+	m.revoke(ids...)
+}
+
+// Run calls Sweep every interval until ctx ends.
+func (m *Manager) Run(ctx context.Context, every time.Duration) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			m.Sweep()
+		}
+	}
+}
+
 func (m *Manager) revoke(ids ...string) {
 	for _, id := range ids {
 		m.onRevoke(id)
