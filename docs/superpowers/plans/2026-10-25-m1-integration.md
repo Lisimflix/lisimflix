@@ -3,7 +3,7 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Status:** Approved by @lisim on #19 (2026-10-26) with the changes in [Approved changes](#approved-changes-19), which are written into this plan. Claimed by @Lammy93. Not implemented: no image, playback run or platform qualification has occurred. Closes BASE-01, BASE-02 and BASE-04 together with MOVIE-01–04.
-**Goal:** Assemble the accepted modules and obtain MOVIE-01–04 evidence for a complete original-quality movie on all six targets.
+**Goal:** Assemble the accepted modules and obtain MOVIE-01–04 evidence for a complete original-quality movie on all four targets (Chrome/Firefox × Linux/macOS; Windows deferred to a later milestone, 2026-10-27, #19).
 **Architecture:** One Linux amd64 container embeds the built web app and composes real configuration/auth, playback and source confinement. M1 uses an owner-provisioned non-admin viewer and one source; it is not the complete first-release onboarding/library product.
 **Tech Stack:** Go 1.27.3, Node 24.22.1 build stage, original MP4 delivery, Docker/Compose.
 **Spec:** [Design §§9.3, 11, 13](../specs/2026-10-24-lisimflix-design.md). Inputs: [CTR-1](2026-10-25-ctr-1-m1-contracts.md), [runtime](2026-10-25-ops-1-m1-runtime.md), [playback](2026-10-25-ply-2-m1-direct-play.md), [player](2026-10-25-ui-1-m1-player.md).
@@ -11,7 +11,7 @@
 ## Global constraints
 
 - Server target: **Linux x86-64/amd64 containers**. ARM is optional later work.
-- M1 source: complete 1080p SDR H.264 MP4 with unchanged compatible audio, tested in Chrome/Firefox × Linux/Windows/macOS.
+- M1 source: complete 1080p SDR H.264 MP4 with unchanged compatible audio, tested in Chrome/Firefox × Linux/macOS.
 - Local HTTP and username/password work without a domain/proxy/provider; trusted-LAN use has no transport encryption. No direct internet exposure.
 - Media mounted read-only; only config/cache are writable. No media, passwords, sessions or grants enter Git or logs.
 - Contributors self-claim this integration slice. Fixture/evidence preparation can start immediately; live composition needs the three module implementations, not all of G1.
@@ -22,7 +22,7 @@
 2. A movie-length response is not killed by an ordinary short HTTP write timeout.
 3. Container UID/GID/mounts and actual LAN IP work without modifying source ownership.
 4. Static/API routing, cookie/CSRF rotation and logout revocation work together.
-5. Six complete runs and original-byte/source-integrity evidence replace assumptions from short smoke tests.
+5. Four complete runs and original-byte/source-integrity evidence replace assumptions from short smoke tests.
 
 ## Ownership and interfaces
 
@@ -77,7 +77,7 @@ The probe record is owner-generated ffprobe JSON, outside Git, with the source m
 
 **Files:** Create `docs/testing/m1-evidence-template.md` and `.gitignore` entry for private `.m1-evidence/`; no real media or private evidence committed automatically.
 
-- [ ] Create a six-row results template: Chrome/Linux, Firefox/Linux, Chrome/Windows, Firefox/Windows, Chrome/macOS, Firefox/macOS. Fields: image commit/digest, host/OS/browser versions, anonymised source ID, duration, codecs/profile/resolution, source bitrate, original checksum, timestamps, start result, interruptions, audio sync, actual end reached, range-byte check and final source checksum. Initial status for every row is **not run**.
+- [ ] Create a four-row results template: Chrome/Linux, Firefox/Linux, Chrome/macOS, Firefox/macOS (Windows rows removed 2026-10-27, #19). Fields: image commit/digest, host/OS/browser versions, anonymised source ID, duration, codecs/profile/resolution, source bitrate, original checksum, timestamps, start result, interruptions, audio sync, actual end reached, range-byte check and final source checksum. Initial status for every row is **not run**.
 - [ ] Qualify the same complete authorised movie's audio/video on the real browsers. UI-1 doesn't check codecs (it plays through `<video>`), so this step is where the codec check lives: each run records `canPlayType` for a string **built from the probe**, not a fixed one. Video is `avc1.PPCCLL` from the H.264 profile and level (Main L4.0 is `avc1.4D0028`; High is `64`, Constrained Baseline `42`). Audio is `mp4a.40.2` for AAC-LC (`mp4a.40.5` for HE-AAC) and `mp3` for MP3, because Firefox returns `""` for `mp4a.6B`. Tears of Steel gives `video/mp4; codecs="avc1.4D0028, mp3"`. A short generated clip can qualify the harness but cannot replace a complete movie run. An incompatible fixture is a recorded failure/selection issue, not permission to transcode.
 - [ ] Run the complete movie from the beginning to actual end on each combination without seeking to manufacture completion. Confirm no encoder jobs or lower-quality outputs, no crashes/unhandled errors/post-start buffering under the recorded suitable connection, and unchanged source checksums. A failure remains open; repeat the affected row after a correction.
 - [ ] Publish only a reviewed redacted result summary, with local evidence retained by its tester. Confirm MOVIE-01–04 for every row. Performance benchmarks, wider formats, persistent resume and the large-library milestone are separate work; do not claim them here.
@@ -85,7 +85,7 @@ The probe record is owner-generated ffprobe JSON, outside Git, with the source m
 
 ## Handoff
 
-M1 completes only when real integration and all six full runs pass. Module merge/build/smoke is progress, not completion. Later library/home/native-progress features remain independently claimable; nobody is assigned this plan or a browser platform by this document.
+M1 completes only when real integration and all four full runs pass. Module merge/build/smoke is progress, not completion. Later library/home/native-progress features remain independently claimable; nobody is assigned this plan or a browser platform by this document.
 
 ## Approved changes (#19)
 

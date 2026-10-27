@@ -1147,15 +1147,17 @@ player at its original video and audio quality, without re-encoding or modifying
 source. For this first proof use direct play: select a source whose container, video
 and audio are supported by the named browser. Universal codec support is not implied.
 
-Required clients are **Chrome and Firefox on Linux, Windows and macOS**: all six
+Required clients are **Chrome and Firefox on Linux and macOS**: all four
 combinations, using the same source movie with recorded browser/OS versions. The
 movie's audio must play unchanged on each target; selecting its codec/profile is
 part of fixture qualification, not permission to convert an incompatible track.
 MKV/remux, HDR and other containers/formats are outside M1. HDR is later expansion.
+Chrome and Firefox on Windows are not M1 targets for this proof of concept; they are
+required in a later milestone (decided by Pete and Lammy, 2026-10-27; #19).
 
 | ID | Pass criterion | Required evidence |
 |---|---|---|
-| MOVIE-01 | The MP4 movie plays from beginning to end with video and audio on all six targets | Record the shared source identity/duration and each browser/OS version; a full-duration run on each combination reaches the actual end with advancing video and audible, synchronised audio. A short clip or a seek to the last frame is not end-to-end proof. |
+| MOVIE-01 | The MP4 movie plays from beginning to end with video and audio on all four targets | Record the shared source identity/duration and each browser/OS version; a full-duration run on each combination reaches the actual end with advancing video and audible, synchronised audio. A short clip or a seek to the last frame is not end-to-end proof. |
 | MOVIE-02 | Original encoded video and audio are delivered unchanged | Route is direct play; source codec/profile, resolution, frame rate and selected audio stream are preserved. No video/audio encoder job runs, no lower-bitrate rendition substitutes for the source, and representative HTTP range bytes match the source. Browser decoding for display/audio output is expected. |
 | MOVIE-03 | Playback remains stable on a suitable connection | Record host, storage, connection and source bitrate. With enough sustained bandwidth and working storage, the full run has no crash, unhandled playback error or post-start buffering interruption. Record startup time separately; the initial M1 pass does not depend on the provisional p95 benchmarks. |
 | MOVIE-04 | Source media remains untouched | Media is mounted read-only and before/after source integrity checks match. Only application-owned config/cache paths may receive writes. |
@@ -1163,8 +1165,8 @@ MKV/remux, HDR and other containers/formats are outside M1. HDR is later expansi
 The test uses a complete movie the tester is authorised to use, with a known duration.
 Live server/player/media integration is required: a fixture-only UI, `file://` playback
 or opening the source outside Lisimflix cannot pass M1. Record the result with its
-limitations; one successful browser/OS run does not pass the other five, and these
-six combinations do not certify every movie, codec profile or device.
+limitations; one successful browser/OS run does not pass the other three, and these
+four combinations do not certify every movie, codec profile or device.
 
 M1 needs only enough safe runtime, media selection and player functionality to prove
 these four outcomes. A controlled local proof can use one authorised test account;
@@ -1716,7 +1718,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 |---|---|---|---|
 | D01 | Must first trial include all media types/providers/layouts? | Movies/TV/anime + layout C first; retain expansion ledger | G1/G2 scope approval |
 | D02 | Which x86-64 deployment profiles/operators qualify the first release? | Approved Linux/Docker x86-64 first; ARM64 later optional. zraid is Lammy's reference; select another independent installation with generic Linux/CPU-only coverage and per-profile capacity evidence | Remaining hardware/operator evidence; architecture choice settled |
-| D03 | Which client/device profiles qualify beyond M1? | M1 approved: Chrome/Firefox on Linux/Windows/macOS; record tested versions. TV/mobile/additional client profiles still need qualification | Wider G2/G3 matrix; M1 platform selection settled |
+| D03 | Which client/device profiles qualify beyond M1? | M1 approved: Chrome/Firefox on Linux/macOS; record tested versions. Windows Chrome/Firefox deferred from M1 to a later milestone (2026-10-27, #19). TV/mobile/additional client profiles still need qualification | Wider G2/G3 matrix; M1 platform selection settled |
 | D04 | Is automatic ABR required for first remote trial? | Proven manual switching first; ABR after scheduling/alignment spike | ABR plan; possibly G3 if owners disagree |
 | D05 | What happens when AV1/DV/HDR cannot convert in real time? | Lower supported output or explicit refusal; no unlimited CPU fallback | Codec matrix and playback budget |
 | D06 | Are AniList and mapping sources permitted/sufficient? | Approved by Pete and Lammy, 2026-10-26 (#10): **AniList** direct per install, library-scoped requests only, rate-limited persistent cache, no bulk prefetch or mirroring. **AniDB** via a registered client, at most 1 request per 2 s, heavy per-title caching, ban detected from the XML body with a 24 h+ backoff, no bulk download; default is one shared Lisimflix client/clientver, overridable in settings (option A). **AniDB cache service** (#16): built optional; AniDB asked before public go-live; if refused, retired and installs use direct AniDB (option A). Dev/testing only until AniDB answers; never required (§1.1). **Jikan** excluded (MAL terms bar scraping); MAL data, if ever needed, uses the official MAL API after its own terms check. **Mapping datasets** (Anime-Lists, Fribb) fetched at runtime only, weekly with a configurable URL, never bundled in the image or repo; fixtures synthetic. Local matching works with no provider (§0.3) | Settled for META-2 planning; public use of the cache service waits on AniDB's answer (#16); outbound sync stays G4 |

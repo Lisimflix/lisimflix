@@ -5,7 +5,7 @@ replacement that anyone can run on their own Linux/Docker host.
 
 **Status:** early development. There is no working server yet. The first milestone (M1)
 is playing one 1080p H.264 MP4 movie at its original quality, with no re-encoding, in Chrome
-and Firefox on Linux, Windows and macOS. The M1 API contract and workspace seed are on `main`.
+and Firefox on Linux and macOS (Windows follows in a later milestone). The M1 API contract and workspace seed are on `main`.
 
 ## Layout
 
