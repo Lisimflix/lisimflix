@@ -11,4 +11,5 @@
 - At the start of every session, run `gh issue list` and `gh pr list` to see what others are working on.
 - Don't edit another member's spec or plan in `docs/superpowers/` unless asked; open an issue instead.
 - Non-blocking review notes, and issues noticed in passing, get their own issue (area labels, linking the PR/review) before the PR merges.
+- Code with no production caller yet gets `// Planned: <Feature ID> (<what will call it>).`; before calling code unused, also grep `docs/` (spec, plans).
 - Never commit secrets, `.env` files or media.
