@@ -67,4 +67,5 @@ func ensurePrivateFile(path string) error {
 }
 
 // Path is the database file path.
+// Planned: OPS-5 (storage diagnostics show where the database lives).
 func (d *DB) Path() string { return d.path }

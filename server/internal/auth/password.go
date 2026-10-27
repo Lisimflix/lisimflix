@@ -56,6 +56,7 @@ func HashPassword(password []byte) (string, error) {
 
 // VerifyPassword reports whether password matches encoded. A malformed or
 // out-of-bounds hash is rejected before any memory is allocated for it.
+// Planned: ACC-1 (password change and admin re-authentication).
 func VerifyPassword(encoded string, password []byte) bool {
 	p, err := parseHash(encoded)
 	if err != nil {
