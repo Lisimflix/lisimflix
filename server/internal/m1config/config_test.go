@@ -175,6 +175,40 @@ func TestConfigRejectsUnknownFieldsAndEscapingPath(t *testing.T) {
 			t.Fatal("Load accepted a config stored under the media root")
 		}
 	})
+	// #30: a config folder reached through a symlink into the media tree is
+	// still under the media root.
+	t.Run("config through a symlink into media", func(t *testing.T) {
+		inside := filepath.Join(f.mediaRoot, "Movies", "cfg")
+		if err := os.MkdirAll(inside, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		link := filepath.Join(t.TempDir(), "config")
+		if err := os.Symlink(inside, link); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(link, "m1.json")
+		if err := os.WriteFile(p, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(p); err == nil {
+			t.Fatal("Load accepted a config whose folder is a symlink into the media root")
+		}
+	})
+	t.Run("media root through a symlink around the config", func(t *testing.T) {
+		link := filepath.Join(t.TempDir(), "media-link")
+		if err := os.Symlink(f.mediaRoot, link); err != nil {
+			t.Fatal(err)
+		}
+		p := filepath.Join(f.mediaRoot, "Movies", "m1.json")
+		if err := os.WriteFile(p, raw, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		c := f.cfg
+		c.MediaRoot = link
+		if err := validate(c, p); err == nil {
+			t.Fatal("validate accepted a config under a media root given through a symlink")
+		}
+	})
 }
 
 func TestConfigRejectsMissingIDsOrInvalidOrigin(t *testing.T) {
