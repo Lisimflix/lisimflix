@@ -18,6 +18,13 @@ updates:
       npm-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # Types follow the Node major we run (.node-version); bump them with it.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # typescript-eslint 8.x supports TypeScript <6.1.0. Lift when it does more.
+      - dependency-name: typescript
+        versions: [">=6.1.0"]
   # Dockerfile base images, pinned by digest. A golang/node bump must match
   # server/go.mod's toolchain and .node-version in the same PR.
   - package-ecosystem: docker
@@ -28,6 +35,10 @@ updates:
       docker-minor-patch:
         patterns: ["*"]
         update-types: [minor, patch]
+    ignore:
+      # A Node major moves .node-version, CI and @types/node too: do it by hand.
+      - dependency-name: node
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:
