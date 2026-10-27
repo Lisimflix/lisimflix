@@ -72,6 +72,10 @@ MEDIA_DIR=/path/to/media TZ=Australia/Brisbane docker compose -f deploy/compose.
   Copy `backups/` to a second location yourself (spec §11.3).
 - **Stop:** `docker compose down` gives the 15-second grace period; open
   streams are cut and the database is closed cleanly.
+- **Logs:** the server writes JSON lines to stderr (`docker compose -f deploy/compose.m1.yml logs`):
+  sign-in results, session ends, playback starts and ends, source errors, and requests that
+  ended in an error, each with a `request_id` that matches the response's `X-Request-Id`.
+  Passwords, cookies, CSRF tokens, content grants and query strings are never logged.
 - **Newer database:** if the log says the database is newer than this version,
   start the matching image. M1 has no restore command yet (admin restore is later
   work, spec §11.3), so keep the newer image rather than copying snapshot files by hand.

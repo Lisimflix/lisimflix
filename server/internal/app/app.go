@@ -5,10 +5,10 @@ package app
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"io"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path"
@@ -31,7 +31,7 @@ const (
 // everything under /api/v1/playback/, and only ever sees requests with a live
 // session. web must contain index.html. ready reports whether initialisation
 // succeeded; /health/ready returns 503 while it returns an error.
-func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS, ready func(context.Context) error) (http.Handler, error) {
+func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger) (http.Handler, error) {
 	if am == nil || playback == nil || web == nil || ready == nil {
 		return nil, errors.New("app: auth manager, playback handler, web assets and ready check are required")
 	}
@@ -75,7 +75,7 @@ func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS
 		health(w, http.StatusNotFound, "not_found")
 	})
 	root.Handle("/", spa(web))
-	return securityHeaders(root), nil
+	return observe(log, securityHeaders(root)), nil
 }
 
 // sameOrigin rejects unsafe requests unless both the Host and the Origin (or,
@@ -118,11 +118,10 @@ func hostPort(scheme, host string) string {
 	return host
 }
 
-// apiHeaders sets the request ID that contracts.WriteError reuses, marks
-// every API response private, and caps request bodies.
+// apiHeaders marks every API response private and caps request bodies.
+// observe has already set the request ID that contracts.WriteError reuses.
 func apiHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Request-Id", "req-"+rand.Text())
 		w.Header().Set("Cache-Control", "no-store")
 		r.Body = http.MaxBytesReader(w, r.Body, maxAPIBodyBytes)
 		next.ServeHTTP(w, r)

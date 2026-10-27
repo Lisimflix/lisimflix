@@ -1,6 +1,7 @@
 package playback
 
 import (
+	"cmp"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"strings"
 	"sync"
@@ -34,6 +36,7 @@ type Options struct {
 	GrantKey    []byte
 	MaxSessions int
 	Authorize   func(contracts.Principal, string) bool
+	Log         *slog.Logger // session events and source errors; nil discards
 }
 
 type session struct {
@@ -65,6 +68,7 @@ type Server struct {
 	max       int
 	authorize func(contracts.Principal, string) bool
 	now       func() time.Time
+	log       *slog.Logger
 
 	inflight atomic.Int64 // content handlers still running, revoked or not
 	written  atomic.Int64 // content bytes written, for tests
@@ -98,7 +102,7 @@ func New(root *os.Root, opts Options) (*Server, error) {
 	}
 	s := &Server{
 		root: root, src: opts.Source, grantKey: append([]byte(nil), opts.GrantKey...), max: opts.MaxSessions,
-		authorize: opts.Authorize, now: time.Now,
+		authorize: opts.Authorize, now: time.Now, log: cmp.Or(opts.Log, slog.New(slog.DiscardHandler)),
 		sessions: map[string]*session{}, byKey: map[string]*session{}, done: make(chan struct{}),
 	}
 	go s.sweeper()
@@ -142,12 +146,14 @@ func (sess *session) public() contracts.PlaybackSession {
 }
 
 // endLocked turns an active session into a tombstone and cuts off its
-// deliveries. s.mu must be held.
-func (s *Server) endLocked(sess *session, now time.Time) {
+// deliveries, logging why (stopped, expired, revoked or closed). s.mu must
+// be held.
+func (s *Server) endLocked(sess *session, now time.Time, reason string) {
 	if !sess.ended.IsZero() {
 		return
 	}
 	sess.ended = now
+	s.log.Info("playback.end", "session_id", sess.id, "auth_session", sess.owner.AuthSessionID, "reason", reason)
 	// Cancel first, then set the deadline: a write that set its own deadline
 	// before this one is unblocked by it, and a write that sets its deadline
 	// after sees the cancel (deliveryWriter.Write rechecks).
@@ -184,7 +190,7 @@ func (s *Server) boundTombstonesLocked() {
 // has passed.
 func (s *Server) liveLocked(sess *session, now time.Time) bool {
 	if sess.ended.IsZero() && now.After(sess.deadline) {
-		s.endLocked(sess, now)
+		s.endLocked(sess, now, "expired")
 	}
 	return sess.ended.IsZero()
 }
@@ -224,7 +230,7 @@ func (s *Server) RevokeAuthSession(authSessionID string) {
 	now := s.now()
 	for _, sess := range s.sessions {
 		if sess.owner.AuthSessionID == authSessionID {
-			s.endLocked(sess, now)
+			s.endLocked(sess, now, "revoked")
 		}
 	}
 }
@@ -238,7 +244,7 @@ func (s *Server) Close() error {
 	s.closed = true
 	now := s.now()
 	for _, sess := range s.sessions {
-		s.endLocked(sess, now)
+		s.endLocked(sess, now, "closed")
 	}
 	return nil
 }

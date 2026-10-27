@@ -54,6 +54,15 @@ func newFixture(t *testing.T, extra ...storage.Source) *fixture {
 // larger than the socket buffers, or the whole file is sent before they act.
 func newFixtureSized(t *testing.T, size int, extra ...storage.Source) *fixture {
 	t.Helper()
+	return newFixtureWith(t, size, nil, extra...)
+}
+
+// newFixtureWith also takes the server's logger (nil discards).
+func newFixtureWith(t *testing.T, size int, log *slog.Logger, extra ...storage.Source) *fixture {
+	t.Helper()
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
 	f := &fixture{t: t, dir: t.TempDir()}
 	media := filepath.Join(f.dir, "media")
 	cfgDir := filepath.Join(f.dir, "config")
@@ -78,7 +87,7 @@ func newFixtureSized(t *testing.T, size int, extra ...storage.Source) *fixture {
 		"--probe-json", probe, "--username", "viewer", "--title", "Test Movie"}, strings.NewReader(password+"\n"+password+"\n"), &out); err != nil {
 		t.Fatal(err)
 	}
-	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, extra, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, extra, log)
 	if err != nil {
 		t.Fatal(err)
 	}

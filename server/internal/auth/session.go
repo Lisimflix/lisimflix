@@ -7,11 +7,13 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Lisimflix/lisimflix/server/internal/m1config"
+	"github.com/Lisimflix/lisimflix/server/internal/obs"
 )
 
 // M1 guardrails for a one-viewer proof, not measured deployment capacity.
@@ -48,6 +50,7 @@ type Manager struct {
 	secure   bool
 	onRevoke func(authSessionID string)
 	now      func() time.Time
+	log      *slog.Logger // events (obs); discards until SetLogger
 	// Two argon2 slots: anySlot serves every login; viewerSlot serves only the
 	// configured username, so a spray of fake usernames can't starve the
 	// viewer (#24). checking holds peers with a check in progress.
@@ -77,7 +80,7 @@ func NewManager(viewer m1config.Viewer, secure bool, onRevoke func(string)) (*Ma
 	}
 	dummy := params{memory: p.memory, time: p.time, threads: p.threads, salt: salt, key: make([]byte, len(p.key))}
 	return &Manager{
-		viewer: viewer, hash: p, dummy: dummy, secure: secure, onRevoke: onRevoke, now: time.Now,
+		viewer: viewer, hash: p, dummy: dummy, secure: secure, onRevoke: onRevoke, now: time.Now, log: slog.New(slog.DiscardHandler),
 		anySlot: make(chan struct{}, 1), viewerSlot: make(chan struct{}, 1), checking: map[string]bool{},
 		sessions: map[[sha256.Size]byte]*session{}, limits: map[string]*attempts{},
 	}, nil
@@ -204,7 +207,15 @@ func (m *Manager) succeeded(key string) {
 
 // create stores a new session and returns its cookie token. If the store is
 // full, the least recently used session is evicted and revoked.
-func (m *Manager) create() (token string, s *session, err error) {
+// SetLogger sets where auth events go (login, session end). Call it before
+// serving. Events never include passwords, tokens or cookies.
+func (m *Manager) SetLogger(l *slog.Logger) {
+	if l != nil {
+		m.log = l
+	}
+}
+
+func (m *Manager) create(ctx context.Context) (token string, s *session, err error) {
 	raw := make([]byte, tokenBytes)
 	if _, err := rand.Read(raw); err != nil {
 		return "", nil, err
@@ -214,7 +225,7 @@ func (m *Manager) create() (token string, s *session, err error) {
 	s = &session{id: "as-" + rand.Text(), created: now, at: now}
 	var evicted []string
 	m.mu.Lock()
-	evicted = m.sweepLocked(now)
+	expiredIDs := m.sweepLocked(now)
 	for len(m.sessions) >= maxSessions {
 		var oldest [sha256.Size]byte
 		var o *session
@@ -228,13 +239,14 @@ func (m *Manager) create() (token string, s *session, err error) {
 	}
 	m.sessions[sha256.Sum256([]byte(token))] = s
 	m.mu.Unlock()
-	m.revoke(evicted...)
+	m.revoke(ctx, "expired", expiredIDs...)
+	m.revoke(ctx, "evicted", evicted...)
 	return token, s, nil
 }
 
 // lookup returns the live session for token and marks it used. An expired
 // session is removed and revoked.
-func (m *Manager) lookup(token string) (*session, bool) {
+func (m *Manager) lookup(ctx context.Context, token string) (*session, bool) {
 	if len(token) != base64.RawURLEncoding.EncodedLen(tokenBytes) {
 		return nil, false
 	}
@@ -245,7 +257,7 @@ func (m *Manager) lookup(token string) (*session, bool) {
 	if ok && expired(s, now) {
 		delete(m.sessions, key)
 		m.mu.Unlock()
-		m.revoke(s.id)
+		m.revoke(ctx, "expired", s.id)
 		return nil, false
 	}
 	if ok {
@@ -256,7 +268,8 @@ func (m *Manager) lookup(token string) (*session, bool) {
 }
 
 // remove deletes the session for token, if any, and revokes it.
-func (m *Manager) remove(token string) bool {
+// remove ends the session for token, if any, with reason "logout" or "rotated".
+func (m *Manager) remove(ctx context.Context, token, reason string) bool {
 	if len(token) != base64.RawURLEncoding.EncodedLen(tokenBytes) {
 		return false
 	}
@@ -266,7 +279,7 @@ func (m *Manager) remove(token string) bool {
 	delete(m.sessions, key)
 	m.mu.Unlock()
 	if ok {
-		m.revoke(s.id)
+		m.revoke(ctx, reason, s.id)
 	}
 	return ok
 }
@@ -292,7 +305,7 @@ func (m *Manager) Sweep() {
 	m.mu.Lock()
 	ids := m.sweepLocked(m.now())
 	m.mu.Unlock()
-	m.revoke(ids...)
+	m.revoke(context.Background(), "expired", ids...)
 }
 
 // Run calls Sweep every interval until ctx ends.
@@ -309,8 +322,11 @@ func (m *Manager) Run(ctx context.Context, every time.Duration) {
 	}
 }
 
-func (m *Manager) revoke(ids ...string) {
+// revoke logs each ended session with its reason (logout, rotated, expired
+// or evicted) and calls onRevoke.
+func (m *Manager) revoke(ctx context.Context, reason string, ids ...string) {
 	for _, id := range ids {
+		obs.Log(ctx, m.log).Info("auth.session_end", "session_id", id, "reason", reason)
 		m.onRevoke(id)
 	}
 }

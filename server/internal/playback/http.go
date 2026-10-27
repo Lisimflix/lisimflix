@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
+	"github.com/Lisimflix/lisimflix/server/internal/obs"
 )
 
 const (
@@ -98,7 +99,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 	}
 	info, err := s.statSource()
 	if err != nil {
-		sourceError(w, r, err)
+		s.sourceError(w, r, err, "")
 		return
 	}
 	s.mu.Lock()
@@ -123,6 +124,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 	s.byKey[scoped] = sess
 	out := sess.public()
 	s.mu.Unlock()
+	obs.Log(r.Context(), s.log).Info("playback.start", "session_id", sess.id, "auth_session", p.AuthSessionID, "movie_id", req.MovieID)
 	writeJSON(w, http.StatusCreated, out)
 }
 
@@ -205,7 +207,7 @@ func (s *Server) stop(w http.ResponseWriter, r *http.Request, p contracts.Princi
 		contracts.WriteError(w, r, contracts.CodeNotFound, "Playback session not found.")
 		return
 	}
-	s.endLocked(sess, s.now())
+	s.endLocked(sess, s.now(), "stopped")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -234,7 +236,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 	}
 	f, info, err := s.open(sess)
 	if err != nil {
-		sourceError(w, r, err)
+		s.sourceError(w, r, err, sess.id)
 		return
 	}
 	defer f.Close()
@@ -302,12 +304,15 @@ func (d *deliveryWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func sourceError(w http.ResponseWriter, r *http.Request, err error) {
+// sourceError answers and logs a missing or changed source. sessionID is ""
+// for a start.
+func (s *Server) sourceError(w http.ResponseWriter, r *http.Request, err error, sessionID string) {
+	code, msg := contracts.CodeSourceUnavailable, "The movie file is not available."
 	if errors.Is(err, errSourceChanged) {
-		contracts.WriteError(w, r, contracts.CodeSourceChanged, "The movie file changed. Start playback again.")
-		return
+		code, msg = contracts.CodeSourceChanged, "The movie file changed. Start playback again."
 	}
-	contracts.WriteError(w, r, contracts.CodeSourceUnavailable, "The movie file is not available.")
+	obs.Log(r.Context(), s.log).Warn("playback.source_error", "code", code, "session_id", sessionID, "movie_id", s.src.Movie.ID)
+	contracts.WriteError(w, r, code, msg)
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {
