@@ -19,6 +19,7 @@ only: plain HTTP, one viewer and one movie.
 | `docs/superpowers/plans/` | Implementation plans, one per claimed feature |
 | `docs/contracts/` | OpenAPI contract (`m1-openapi.json`) |
 | `docs/testing/` | Test evidence templates, results and reference installations |
+| `docs/design/` | Approved visual references (UI-2 mockups and logo) |
 | `deploy/` | Container compose file and run guide |
 | `server/` | Go server |
 | `web/` | React + Vite web app |
