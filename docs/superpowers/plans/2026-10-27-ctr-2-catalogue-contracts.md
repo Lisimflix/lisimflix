@@ -67,7 +67,7 @@ The planned operations go into the contract now, each tagged with its owning fea
    - A duplicate or stale event gets 200 with `accepted:false`, because a late heartbeat is normal, not an error.
    - Whether progress also renews the playback session is PLY-4's decision. Until then, the player sends both.
 7. **Watched is separate from resume.**
-   - `watched` is null when the item has never been marked either way.
+   - `watched` is null when the item isn't watched yet, or was reset by marking it unwatched (#87: marking unwatched clears `watched` and `resume`). Null doesn't mean "never touched".
    - `origin` is `auto`, `manual` or `import`. A manual *watched* mark is never undone by an automatic event. Marking *unwatched* is a reset: `watched` and `resume` become null, so the next play starts from the beginning and finishing it marks it watched again (changed in the #87 review).
    - `playCount` is nullable for imports that have no count.
 8. **Policy on the wire is for display.** `ProfilePolicy` is the effective policy, after the account ceiling (spec §6.3); the server enforces it on every request.
@@ -1024,7 +1024,7 @@ type UserItemState struct {
 	ItemID                     string     `json:"itemId"`
 	Revision                   int64      `json:"revision"`
 	Resume                     *Resume    `json:"resume"`
-	Watched                    *Watched   `json:"watched"` // null: never marked either way
+	Watched                    *Watched   `json:"watched"` // null: not watched yet, or reset by marking unwatched
 	PlayCount                  *int       `json:"playCount"`
 	LastPlayedAt               *time.Time `json:"lastPlayedAt"`
 	HiddenFromContinueWatching bool       `json:"hiddenFromContinueWatching"`
@@ -1144,7 +1144,7 @@ index f4b2d22..8fa6028 100644
 +          "itemId": { "type": "string", "minLength": 1 },
 +          "revision": { "type": "integer", "format": "int64", "minimum": 0 },
 +          "resume": { "oneOf": [{ "$ref": "#/components/schemas/Resume" }, { "type": "null" }] },
-+          "watched": { "oneOf": [{ "$ref": "#/components/schemas/Watched" }, { "type": "null" }], "description": "Null: never marked either way" },
++          "watched": { "oneOf": [{ "$ref": "#/components/schemas/Watched" }, { "type": "null" }], "description": "Null: not watched yet, or reset by marking unwatched" },
 +          "playCount": { "type": ["integer", "null"], "minimum": 0, "description": "Null when unknown, e.g. after an import that had no count" },
 +          "lastPlayedAt": { "type": ["string", "null"], "format": "date-time" },
 +          "hiddenFromContinueWatching": { "type": "boolean" }
