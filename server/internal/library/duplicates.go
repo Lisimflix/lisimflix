@@ -94,13 +94,16 @@ func (s *Store) settle(ctx context.Context, rootID string) error {
 }
 
 // hasPresentFile reports whether any version under the item (or, for a
-// show, under its seasons and episodes) is on a present file.
+// show, under its seasons and episodes) is on a present file. Scan keys are
+// unique per library only, so children are matched within the item's own
+// library (#103).
 func hasPresentFile(ctx context.Context, tx *sql.Tx, itemID string) (bool, error) {
 	var ok bool
 	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM library_versions v
 		JOIN library_files f ON f.id = v.file_id JOIN library_items i ON i.id = v.item_id
 		JOIN library_items top ON top.id = ?
-		WHERE f.state = 'present' AND (i.id = top.id OR substr(i.scan_key, 1, length(top.scan_key) + 1) = top.scan_key || '|'))`, itemID).Scan(&ok)
+		WHERE f.state = 'present' AND i.library_id = top.library_id
+			AND (i.id = top.id OR substr(i.scan_key, 1, length(top.scan_key) + 1) = top.scan_key || '|'))`, itemID).Scan(&ok)
 	return ok, err
 }
 

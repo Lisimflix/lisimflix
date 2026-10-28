@@ -123,3 +123,38 @@ func TestRenamedFolderKeepsItemIDs(t *testing.T) {
 		t.Fatalf("after rename %v, flags %v", got, dups(t, s, lib.ID))
 	}
 }
+
+// #103: scan keys are unique per library only. The same show in another
+// library, with files present, must not make a renamed folder look like two
+// live folders.
+func TestRenameFoldsWhenAnotherLibraryHasTheSameShow(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Show (2019)/Season 01/Show - S01E01.mkv", 10)
+	m.write("Anime/Show (2019)/Season 01/Show - S01E01.mkv", 10)
+	ctx := context.Background()
+	tv, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	anime, _ := s.CreateLibrary(ctx, "Anime", "anime", []string{"Anime"})
+	sc := m.scanner(s)
+	scan(t, sc, tv.Roots[0].ID)
+	scan(t, sc, anime.Roots[0].ID)
+	var before string
+	s.db.QueryRow(`SELECT id FROM library_items WHERE library_id = ? AND kind = 'show'`, tv.ID).Scan(&before)
+
+	os.Rename(filepath.Join(m.dir, "TV/Show (2019)"), filepath.Join(m.dir, "TV/Show (2019) {tvdb-1}"))
+	scan(t, sc, tv.Roots[0].ID)
+	if d := dups(t, s, tv.ID); len(d) != 0 {
+		t.Fatalf("rename flagged as a duplicate: %+v", d)
+	}
+	var shows []string
+	rows, _ := s.db.Query(`SELECT id FROM library_items WHERE library_id = ? AND kind = 'show'`, tv.ID)
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		shows = append(shows, id)
+	}
+	rows.Close()
+	if len(shows) != 1 || shows[0] != before {
+		t.Fatalf("TV shows after rename %v, want [%s]", shows, before)
+	}
+}
