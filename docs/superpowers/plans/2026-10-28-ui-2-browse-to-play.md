@@ -25,7 +25,7 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
 | | |
 |---|---|
 | Feature ID | **UI-2**: browse-to-play, layout C. P0 / G1. Also the PLY-4 request-shape item that CTR-2 decision 12 assigned to PLY-4 (Pete, 2026-10-28). The rest of PLY-4 (seek generations, pause, job cleanup) stays unclaimed |
-| Issue | To open: "UI-2: browse-to-play (layout C)", `area:web`. Claimed by Pete. #95's checklist closes with PR A + C |
+| Issue | #113 (claimed by Pete). #95's checklist closes with PR A + C |
 | Owner / reviewers | Pete (claimant). Lammy reviews all three PRs: he owns CTR-2 and wrote PLY-2. Ondo reviews PR C |
 | Acceptance | §5.1–5.2 (layout C pages in scope below), §5.5 phone tab bar, §5.6 keyboard and labels, §5.7 states, §3.8 resume confirmation. **Module:** Playwright against fixtures, including a 5,000-movie generated library. **Integrated:** PERF-05 / SCALE-02 on Pete's library (about 5,000 movies and 1,000 shows) once LIB-2c serves it |
 | File scope | **PR A:** `docs/contracts/openapi.json`, `server/internal/contracts/{catalogue,userdata,types}.go` + tests, `testdata/contracts/catalogue/**`, `web/contract-tests/*`, generated `web/src/api/schema.d.ts`.<br>**PR B:** `server/internal/playback/*`, `server/cmd/lisimflix/serve.go`, the contract's two playback schemas, `testdata/contracts/m1/playback.json`, `web/src/api/client.ts` (`start`), `web/src/player/M1App.tsx`, `web/tests/{fake-api,player.spec}.ts`.<br>**PR C:** `web/src/**` (new `app/`, `browse/`, `ui/` folders), `web/index.html`, `web/public/**`, `web/package.json` + lockfile, `web/tests/**`, `README.md` |
