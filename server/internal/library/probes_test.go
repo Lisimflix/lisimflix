@@ -40,7 +40,7 @@ const quiet = 30 * time.Second
 
 func probeDue(t *testing.T, sc *Scanner, root string, p Prober) ProbeRun {
 	t.Helper()
-	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet)
+	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -190,4 +190,21 @@ func TestDeferredRevisionNeverMovesBackwards(t *testing.T) {
 	if mtime != later {
 		t.Fatalf("mtime_ns %d: the deferred outcome overwrote the newer revision", mtime)
 	}
+}
+
+// A limit takes the oldest changes first and leaves the rest for later calls.
+func TestProbeDueLimit(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "A (2001)/A (2001).mkv", "B (2002)/B (2002).mkv", "C (2003)/C (2003).mkv")
+	old := time.Now().Add(-3 * time.Hour)
+	os.Chtimes(filepath.Join(m.dir, "Movies/C (2003)/C (2003).mkv"), old, old)
+	scan(t, sc, root)
+	p := &scriptedProber{}
+	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet, 1)
+	if err != nil || run.Queued != 1 || run.Stored != 1 || len(p.calls) != 1 || p.calls[0] != "C (2003)/C (2003).mkv" {
+		t.Fatalf("limit 1: %+v %v calls %v", run, err, p.calls)
+	}
+	if run := probeDue(t, sc, root, p); run.Queued != 2 {
+		t.Fatalf("rest: %+v", run)
+	}
+	_ = s
 }

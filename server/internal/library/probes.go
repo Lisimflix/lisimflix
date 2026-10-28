@@ -1,6 +1,7 @@
 package library
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,9 +28,10 @@ const maxProbeError = 500
 // files are never probed again (SCALE-01). A result is saved only if the
 // file still has the revision it describes (compare-and-set on size and
 // mtime). A file that is still changing gets a not-before time instead of
-// being re-queued at once (#62).
-// Planned: LIB-2b (the scan loop runs it after each scan and on its schedule).
-func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, workers int, quiet time.Duration) (ProbeRun, error) {
+// being re-queued at once (#62). limit bounds the files taken in one call
+// (0: all), oldest change first, so a large backlog is worked through in
+// turns with other roots.
+func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, workers int, quiet time.Duration, limit int) (ProbeRun, error) {
 	st := sc.Store
 	root, _, err := st.root(ctx, rootID)
 	if err != nil {
@@ -37,7 +39,7 @@ func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, worker
 	}
 	paths, err := queryStrings(ctx, st.db, `SELECT path FROM library_files WHERE root_id = ? AND state = 'present'
 		AND (probe_size IS NOT size OR probe_mtime_ns IS NOT mtime_ns)
-		AND (probe_after IS NULL OR probe_after <= ?) ORDER BY path`, rootID, ms(st.now()))
+		AND (probe_after IS NULL OR probe_after <= ?) ORDER BY mtime_ns, path LIMIT ?`, rootID, ms(st.now()), cmp.Or(limit, -1))
 	if err != nil || len(paths) == 0 {
 		return ProbeRun{}, err
 	}
