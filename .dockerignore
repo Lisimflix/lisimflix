@@ -3,6 +3,9 @@
 *
 !server/
 !web/
+# Licence notices copied into the image (#63).
+!LICENSE
+!NOTICE.md
 server/bin/
 server/internal/webassets/dist/
 web/node_modules/
