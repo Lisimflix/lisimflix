@@ -5,7 +5,7 @@
 - **Local CI gate:** Before pushing code or opening its PR, run `make check` locally on the completed feature branch. Every code PR, including the initial CI-bootstrap PR, needs both a local pass and its GitHub Actions pass plus a review by another member. A new `pull_request` workflow can run from the PR merge branch before reaching the default branch. Report the actual Actions result; if it did not run, investigate the trigger/settings rather than assuming a bootstrap exemption. Docs-only PRs may skip the local check.
 - Never commit to or push `main`. Work on a branch named per `CONTRIBUTING.md` and open a PR.
 - Never use `git push --no-verify`, force-push `main`, or merge a PR yourself.
-- **Reviewers:** don't request reviewers or pass `--reviewer` when opening a PR, and plans don't name them: `.github/CODEOWNERS` requests the `reviewers` team and GitHub assigns one member (CONTRIBUTING, Reviewers).
+- **Reviewers:** don't request reviewers or pass `--reviewer` when opening a PR, and plans don't name them: `.github/CODEOWNERS` requests Pete and Lammy plus one auto-assigned backup reviewer (CONTRIBUTING, Reviewers).
 - PR titles use Conventional Commits; they become the squashed commit message.
 - **README gate:** Before opening or approving a PR, check `README.md` against the branch (status, layout, setup, commands, checks). If the PR changes any of them, update `README.md` in the same PR.
 - At the start of every session, run `git config core.hooksPath`. If it is not `.githooks`, tell the user and ask before setting it (see `CONTRIBUTING.md` one-time setup).

@@ -1,4 +1,5 @@
-# Every PR requests the reviewers team; GitHub auto-assigns one member
-# (load balance). One approval from anyone but the author is enough;
-# code-owner review is not required. See CONTRIBUTING.md, Reviewers.
-* @Lisimflix/reviewers
+# Every PR requests Pete and Lammy, plus the backup-reviewers team (Ondo,
+# Millzy), from which GitHub auto-assigns one (load balance). One approval
+# from anyone but the author is enough; code-owner review is not required.
+# See CONTRIBUTING.md, Reviewers.
+* @lisim @Lammy93 @Lisimflix/backup-reviewers
