@@ -5,7 +5,7 @@
 **Goal:** Replace the one-movie M1 page with layout C: a Home page, library grids, a detail page and the existing player. A viewer can pick any movie or episode they're allowed to see, choose a version, and resume or start from the beginning.
 
 **Architecture:** The plan ships as three PRs:
-- **PR A: contract additions.** These are the shapes the mockups need that CTR-2 left out: home rows, filters, sort, A–Z jump, totals, facets, scan progress, credits, rating, size and filename. They follow CTR-2's pattern: OpenAPI, Go types, fixtures, and checks in Ajv, Go round-trip and TypeScript. Every new operation is `planned` and names its producer.
+- **PR A: contract additions.** These are the shapes the mockups need that CTR-2 left out: home rows, filters, sort, A–Z jump, totals, facets, scan progress, availability of source folders and files, credits, rating, size and filename. They follow CTR-2's pattern: OpenAPI, Go types, fixtures, and checks in Ajv, Go round-trip and TypeScript. Every new operation is `planned` and names its producer.
 - **PR B: playback by item and version.** `PlaybackSessionRequest` becomes `{itemId, versionId}`. The playback server resolves each request through a `Resolver`, so LIB-2c can plug in the catalogue. M1's single configured movie becomes one resolver.
 - **PR C: the web app.** React with no new runtime libraries, apart from the two bundled font packages. It has a History-API router, a hand-rolled virtual grid and a shared row component, plus the §5.7 states. Module acceptance runs in Playwright against the fixture fake API.
 
@@ -28,12 +28,12 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
 | Issue | #113 (claimed by Pete). #95's checklist closes with PR A + C |
 | Owner / reviewers | Pete (claimant). Lammy reviews all three PRs: he owns CTR-2 and wrote PLY-2. Ondo reviews PR C |
 | Acceptance | §5.1–5.2 (layout C pages in scope below), §5.5 phone tab bar, §5.6 keyboard and labels, §5.7 states, §3.8 resume confirmation. **Module:** Playwright against fixtures, including a 5,000-movie generated library. **Integrated:** PERF-05 / SCALE-02 on Pete's library (about 5,000 movies and 1,000 shows) once LIB-2c serves it |
-| File scope | **PR A:** `docs/contracts/openapi.json`, `server/internal/contracts/{catalogue,userdata,types}.go` + tests, `testdata/contracts/catalogue/**`, `web/contract-tests/*`, generated `web/src/api/schema.d.ts`.<br>**PR B:** `server/internal/playback/*`, `server/cmd/lisimflix/serve.go`, the contract's two playback schemas, `testdata/contracts/m1/playback.json`, `web/src/api/client.ts` (`start`), `web/src/player/M1App.tsx`, `web/tests/{fake-api,player.spec}.ts`.<br>**PR C:** `web/src/**` (new `app/`, `browse/`, `ui/` folders), `web/index.html`, `web/public/**`, `web/package.json` + lockfile, `web/tests/**`, `README.md` |
+| File scope | **PR A:** `docs/contracts/openapi.json`, `server/internal/contracts/{catalogue,userdata,types}.go` + tests, `testdata/contracts/catalogue/**`, `web/contract-tests/*`, generated `web/src/api/schema.d.ts`.<br>**PR B:** `server/internal/playback/*`, `server/cmd/lisimflix/serve.go`, the contract's two playback schemas, the OPS-5 plan's event table (`docs/superpowers/plans/2026-10-27-ops-5-baseline-logging.md`, `movie_id` → `item_id` + `version_id`; Lammy asked for this on #114), `testdata/contracts/m1/playback.json`, `web/src/api/client.ts` (`start`), `web/src/player/M1App.tsx`, `web/tests/{fake-api,player.spec}.ts`.<br>**PR C:** `web/src/**` (new `app/`, `browse/`, `ui/` folders), `web/index.html`, `web/public/**`, `web/package.json` + lockfile, `web/tests/**`, `README.md` |
 | Consumes | CTR-2 shapes (merged, #87). UI-1's `VideoPlayer` and client (merged, #28) |
 | Produces | The contract additions in PR A, `playback.Resolver` (PR B), and the browse app (PR C) |
 | Start dependency | None. All three PRs run against fixtures. PR B and PR C each start once PR A merges. PR C's player task needs PR B |
 | Standalone test | `go -C server test -race -count=1 ./internal/contracts/ ./internal/playback/ ./cmd/...` (A, B). `npm --prefix web run test:contracts && npm --prefix web run test:browser` (all). Then `make check` |
-| Integration proof | Needs real producers: LIB-2c (libraries, items, facets, scan status, a catalogue `Resolver`), DATA-1 (progress, watched, Continue Watching), DATA-2 (Next Up), META-1 (credits, rating, `matched`). Task 9 is the actual-scale run. Record "module accepted" on the UI-2 issue when PR C merges, and "integrated" after Task 9 |
+| Integration proof | Needs real producers: LIB-2c (libraries, items, facets, scan status, availability, a catalogue `Resolver`), DATA-1 (progress, watched, Continue Watching), DATA-2 (Next Up), META-1 (credits, rating, `matched`). Task 9 is the actual-scale run. Record "module accepted" on the UI-2 issue when PR C merges, and "integrated" after Task 9 |
 
 ## Global Constraints
 
@@ -61,19 +61,27 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
    - Row order and hiding (§5.2) are DATA-2 preferences, out of scope here.
 3. **Filters and sort are `listItems` query parameters**, owner **LIB-2** (LIB-2c):
    - `sort` = `title` (default, A→Z), `added` (newest first) or `year` (newest first)
-   - `genre`, `yearFrom`, `yearTo`, `resolution` (`sd`, `720p`, `1080p`, `4k`), `hdr`, `audioLanguage` (ISO 639-2), `watched`
-   - `from` (A–Z jump): one letter `A`–`Z` or `#`. Only valid with `sort=title`. The page starts at the first item whose `sortTitle` begins with that letter or a later one.
+   - `genre`, `yearFrom`, `yearTo`, `resolution` (`sd`, `720p`, `1080p`, `4k`), `hdr`, `audioLanguage`, `watched`
+   - `audioLanguage` and the facets' languages use **ISO 639-2/T** (`deu`, `fra`, `zho`). The producer maps /B tags (`ger`, `fre`, `chi`) to /T, so German is listed once (Lammy, #114). `AudioStream.language` stays "as tagged" (CTR-2).
+   - `watched` is LIB-2c's parameter but reads DATA-1's data. Until DATA-1 is live, LIB-2c answers it with `400 invalid_request`, and the Unwatched chip hides on that 400.
+   - **Title collation, fixed in the contract** (Lammy, #114): titles compare by `sortTitle` folded to lower case with accents removed (Unicode NFKD, combining marks dropped, so `Élite` sorts and jumps as `elite`). Ties break by item ID.
+   - `from` (A–Z jump): one letter `A`–`Z` or `#`, only valid with `sort=title`. A letter starts the page at the first item whose folded `sortTitle` begins with that letter or a later one. `#` covers every item whose folded `sortTitle` doesn't start with `a`–`z`: digits, symbols and non-Latin titles such as Japanese. These **sort before A**, so `#` is the first page.
    - A combination the server can't apply is `400 invalid_request`.
    - Filters apply only to `libraryId` listings. With `parentId`, any filter is a 400.
-4. **`ItemPage.total`** (required integer) is the count after permission and filters (§5.7: no leaks through counts). The library header shows it ("412 titles").
+4. **`ItemPage.total`** (`integer | null`, required) is the count after permission and filters (§5.7: no leaks through counts). It's an integer on the first page of a `listItems` call (no `cursor`) and null on later pages and for the home-row operations. That way the count runs once per listing, not per page (Lammy, #114). The library header shows it ("412 titles").
 5. **`GET /api/v1/libraries/{libraryId}/facets`**, owner LIB-2: genres, year range, audio languages, resolutions and an HDR flag present in the permitted items. It fills the filter menus without guessing.
-6. **`Library.scan`** shows a first scan in progress: `{state: "idle" | "scanning", filesSeen, filesTotal}`, with `filesTotal` null while still counting. It's for the "No anime yet · 1,204 of 3,410 files" empty state. Owner LIB-2.
+6. **Scan progress and availability.** A library has one or more source folders (§3.1; for example `/store/tv` and `/mnt/temp/tv`), and LIB-2b tracks each one's state. So availability is per file, with only a summary per library (Pete, #114). Owner LIB-2 throughout:
+   - **`Library.scan`** shows a first scan in progress: `{state: "idle" | "scanning", filesSeen, filesTotal}`, with `filesTotal` null while still counting. It's for the "No anime yet · 1,204 of 3,410 files" empty state. LIB-2b records the counters as it goes (Lammy, #114).
+   - **`Library.availability`** = `available` | `partial` | `offline`: all, some or none of its source folders are readable. `partial` shows the banner "Some titles are offline". `offline` with no items shows "This library's folder is offline", never "No movies yet". Folder paths are never sent to viewers.
+   - **`MediaVersion.available`** (boolean) is false when the version's source folder is offline or its file is missing. The version picker labels it "(offline)", and Play on it shows the **File offline** state without starting a session.
+   - **`ItemSummary.available`** (`boolean | null`) is true if any version can play and null for shows and seasons. Cards show a **File offline** badge on `false`.
+   - `degraded` (a scan failed part-way, but the files are still readable) isn't a viewer state. It belongs to the admin scan status (UI-6, LIB-2c).
 7. **Item additions:**
    - `ItemSummary`, all owner LIB-2 except `matched`:
      - `addedAt`
      - `childCount`: seasons of a show, episodes of a season, otherwise null
      - `showTitle` and `seasonIndex`: set on episodes, and `showTitle` also on seasons; null otherwise. Cards in mixed rows read "[Show] · S1 E4" from these.
-     - `matched` (META-1): false shows the **Unmatched** badge.
+     - `matched` (META-1, `boolean | null`): null means matching hasn't run (all items until META-1 lands), and only `false` shows the **Unmatched** badge (Lammy, #114).
    - `ItemDetail` (META-1): `communityRating` `{source, value}` or null, `directors[]`, `studios[]`.
    - `MediaVersion` (LIB-2): `sizeBytes` (null if unknown) and `fileName` (decision 1).
 8. **Playback takes `{itemId, versionId}`; `movieId` is removed, not deprecated.** Web and server ship in one image, so there are no old clients. `PlaybackSession` returns `itemId` and `versionId`. The grant binds both. M1 maps its configured movie to `itemId = versionId = movie.id` with `fileId = movie.id`, so existing source revisions don't change.
@@ -100,7 +108,7 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
 ## Review Focus
 
 1. **A profile switch or sign-out mid-browse** must not show the old profile's cached rows. The cache is cleared on logout; the test is in Task 5.
-2. **A source that goes offline between detail and Play** must show "File offline" and keep the detail page. `503 source_unavailable` on start becomes the source-unavailable state, not a spinner. Task 8.
+2. **A source folder that goes offline** (for example `/mnt/temp` unmounted while `/store` stays up) must affect only its own titles. Their cards and versions say File offline, the library shows the partial banner, and the rest still plays. If it drops between loading the detail page and pressing Play, the `503 source_unavailable` from start becomes the same File offline state, not a spinner. Tasks 4, 7 and 8.
 3. **An episode whose file holds two episodes** (`segment` null) has no duration. Its card shows no progress bar and no "min left", and doesn't crash on `durationMs: null`. Task 6.
 4. **A huge library with fast scrolling or a jump** must not render thousands of cards or start overlapping page fetches. Task 4 caps DOM cards and in-flight requests.
 5. **A resume position past the end** (a file replaced by a shorter one, or same version but a stale revision) must take the confirmation path, never seek past the end. Task 8.
@@ -122,10 +130,11 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
 **Interfaces:**
 - Produces (OpenAPI → Go):
   - `Library.scan`: `LibraryScan{State string; FilesSeen int64; FilesTotal *int64}`, with `ScanIdle = "idle"` and `ScanScanning = "scanning"`.
-  - `ItemSummary` gains `AddedAt time.Time`, `ChildCount *int64`, `ShowTitle *string`, `SeasonIndex *int64` and `Matched bool`.
-  - `ItemPage` becomes its own type `ItemPage{Items []ItemSummary; NextCursor *string; Total int64}` and encodes nil `Items` as `[]`. `Page[T]` stays for libraries and profiles.
+  - `Library.availability`: `Availability string`, with `AvailabilityAvailable = "available"`, `AvailabilityPartial = "partial"` and `AvailabilityOffline = "offline"`.
+  - `ItemSummary` gains `AddedAt time.Time`, `ChildCount *int64`, `ShowTitle *string`, `SeasonIndex *int64`, `Matched *bool` and `Available *bool`.
+  - `ItemPage` becomes its own type `ItemPage{Items []ItemSummary; NextCursor *string; Total *int64}` and encodes nil `Items` as `[]`. `Page[T]` stays for libraries and profiles.
   - `ItemDetail` gains `CommunityRating *CommunityRating{Source string; Value float64}` (source pattern `^[a-z][a-z0-9]{1,31}$`, value 0–10), `Directors []string` and `Studios []string`.
-  - `MediaVersion` gains `SizeBytes *int64` and `FileName *string` (maxLength 255, no `/` or `\`: pattern `^[^/\\\\]+$`).
+  - `MediaVersion` gains `SizeBytes *int64`, `Available bool` and `FileName *string` (maxLength 255, no `/` or `\`: pattern `^[^/\\\\]+$`).
   - `LibraryFacets{Genres []string; Years *YearRange{Min, Max int64}; AudioLanguages []string; Resolutions []string; HDR bool}`, with resolution constants `ResolutionSD = "sd"`, `Resolution720 = "720p"`, `Resolution1080 = "1080p"`, `Resolution4K = "4k"`.
   - Sort constants `SortTitle = "title"`, `SortAdded = "added"`, `SortYear = "year"`.
 - Produces operations:
@@ -136,18 +145,18 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
   | `GET /api/v1/continue-watching` `listContinueWatching` (`cursor`, `limit`) → `ItemPage` | DATA-1 | Movies and episodes with `resume`, not watched, not hidden; newest `lastPlayedAt` first |
   | `GET /api/v1/next-up` `listNextUp` (`cursor`, `limit`) → `ItemPage` | DATA-2 | The next unwatched episode per show in progress, in the library's order; specials are never inserted |
 
-  `listItems` gains the query parameters in decision 3. Its summary adds the 400 rules for `from` without `sort=title` and filters with `parentId`.
+  `listItems` gains the query parameters in decision 3. Its summary adds the 400 rules for `from` without `sort=title` and filters with `parentId`, and states decision 3's collation and the `#` rule word for word, so LIB-2c and the web app sort the same way.
   - `ItemSummary` and `ItemDetail` descriptions cite decisions 1 and 7.
   - `MediaVersion.fileName` reads: "Bare file name, admins only; null for other viewers. Never a path."
 
 - [ ] **Step 1: Update the fixtures and add the three new ones**
 
   Existing fixtures gain the new required fields with realistic values:
-  - `items-movies.json`: `total: 412`; one item has `matched: false`.
-  - `items-episodes.json`: `showTitle` and `seasonIndex: 1` on both episodes.
+  - `items-movies.json`: `total: 412`. One item has `matched: false` and `available: false`, and another has `matched: null`.
+  - `items-episodes.json`: `showTitle` and `seasonIndex: 1` on both episodes, and `total: null` (a later page).
   - `item-show.json`: `childCount: 2`.
-  - `item-movie.json`: version 1 has `fileName: null` (a viewer's response) and `sizeBytes: 1181116006`. Version 2 has `fileName: "synthetic.directors.cut.2160p.mkv"` (an admin's) and `sizeBytes: 24000000000`. It also gets `communityRating: {"source": "tmdb", "value": 6.4}`, `directors: ["Synthetic Director"]` and `studios: ["Synthetic Studio"]`.
-  - `libraries.json`: the anime library has `scan: {"state": "scanning", "filesSeen": 1204, "filesTotal": 3410}`, and the movie library `{"state": "idle", "filesSeen": 0, "filesTotal": null}`.
+  - `item-movie.json`: version 1 has `fileName: null` (a viewer's response) and `sizeBytes: 1181116006`. Version 2 has `fileName: "synthetic.directors.cut.2160p.mkv"` (an admin's), `sizeBytes: 24000000000` and `available: false` (its folder is offline). Version 1 has `available: true`. It also gets `communityRating: {"source": "tmdb", "value": 6.4}`, `directors: ["Synthetic Director"]` and `studios: ["Synthetic Studio"]`.
+  - `libraries.json`: the anime library has `scan: {"state": "scanning", "filesSeen": 1204, "filesTotal": 3410}` and `availability: "available"`. The movie library has `{"state": "idle", "filesSeen": 0, "filesTotal": null}` and `availability: "partial"`.
 
   New fixtures:
   - `facets.json`: two genres, years 2006–2023, `["eng", "jpn"]`, `["1080p", "4k"]`, `hdr: true`.
@@ -161,6 +170,9 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
 ["windows path in fileName", "item-movie.json", (d) => { d.versions[1].fileName = "C:\\media\\x.mkv"; }],
 ["negative total", "items-movies.json", (d) => { d.total = -1; }],
 ["unknown scan state", "libraries.json", (d) => { d.items[0].scan.state = "paused"; }],
+["degraded is not a viewer availability", "libraries.json", (d) => { d.items[0].availability = "degraded"; }],
+["show with availability", "item-show.json", (d) => { d.item.available = true; }],
+["version without available", "item-movie.json", (d) => { delete d.versions[0].available; }],
 ["rating above 10", "item-movie.json", (d) => { d.communityRating.value = 11; }],
 ["unknown facet resolution", "facets.json", (d) => { d.resolutions = ["8k"]; }],
 ["movie with a showTitle", "items-movies.json", (d) => { d.items[0].showTitle = "Synthetic Show"; }],
@@ -172,7 +184,7 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
 - [ ] **Step 3: Add the TypeScript checks to `schema.test.ts`**
 
 ```ts
-// @ts-expect-error total is required on an item page
+// @ts-expect-error total is required on an item page (null on later pages)
 export const noTotal: components["schemas"]["ItemPage"] = { items: [], nextCursor: null };
 // @ts-expect-error scan states are a closed set
 export const badScan: components["schemas"]["LibraryScan"] = { state: "paused", filesSeen: 0, filesTotal: null };
@@ -375,8 +387,8 @@ test("phoneWidthUsesBottomTabBar", ...)           // viewport 390x844 ⇒ nav is
   - Arrow keys move focus card to card. Focus moving onto an unrendered row scrolls it into view first.
 - `Card({item, href, size: "poster" | "wide"})`:
   - It shows artwork or a "No artwork" block, then the title, then the year, or for an episode `S{seasonIndex} E{index}`.
-  - A ✓ badge when `userState?.watched?.value`, a progress bar when `resume` and `durationMs` are both present, and an **Unmatched** badge when `!matched`.
-  - The accessible name is the title plus the state words ("watched", "unmatched", "{n} min left").
+  - A ✓ badge when `userState?.watched?.value`, a progress bar when `resume` and `durationMs` are both present, an **Unmatched** badge only when `matched === false`, and a **File offline** badge when `available === false`.
+  - The accessible name is the title plus the state words ("watched", "unmatched", "file offline", "{n} min left").
 - `format.ts`:
   ```ts
   minutesLeft(resume: Resume | null, durationMs: number | null): number | null
@@ -406,7 +418,10 @@ assert.equal(versionLabel(fixture("item-movie.json").versions[1]), "Director's C
 
 ```ts
 test("showsTotalAndCards", ...)                // "412 titles"; first card names from items-movies.json
-test("unmatchedCardHasBadgeNoFilename", ...)   // badge "Unmatched"; card text has no ".mkv"
+test("unmatchedCardHasBadgeNoFilename", ...)   // matched:false ⇒ badge "Unmatched"; matched:null ⇒ no badge; card text has no ".mkv"
+test("offlineCardBadgeAndPartialBanner", ...)  // available:false ⇒ "File offline" badge; library partial ⇒ status "Some titles are offline"; other cards unbadged
+test("azRailStartsWithHash", ...)             // rail order is #, A … Z; click # ⇒ from=%23
+test("totalKeptAcrossPages", ...)             // second page total:null ⇒ header still "412 titles"
 test("virtualGridBoundsDom", ...)              // fake library of 5,000 generated items (50/page, total 5000): scroll to bottom ⇒ ≤ 200 cards in DOM at any sample; last item title visible
 test("noOverlappingPageLoads", ...)            // during fast scroll, at most 1 items request in flight (fake API records concurrency)
 test("sortAndFilterGoToServer", ...)           // choose Sort "Recently added", Genre "Sci-fi" ⇒ request has sort=added&genre=Sci-fi; URL query matches; reload keeps them
@@ -424,7 +439,7 @@ test("firstPageVisibleUnder1sOnFixture", ...)  // module proxy for PERF-05: clic
 
 - [ ] **Step 4: Implement the components and page per Interfaces**
 
-  The filter chips are All, Unwatched, Genre ▾, Year ▾, Resolution ▾, HDR and Audio language ▾. Each menu is a `<button aria-haspopup="listbox">` with a listbox, closed by Escape. The language list shows names from `Intl.DisplayNames(["en"], {type: "language"})`, mapping ISO 639-2 to 639-1 with a 20-entry table for the common codes and falling back to the raw code.
+  The filter chips are All, Unwatched, Genre ▾, Year ▾, Resolution ▾, HDR and Audio language ▾. Each menu is a `<button aria-haspopup="listbox">` with a listbox, closed by Escape. The language list shows names from `Intl.DisplayNames(["en"], {type: "language"})`, mapping ISO 639-2 (/T, plus the /B forms that ffprobe tags carry, since `AudioStream.language` is as tagged) to 639-1 with a table for the common codes, falling back to the raw code.
   `// shortcut: 639-2→1 table covers common codes only; widen when a library shows raw codes`.
 
 - [ ] **Step 5: Run them and watch them pass**
@@ -492,7 +507,7 @@ test("reducedMotionNoSmoothScroll", ...)        // emulateMedia reducedMotion �
     - Quality chips from the selected version: resolution, codec, the default audio's profile or codec plus "Stereo" or "5.1", HDR, and "Direct play".
     - The play buttons (Task 8).
     - Mark watched ✓, an `aria-pressed` toggle that calls `setWatched` with `expectedRevision`. On 409 `revision_conflict` it refetches the item and says "Updated elsewhere, try again".
-    - The overview, then the version `<select>` (only when more than one version). The side panel has Director, Studio, Audio, Subtitles and Added.
+    - The overview, then the version `<select>` (only when more than one version). Unavailable versions are labelled "(offline)". The default selection is the first available version. The side panel has Director, Studio, Audio, Subtitles and Added.
   - **Show:** a season picker, then the episode list for that season. Each episode row has its number, title, progress bar and Play.
   - **Season:** links to the show with that season preselected.
   - An item with `versions: []` shows "No file available for this item" and no Play.
@@ -503,7 +518,8 @@ test("reducedMotionNoSmoothScroll", ...)        // emulateMedia reducedMotion �
 ```ts
 test("movieDetailFromFixture", ...)              // title, "TMDB 6.4", Director Synthetic Director, Studio Synthetic Studio, Added date
 test("versionPickerOnlyWhenMany", ...)           // item-movie (2 versions) ⇒ select with both labels; episode fixture (1) ⇒ no select
-test("viewerSeesNoFilename", ...)                // version 1 option text has no "(" filename; version 2 (admin fixture) shows it
+test("viewerSeesNoFilename", ...)                // version 1 option text has no filename; version 2 (admin fixture) shows it
+test("offlineVersionLabelledNotDefault", ...)    // version 2 option ends "(offline)"; selected by default is version 1
 test("showListsSeasonsThenEpisodes", ...)        // item-show ⇒ season select; items?parentId calls; episode rows with numbers
 test("sharedFileEpisodeHasNoDuration", ...)      // item-episode-shared-file ⇒ no "min" text, no progress bar, no crash
 test("markWatchedSendsRevision", ...)            // click ✓ ⇒ PUT body {watched:true, expectedRevision:<fixture revision>}; aria-pressed true
@@ -539,7 +555,9 @@ test("backRestoresGridScrollAndFocus", ...)      // library: scroll to card #300
   - "Couldn't load this {thing}", plus "Diagnostic ID {requestId}" when present, plus **Try again**. The heading is in a `role="alert"` region.
 - `OfflineBanner`:
   - When a refetch fails with status 0 but cached data exists, keep the data and show "Can't reach the server. Showing what was loaded before." in a `role="status"` region.
-- `SourceUnavailable` is the detail state for 503 `source_unavailable` (Task 8).
+- `OfflineLibrary`: the library's `availability === "offline"` and no items. It shows "This library's folder is offline" and "Titles come back when it's reconnected. Nothing has been removed.", instead of `Empty`.
+- `PartialBanner`: `availability === "partial"` shows "Some titles are offline" in a `role="status"` region above the grid and on Home.
+- `SourceUnavailable` is the detail state for an unavailable version, or for a 503 `source_unavailable` from start (Task 8).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -547,7 +565,9 @@ test("backRestoresGridScrollAndFocus", ...)      // library: scroll to card #300
 test("loadingSkeletonThenContent", ...)       // delay items 500 ms ⇒ aria-busy region visible, then cards; no layout shift > 1 card height
 test("emptyWhileScanning", ...)               // anime library items [] + scan scanning ⇒ "No anime yet", progress value 1204 max 3410, text "1,204 of 3,410 files"
 test("emptyScanCountingTotal", ...)           // filesTotal null ⇒ "1,204 files found", no max
-test("emptyIdleLibrary", ...)                 // items [] + idle ⇒ "No movies yet" and no progress
+test("emptyIdleLibrary", ...)                 // items [] + idle + available ⇒ "No movies yet" and no progress
+test("offlineLibraryNotEmpty", ...)          // items [] + availability offline ⇒ "This library's folder is offline"; no "No movies yet"
+test("partialLibraryBanner", ...)            // availability partial ⇒ status "Some titles are offline"; cards still render
 test("errorShowsDiagnosticId", ...)           // items → 500 {requestId:"req-fixture"} ⇒ alert, "Diagnostic ID req-fixture", Try again refetches
 test("offlineKeepsData", ...)                 // load grid, then abort all routes, trigger refetch (sort change) ⇒ banner + old cards still shown
 test("emptyPollStopsOnLeave", ...)            // scanning library, navigate Home ⇒ no further /libraries calls after 6 s
@@ -580,6 +600,7 @@ test("emptyPollStopsOnLeave", ...)            // scanning library, navigate Home
 - Play navigates to `/play/:itemId/:versionId?t=<ms>`.
 - `PlayerPage`:
   - It starts the session with `client.start(itemId, versionId, key)`, reusing M1App's idempotency and generation logic (move those helpers to `player/start.ts` so both use one copy).
+  - A version with `available: false` never starts a session. Detail shows **SourceUnavailable** for it directly.
   - It renders `VideoPlayer` with `startMs` and `onProgress`.
   - On end it goes back to the detail page, with an error message if there was one.
   - Errors:
@@ -608,6 +629,7 @@ test("otherVersionNeedsConfirm", ...)           // resume on v2, selected v1 ⇒
 test("progressTickPauseSeekStop", ...)          // clock.install; play 10 s ⇒ tick; pause ⇒ pause; seek ⇒ seek with fromPositionMs; Back ⇒ stop; sequences strictly increase
 test("progress404IsSilent", ...)                // progress → 404 ⇒ playback continues, no alert
 test("sourceUnavailableOnStart", ...)           // start → 503 source_unavailable ⇒ detail with "File offline", Play unavailable disabled
+test("offlineVersionNoSession", ...)            // select the offline version ⇒ "File offline", Play unavailable disabled, no POST /playback/sessions
 test("backFromPlayerStopsSession", ...)         // Back ⇒ DELETE session sent; detail page shown
 test("logoutDuringPlaybackStopsFirst", ...)     // same order assertion as player.spec's logout test, from the browse shell
 ```
@@ -633,6 +655,7 @@ Not code in this plan. It runs once LIB-2c (with a catalogue `Resolver`), DATA-1
   - Do this at idle, during a rescan and during a metadata update (SCALE-02).
   - Report p95 browser-visible time against PERF-05 (≤1 s), with the server's query time reported separately.
 - [ ] **Step 3:** A real movie, a real episode and a multi-version item play from the browse app. Resume works across a reload.
+- [ ] **Step 3a:** Unmount one source folder (e.g. a `/mnt/temp/tv`-style folder) while another stays up. Only its titles show File offline, the library shows the partial banner, the other titles still play, and nothing disappears from the catalogue. The A–Z rail reaches an accented title (`É…` under E) and a non-Latin title under `#`.
 - [ ] **Step 4:** Record "integrated" on the UI-2 issue with the evidence in `docs/testing/`. If PERF-05 fails, file issues by measured cause (SCALE-04), not by guess.
 
 ---
@@ -643,7 +666,7 @@ Not code in this plan. It runs once LIB-2c (with a catalogue `Resolver`), DATA-1
   - §5.1 C: Tasks 3–5.
   - §5.2: Home (5), Library (4), Detail (6), Player (8, reusing UI-1). Who's watching, Search and the other pages are out of scope by decision 13.
   - §5.5 tab bar: 3. §5.6: keyboard tests in 3–8.
-  - §5.7: 7 and 8, plus restore in 6, pagination in 4, and no-leak totals in decision 4.
+  - §5.7: 7 and 8, plus restore in 6, pagination in 4, and no-leak totals in decision 4. Offline sources: decision 6, Tasks 4, 6, 7, 8 and 9.
   - §3.8 resume confirmation: 8.
   - PERF-05 / SCALE-02: module proxy in 4, real run in 9.
   - #95's items 1–3 are covered by decisions 1, 7 and the fonts in Task 3.

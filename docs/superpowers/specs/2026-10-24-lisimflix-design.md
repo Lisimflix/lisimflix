@@ -1465,7 +1465,8 @@ hostnames, paths, user IDs or domain names from any contributor's installation.
 
 Startup validates writable paths/free space, media-root visibility, schema support
 and required binaries. GPU probe failure degrades supported paths; database migration
-failure blocks readiness. Root unavailability marks that library offline. Health
+failure blocks readiness. Root unavailability marks that root offline; a library is
+offline only when all its roots are, and partial otherwise (UI-2 plan). Health
 endpoints separate process liveness from usable readiness; metadata outages alone do
 not make the server unready. Readiness never leaks secrets or full host paths.
 
