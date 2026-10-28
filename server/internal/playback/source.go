@@ -1,6 +1,6 @@
 // Package playback is M1 direct play: it serves original MP4 files resolved
-// from an item and version through authorised range requests bound to live playback sessions. It never
-// transcodes or remuxes.
+// from an item and version through authorised range requests bound to live
+// playback sessions. It never transcodes or remuxes.
 package playback
 
 import (
@@ -38,7 +38,7 @@ type M1 struct {
 
 // Single is M1's resolver: one movie, itemID == versionID == movie.ID and
 // fileID == movie.ID, so source revisions are the ones init wrote.
-// Planned: LIB-2c (a catalogue Resolver replaces Single).
+// LIB-2c replaces Single with a catalogue Resolver.
 func Single(movie contracts.Movie, relativePath string, authorize func(contracts.Principal, string) bool) *M1 {
 	return &M1{movie: movie, rel: relativePath, authorize: authorize}
 }

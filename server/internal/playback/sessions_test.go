@@ -7,12 +7,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -520,9 +522,42 @@ func (failing) Resolve(contracts.Principal, string, string) (Source, error) {
 }
 
 func TestStartResolverErrorIs500(t *testing.T) {
-	e := newEnv(t, 16, func(o *Options) { o.Resolver = failing{} })
+	var buf syncBuffer
+	e := newEnv(t, 16, func(o *Options) { o.Resolver = failing{}; o.Log = slog.New(slog.NewJSONHandler(&buf, nil)) })
 	code, b := e.post(alice, "k1", `{"itemId":"x","versionId":"y"}`)
 	if code != 500 || errCode(t, b) != contracts.CodeInternalError {
 		t.Fatalf("resolver error = %d %s", code, b)
+	}
+	if !buf.has("playback.resolve_error", "item_id", "x", "version_id", "y") {
+		t.Fatalf("no playback.resolve_error: %s", buf.String())
+	}
+}
+
+// failAfterFirst resolves once (so start succeeds), then fails.
+type failAfterFirst struct {
+	inner Resolver
+	n     atomic.Int32
+}
+
+func (f *failAfterFirst) Resolve(p contracts.Principal, item, version string) (Source, error) {
+	if f.n.Add(1) > 1 {
+		return Source{}, errors.New("catalogue down")
+	}
+	return f.inner.Resolve(p, item, version)
+}
+
+func TestContentResolverErrorIs500(t *testing.T) {
+	var buf syncBuffer
+	e := newEnv(t, 4096, func(o *Options) {
+		o.Resolver = &failAfterFirst{inner: o.Resolver}
+		o.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	})
+	ps := e.mustStart(alice, "k1")
+	resp, b := e.req(&alice, "GET", ps.ContentURL, "", nil)
+	if resp.StatusCode != 500 || errCode(t, b) != contracts.CodeInternalError {
+		t.Fatalf("content with failing resolver = %d %s", resp.StatusCode, b)
+	}
+	if !buf.has("playback.resolve_error", "item_id", movieID, "version_id", movieID) {
+		t.Fatalf("no playback.resolve_error: %s", buf.String())
 	}
 }
