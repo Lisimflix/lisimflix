@@ -233,7 +233,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The next unwatched episode per show in progress, in the library's order; specials are never inserted. total is null. */
+        /**
+         * Next Up row: one episode per show the profile has started. total is null.
+         * @description For each show the profile has started, the first unwatched episode after the last watched one, in the library's order. A show with an episode in progress (a resume point) is skipped: that episode is in Continue Watching. Specials are never inserted.
+         */
         get: operations["listNextUp"];
         put?: never;
         post?: never;
@@ -251,8 +254,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter with parentId, and any combination the server can't apply (including watched until DATA-1 is live) are also 400 invalid_request. A library or parent the profile may not see is 404.
-         * @description Title collation is fixed in the contract: titles compare by sortTitle folded with META-1a's Normalize (#121, decision 6), so sorting, the A–Z jump and matching all compare titles the same way. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → "and"; other punctuation becomes a space and spaces collapse; a leading "the", "a" or "an" is dropped when more words follow. Other scripts compare as written. So Élite sorts and jumps as elite. Ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.
+         * Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter with parentId, and any combination the server can't apply (including watched until DATA-1 is live, or yearFrom greater than yearTo) are also 400 invalid_request. A library or parent the profile may not see is 404.
+         * @description Title collation is fixed in the contract: titles compare by sortTitle folded with META-1a's Normalize (META-1a plan (#121), decision 6), so sorting, the A–Z jump and matching all compare titles the same way. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → "and"; other punctuation becomes a space and spaces collapse; a leading "the", "a" or "an" is dropped when more words follow. Other scripts compare as written. So Élite sorts and jumps as elite. Sorting with sort=title puts the # group first (folded sortTitle not starting with a–z, including non-Latin titles, which compare as written within the group), then a–z; within each group items sort by folded sortTitle, and ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Send # percent-encoded as %23. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.
          */
         get: operations["listItems"];
         put?: never;
@@ -469,9 +472,17 @@ export interface components {
             /** @description Each language appears once */
             audioLanguages: string[];
             /** @description Each resolution appears once */
-            resolutions: ("sd" | "720p" | "1080p" | "4k")[];
+            resolutions: components["schemas"]["Resolution"][];
+            /** @description Any HDR item is present */
             hdr: boolean;
+            /** @description Any SDR item is present; tells the client whether an SDR-only filter has matches */
+            sdr: boolean;
         };
+        /**
+         * @description Resolution bucket
+         * @enum {string}
+         */
+        Resolution: "sd" | "720p" | "1080p" | "4k";
         YearRange: {
             /** Format: int64 */
             min: number;
@@ -729,9 +740,11 @@ export interface components {
         /** @description A–Z jump; only with sort=title. Send # percent-encoded as %23. */
         From: string;
         Genre: string;
+        /** @description 400 invalid_request if greater than yearTo */
         YearFrom: number;
+        /** @description 400 invalid_request if less than yearFrom */
         YearTo: number;
-        Resolution: "sd" | "720p" | "1080p" | "4k";
+        Resolution: components["schemas"]["Resolution"];
         /** @description true: HDR only; false: SDR only; omitted: no filter */
         HDR: boolean;
         /** @description ISO 639-2/T, e.g. deu, fra, zho */
@@ -1295,7 +1308,9 @@ export interface operations {
                 /** @description A–Z jump; only with sort=title. Send # percent-encoded as %23. */
                 from?: components["parameters"]["From"];
                 genre?: components["parameters"]["Genre"];
+                /** @description 400 invalid_request if greater than yearTo */
                 yearFrom?: components["parameters"]["YearFrom"];
+                /** @description 400 invalid_request if less than yearFrom */
                 yearTo?: components["parameters"]["YearTo"];
                 resolution?: components["parameters"]["Resolution"];
                 /** @description true: HDR only; false: SDR only; omitted: no filter */

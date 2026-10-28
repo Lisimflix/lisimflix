@@ -155,7 +155,7 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
   - `items-movies.json`: `total: 412`. One item has `matched: false` and `available: false`, and another has `matched: null`.
   - `items-episodes.json`: `showTitle` and `seasonIndex: 1` on both episodes, and `total: null` (a later page).
   - `item-show.json`: `childCount: 2`.
-  - `item-movie.json`: version 1 has `fileName: null` (a viewer's response) and `sizeBytes: 1181116006`. Version 2 has `fileName: "synthetic.directors.cut.2160p.mkv"` (an admin's), `sizeBytes: 24000000000` and `available: false` (its folder is offline). Version 1 has `available: true`. It also gets `communityRating: {"source": "tmdb", "value": 6.4}`, `directors: ["Synthetic Director"]` and `studios: ["Synthetic Studio"]`.
+  - `item-movie.json` (a viewer's response: both versions have `fileName: null`): version 1 has `sizeBytes: 1181116006`. Version 2 has `sizeBytes: 24000000000` and `available: false` (its folder is offline). Version 1 has `available: true`. New `item-movie-admin.json` is the same item as an admin sees it: version 1 has `fileName: "synthetic.movie.1080p.mp4"` and version 2 `"synthetic.directors.cut.2160p.mkv"`. It also gets `communityRating: {"source": "tmdb", "value": 6.4}`, `directors: ["Synthetic Director"]` and `studios: ["Synthetic Studio"]`.
   - `libraries.json`: the anime library has `scan: {"state": "scanning", "filesSeen": 1204, "filesTotal": 3410}` and `availability: "available"`. The movie library has `{"state": "idle", "filesSeen": 0, "filesTotal": null}` and `availability: "partial"`.
 
   New fixtures:
@@ -166,8 +166,8 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
 - [ ] **Step 2: Add rejection cases to `web/contract-tests/fixtures.test.mjs`**
 
 ```js
-["path in fileName", "item-movie.json", (d) => { d.versions[1].fileName = "/media/movies/x.mkv"; }],
-["windows path in fileName", "item-movie.json", (d) => { d.versions[1].fileName = "C:\\media\\x.mkv"; }],
+["path in fileName", "item-movie-admin.json", (d) => { d.versions[1].fileName = "/media/movies/x.mkv"; }],
+["windows path in fileName", "item-movie-admin.json", (d) => { d.versions[1].fileName = "C:\\media\\x.mkv"; }],
 ["negative total", "items-movies.json", (d) => { d.total = -1; }],
 ["unknown scan state", "libraries.json", (d) => { d.items[0].scan.state = "paused"; }],
 ["degraded is not a viewer availability", "libraries.json", (d) => { d.items[0].availability = "degraded"; }],
@@ -409,7 +409,8 @@ assert.equal(minutesLeft(null, 720000), null);
 assert.equal(minutesLeft(resumeOf(600000), null), null);   // shared-file episode: no duration
 assert.equal(formatBytes(1181116006), "1.1 GB");
 assert.equal(versionLabel(fixture("item-movie.json").versions[0]), "1080p · H.264 · 1.1 GB");
-assert.equal(versionLabel(fixture("item-movie.json").versions[1]), "Director's Cut · 4K · HEVC · 22.4 GB (synthetic.directors.cut.2160p.mkv)");
+assert.equal(versionLabel(fixture("item-movie.json").versions[1]), "Director's Cut · 4K · HEVC · 22.4 GB");   // viewer: no file name
+assert.equal(versionLabel(fixture("item-movie-admin.json").versions[1]), "Director's Cut · 4K · HEVC · 22.4 GB (synthetic.directors.cut.2160p.mkv)");
 ```
 
   (Adjust the expected strings to the fixture's actual label and codec after Task 1; the shape is what's pinned.)

@@ -10,6 +10,7 @@ var catalogueFixtures = map[string]func() any{
 	"items-movies.json":             func() any { return &ItemPage{} },
 	"items-episodes.json":           func() any { return &ItemPage{} },
 	"item-movie.json":               func() any { return &ItemDetail{} },
+	"item-movie-admin.json":         func() any { return &ItemDetail{} },
 	"item-episode-shared-file.json": func() any { return &ItemDetail{} },
 	"item-show.json":                func() any { return &ItemDetail{} },
 	"facets.json":                   func() any { return &LibraryFacets{} },
@@ -44,7 +45,30 @@ func TestCatalogueEnumsMatchOpenAPI(t *testing.T) {
 	checkEnum(t, "SubtitleStream", "kind", SubtitleText, SubtitleImage, SubtitleASS)
 	checkEnum(t, "LibraryScan", "state", ScanIdle, ScanScanning)
 	checkEnum(t, "Library", "availability", AvailabilityAvailable, AvailabilityPartial, AvailabilityOffline)
-	checkEnum(t, "LibraryFacets", "resolutions", ResolutionSD, Resolution720, Resolution1080, Resolution4K)
+	checkSchemaEnum(t, "Resolution", ResolutionSD, Resolution720, Resolution1080, Resolution4K)
 	checkParamEnum(t, "Sort", SortTitle, SortAdded, SortYear)
-	checkParamEnum(t, "Resolution", ResolutionSD, Resolution720, Resolution1080, Resolution4K)
+}
+
+func TestZeroValueArraysEncodeAsEmpty(t *testing.T) {
+	for name, c := range map[string]struct {
+		v     any
+		paths []string
+	}{
+		"facets": {LibraryFacets{}, []string{"genres", "audioLanguages", "resolutions"}},
+		"detail": {ItemDetail{}, []string{"genres", "externalIds", "versions", "directors", "studios"}},
+	} {
+		b, err := json.Marshal(c.v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		for _, k := range c.paths {
+			if string(m[k]) != "[]" {
+				t.Errorf("%s.%s encoded as %s", name, k, m[k])
+			}
+		}
+	}
 }

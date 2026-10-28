@@ -43,6 +43,7 @@ const (
 )
 
 // Scan states (LibraryScan.state).
+// Planned: LIB-2b and LIB-2c (Library.scan / Library.availability producers).
 const (
 	ScanIdle     = "idle"
 	ScanScanning = "scanning"
@@ -50,6 +51,7 @@ const (
 
 // Library availability (Library.availability): all, some or none of its
 // source folders are readable.
+// Planned: LIB-2b and LIB-2c (Library.scan / Library.availability producers).
 const (
 	AvailabilityAvailable = "available"
 	AvailabilityPartial   = "partial"
@@ -118,7 +120,25 @@ type LibraryFacets struct {
 	Years          *YearRange `json:"years"`
 	AudioLanguages []string   `json:"audioLanguages"`
 	Resolutions    []string   `json:"resolutions"`
-	HDR            bool       `json:"hdr"`
+	HDR            bool       `json:"hdr"` // any HDR item is present
+	SDR            bool       `json:"sdr"` // any SDR item is present
+}
+
+// MarshalJSON encodes nil slices as [] because the contract requires arrays.
+// Planned: LIB-2c (getLibraryFacets handler).
+func (f LibraryFacets) MarshalJSON() ([]byte, error) {
+	type plain LibraryFacets // no methods: avoids recursion
+	f.Genres = nonNil(f.Genres)
+	f.AudioLanguages = nonNil(f.AudioLanguages)
+	f.Resolutions = nonNil(f.Resolutions)
+	return json.Marshal(plain(f))
+}
+
+func nonNil[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }
 
 // YearRange is the first and last item year in a library; Min <= Max.
@@ -206,6 +226,18 @@ type ItemDetail struct {
 	CommunityRating *CommunityRating `json:"communityRating"`
 	Directors       []string         `json:"directors"`
 	Studios         []string         `json:"studios"`
+}
+
+// MarshalJSON encodes nil slices as [] because the contract requires arrays.
+// Planned: LIB-2c, META-1 (getItem handler).
+func (d ItemDetail) MarshalJSON() ([]byte, error) {
+	type plain ItemDetail // no methods: avoids recursion
+	d.Genres = nonNil(d.Genres)
+	d.ExternalIDs = nonNil(d.ExternalIDs)
+	d.Versions = nonNil(d.Versions)
+	d.Directors = nonNil(d.Directors)
+	d.Studios = nonNil(d.Studios)
+	return json.Marshal(plain(d))
 }
 
 // MediaVersion is one playable version of a movie or episode: a cut or

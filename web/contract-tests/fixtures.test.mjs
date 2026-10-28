@@ -119,6 +119,7 @@ const catalogueFixtures = {
   "items-movies.json": "ItemPage",
   "items-episodes.json": "ItemPage",
   "item-movie.json": "ItemDetail",
+  "item-movie-admin.json": "ItemDetail",
   "item-episode-shared-file.json": "ItemDetail",
   "item-show.json": "ItemDetail",
   "facets.json": "LibraryFacets",
@@ -142,8 +143,8 @@ checkFixtures(catalogueFixtures, [
   ["und language instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].language = "und"; }],
   ["empty audio profile instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].profile = ""; }],
   ["unknown HDR format", "item-movie.json", (d) => { d.versions[1].video[0].hdr = "hdr12"; }],
-  ["path in fileName", "item-movie.json", (d) => { d.versions[1].fileName = "/media/movies/x.mkv"; }],
-  ["windows path in fileName", "item-movie.json", (d) => { d.versions[1].fileName = "C:\\media\\x.mkv"; }],
+  ["path in fileName", "item-movie-admin.json", (d) => { d.versions[1].fileName = "/media/movies/x.mkv"; }],
+  ["windows path in fileName", "item-movie-admin.json", (d) => { d.versions[1].fileName = "C:\\media\\x.mkv"; }],
   ["negative total", "items-movies.json", (d) => { d.total = -1; }],
   ["unknown scan state", "libraries.json", (d) => { d.items[0].scan.state = "paused"; }],
   ["degraded is not a viewer availability", "libraries.json", (d) => { d.items[0].availability = "degraded"; }],
@@ -175,6 +176,13 @@ test("accepts an episode whose season index is unknown", () => {
   data.items[0].seasonIndex = null;
   const validate = ajv.getSchema("m1#/components/schemas/ItemPage");
   assert.ok(validate(data), ajv.errorsText(validate.errors));
+});
+
+test("viewer fixtures carry no fileName", () => {
+  const found = (v) => v !== null && typeof v === "object" && Object.entries(v).some(([k, x]) => (k === "fileName" && x !== null) || found(x));
+  for (const file of readdirSync(new URL("../../testdata/contracts/catalogue/", import.meta.url))) {
+    if (file.endsWith(".json") && !file.endsWith("-admin.json")) assert.equal(found(catalogue(file)), false, `${file} has a fileName`);
+  }
 });
 
 test("every catalogue fixture is validated", () => {

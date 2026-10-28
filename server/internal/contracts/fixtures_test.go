@@ -44,6 +44,7 @@ func roundTripFixtures(t *testing.T, cases map[string]func() any) {
 type openAPIEnums struct {
 	Components struct {
 		Schemas map[string]struct {
+			Enum       []any `json:"enum"` // a named string enum schema
 			Properties map[string]struct {
 				Enum  []any `json:"enum"`
 				Items struct {
@@ -79,6 +80,12 @@ func checkEnum(t *testing.T, schema, prop string, goValues ...string) {
 	t.Helper()
 	p := loadOpenAPIEnums(t).Components.Schemas[schema].Properties[prop]
 	compareEnum(t, schema+"."+prop, append(p.Enum, p.Items.Enum...), goValues)
+}
+
+// checkSchemaEnum is checkEnum for a named enum schema under components.schemas.
+func checkSchemaEnum(t *testing.T, schema string, goValues ...string) {
+	t.Helper()
+	compareEnum(t, "schema "+schema, loadOpenAPIEnums(t).Components.Schemas[schema].Enum, goValues)
 }
 
 // checkParamEnum is checkEnum for a query parameter under components.parameters.

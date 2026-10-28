@@ -259,7 +259,8 @@
       "get": {
         "operationId": "listNextUp",
         "x-lisimflix": { "owner": "DATA-2", "status": "planned" },
-        "summary": "The next unwatched episode per show in progress, in the library's order; specials are never inserted. total is null.",
+        "summary": "Next Up row: one episode per show the profile has started. total is null.",
+        "description": "For each show the profile has started, the first unwatched episode after the last watched one, in the library's order. A show with an episode in progress (a resume point) is skipped: that episode is in Continue Watching. Specials are never inserted.",
         "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
           "200": { "description": "Items", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPage" } } } },
@@ -273,8 +274,8 @@
       "get": {
         "operationId": "listItems",
         "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
-        "summary": "Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter with parentId, and any combination the server can't apply (including watched until DATA-1 is live) are also 400 invalid_request. A library or parent the profile may not see is 404.",
-        "description": "Title collation is fixed in the contract: titles compare by sortTitle folded with META-1a's Normalize (#121, decision 6), so sorting, the A–Z jump and matching all compare titles the same way. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → \"and\"; other punctuation becomes a space and spaces collapse; a leading \"the\", \"a\" or \"an\" is dropped when more words follow. Other scripts compare as written. So Élite sorts and jumps as elite. Ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.",
+        "summary": "Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter with parentId, and any combination the server can't apply (including watched until DATA-1 is live, or yearFrom greater than yearTo) are also 400 invalid_request. A library or parent the profile may not see is 404.",
+        "description": "Title collation is fixed in the contract: titles compare by sortTitle folded with META-1a's Normalize (META-1a plan (#121), decision 6), so sorting, the A–Z jump and matching all compare titles the same way. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → \"and\"; other punctuation becomes a space and spaces collapse; a leading \"the\", \"a\" or \"an\" is dropped when more words follow. Other scripts compare as written. So Élite sorts and jumps as elite. Sorting with sort=title puts the # group first (folded sortTitle not starting with a–z, including non-Latin titles, which compare as written within the group), then a–z; within each group items sort by folded sortTitle, and ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Send # percent-encoded as %23. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.",
         "parameters": [
           { "$ref": "#/components/parameters/LibraryIdQuery" },
           { "$ref": "#/components/parameters/ParentIdQuery" },
@@ -359,9 +360,9 @@
       "Sort": { "name": "sort", "in": "query", "required": false, "description": "title: A→Z; added and year: newest first", "schema": { "type": "string", "enum": ["title", "added", "year"], "default": "title" } },
       "From": { "name": "from", "in": "query", "required": false, "description": "A–Z jump; only with sort=title. Send # percent-encoded as %23.", "schema": { "type": "string", "pattern": "^[A-Z#]$" } },
       "Genre": { "name": "genre", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
-      "YearFrom": { "name": "yearFrom", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1800, "maximum": 9999 } },
-      "YearTo": { "name": "yearTo", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1800, "maximum": 9999 } },
-      "Resolution": { "name": "resolution", "in": "query", "required": false, "schema": { "type": "string", "enum": ["sd", "720p", "1080p", "4k"] } },
+      "YearFrom": { "name": "yearFrom", "in": "query", "required": false, "description": "400 invalid_request if greater than yearTo", "schema": { "type": "integer", "minimum": 1800, "maximum": 9999 } },
+      "YearTo": { "name": "yearTo", "in": "query", "required": false, "description": "400 invalid_request if less than yearFrom", "schema": { "type": "integer", "minimum": 1800, "maximum": 9999 } },
+      "Resolution": { "name": "resolution", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/Resolution" } },
       "HDR": { "name": "hdr", "in": "query", "required": false, "description": "true: HDR only; false: SDR only; omitted: no filter", "schema": { "type": "boolean" } },
       "AudioLanguage": { "name": "audioLanguage", "in": "query", "required": false, "description": "ISO 639-2/T, e.g. deu, fra, zho", "schema": { "type": "string", "pattern": "^[a-z]{3}$" } },
       "Watched": { "name": "watched", "in": "query", "required": false, "description": "Reads DATA-1's data; 400 invalid_request until DATA-1 is live", "schema": { "type": "boolean" } },
@@ -581,16 +582,18 @@
       "LibraryFacets": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["genres", "years", "audioLanguages", "resolutions", "hdr"],
+        "required": ["genres", "years", "audioLanguages", "resolutions", "hdr", "sdr"],
         "description": "Filter-menu values present in the library's items the profile may see. audioLanguages use ISO 639-2/T.",
         "properties": {
           "genres": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 64 }, "description": "Each genre appears once" },
           "years": { "oneOf": [{ "$ref": "#/components/schemas/YearRange" }, { "type": "null" }], "description": "Null when no item has a year. min <= max." },
           "audioLanguages": { "type": "array", "uniqueItems": true, "items": { "type": "string", "pattern": "^[a-z]{3}$" }, "description": "Each language appears once" },
-          "resolutions": { "type": "array", "uniqueItems": true, "items": { "type": "string", "enum": ["sd", "720p", "1080p", "4k"] }, "description": "Each resolution appears once" },
-          "hdr": { "type": "boolean" }
+          "resolutions": { "type": "array", "uniqueItems": true, "items": { "$ref": "#/components/schemas/Resolution" }, "description": "Each resolution appears once" },
+          "hdr": { "type": "boolean", "description": "Any HDR item is present" },
+          "sdr": { "type": "boolean", "description": "Any SDR item is present; tells the client whether an SDR-only filter has matches" }
         }
       },
+      "Resolution": { "type": "string", "enum": ["sd", "720p", "1080p", "4k"], "description": "Resolution bucket" },
       "YearRange": {
         "type": "object",
         "additionalProperties": false,
