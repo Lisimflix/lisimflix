@@ -39,6 +39,9 @@ contract tests, lint, typecheck and build. GitHub Actions runs the same target o
 It fails if `web/src/api/schema.d.ts` is stale, so commit the regenerated file after
 changing `docs/contracts/m1-openapi.json`.
 
+Tests that need real ffmpeg/ffprobe use the `integration` build tag and run only on request,
+e.g. `go -C server test -tags integration ./internal/library/` (needs both on `PATH`).
+
 ## Contributing
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) first: pick an unclaimed feature, claim its issue,
