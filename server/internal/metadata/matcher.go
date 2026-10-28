@@ -25,6 +25,7 @@ const (
 // Matcher matches catalogue items to Provider's records under §3.7's
 // precedence (Decision 4): a locked ID, then ID hints, then a confident
 // search result, else the review queue. No transaction spans a provider call.
+// Planned: META-1c (serve's job loop and the fix-match endpoint build it).
 type Matcher struct {
 	Store    *Store
 	Provider Provider
@@ -189,20 +190,25 @@ func (m *Matcher) lookup(ctx context.Context, itemID string, info itemInfo, ns, 
 }
 
 // failed handles a provider error: an auth error pauses the provider and
-// leaves the item queued as it was; anything else retries with backoff.
+// leaves the item queued as it was (if pausing fails, the error comes with
+// OutcomeSkipped so RunDue stops); anything else retries with backoff.
 func (m *Matcher) failed(ctx context.Context, itemID string, info itemInfo, err error) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
 	}
 	if errors.Is(err, ErrAuth) {
-		return OutcomeSkipped, m.Store.Pause(ctx, m.Provider.Name(), err.Error())
+		if perr := m.Store.Pause(ctx, m.Provider.Name(), err.Error()); perr != nil {
+			return OutcomeSkipped, fmt.Errorf("metadata: pausing %s after %v: %w", m.Provider.Name(), err, perr)
+		}
+		return OutcomeSkipped, nil
 	}
 	return OutcomeRetry, m.Store.retryLater(ctx, itemID, info.attempts+1, err.Error())
 }
 
 // RunDue matches up to limit due items, oldest first, each in its own
 // transactions. A database error on one item goes in Batch.Failed and the
-// batch goes on; a paused provider stops it with ErrPaused, and so does ctx.
+// batch goes on; a paused provider stops it with ErrPaused, a failure to pause
+// it stops it with that error, and so does ctx.
 // Planned: META-1c (the metadata job loop and the fix-match endpoint run them).
 func (m *Matcher) RunDue(ctx context.Context, limit int) (Batch, error) {
 	var b Batch
@@ -235,6 +241,9 @@ func (m *Matcher) RunDue(ctx context.Context, limit int) (Batch, error) {
 		if err != nil {
 			if ctx.Err() != nil {
 				return b, ctx.Err()
+			}
+			if out == OutcomeSkipped { // the provider refused us but couldn't be paused
+				return b, err
 			}
 			b.Failed = append(b.Failed, ItemError{ItemID: id, Err: err.Error()})
 			continue

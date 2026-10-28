@@ -589,3 +589,70 @@ func TestLockedClearSurvivesMatch(t *testing.T) {
 		t.Fatalf("unlocked genres weren't applied: %+v", f.Genres)
 	}
 }
+
+// A locked ID the provider doesn't know, or that names another kind, makes
+// the item a conflict: the admin's choice is never replaced by a hint or a
+// search.
+func TestUnknownLockedIDIsAConflict(t *testing.T) {
+	for _, locked := range []string{"404404", "1396"} { // unknown; a show on a movie
+		e := newMatchEnv(t)
+		e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+		e.library("movies", "Movies")
+		id := e.item("Heat")
+		if _, err := e.st.FixMatch(context.Background(), id, 1, "tmdb", locked); err != nil {
+			t.Fatal(err)
+		}
+		if out := e.match(id); out != OutcomeConflict || !slices.Equal(e.fake.calls, []string{"lookup tmdb:" + locked}) {
+			t.Fatalf("locked %s: outcome %s calls %v", locked, out, e.fake.calls)
+		}
+		var reason string
+		e.db.QueryRow(`SELECT coalesce(last_error, '') FROM metadata_items WHERE item_id = ?`, id).Scan(&reason)
+		if md := e.get(id); md.MatchStatus != contracts.MatchConflict || reason == "" || md.Fields.Overview.Value != nil {
+			t.Fatalf("locked %s: status %s reason %q", locked, md.MatchStatus, reason)
+		}
+	}
+}
+
+// A season queued by an edit is taken off the queue by the first batch that
+// meets it, so it doesn't fail every later batch.
+func TestQueuedSeasonLeavesTheQueue(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("TV/Breaking Bad/Season 01/Breaking Bad - S01E01.mkv", "x")
+	e.library("tv", "TV")
+	ctx := context.Background()
+	var season string
+	e.db.QueryRow(`SELECT id FROM library_items WHERE kind = 'season'`).Scan(&season)
+	if _, err := e.st.Edit(ctx, season, 1, []Edit{{Field: FieldOverview, Value: raw("Season one.")}}); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := e.m.RunDue(ctx, 10); err != nil || len(b.Failed) != 1 || b.Failed[0].ItemID != season {
+		t.Fatalf("first batch %+v %v", b, err)
+	}
+	var queued bool
+	e.db.QueryRow(`SELECT next_attempt_at IS NOT NULL FROM metadata_items WHERE item_id = ?`, season).Scan(&queued)
+	if queued {
+		t.Fatal("the season is still queued")
+	}
+	if b, err := e.m.RunDue(ctx, 10); err != nil || len(b.Failed) != 0 {
+		t.Fatalf("later batch %+v %v", b, err)
+	}
+}
+
+// If pausing after an auth error fails, the batch stops with that error: the
+// provider isn't called again for the next item.
+func TestFailedPauseStopsTheBatch(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995)/Heat (1995).mkv", "x")
+	e.write("Movies/The Matrix (1999)/The Matrix (1999).mkv", "x")
+	e.library("movies", "Movies")
+	ctx := context.Background()
+	e.st.Enqueue(ctx, 10)
+	if _, err := e.db.Exec(`CREATE TRIGGER pause_broken BEFORE INSERT ON metadata_providers BEGIN SELECT RAISE(ABORT, 'pause broken'); END`); err != nil {
+		t.Fatal(err)
+	}
+	e.fake.err = fmt.Errorf("%w: 401", ErrAuth)
+	b, err := e.m.RunDue(ctx, 10)
+	if err == nil || len(e.fake.calls) != 1 {
+		t.Fatalf("RunDue = %+v, %v after %d calls: want the pause error and one call", b, err, len(e.fake.calls))
+	}
+}
