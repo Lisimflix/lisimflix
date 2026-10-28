@@ -152,7 +152,12 @@ func bump(ctx context.Context, tx *sql.Tx, itemID string, expected, now int64) e
 // supplies values, overlaid with stored fields and provider IDs.
 // Planned: META-1c (the metadata HTTP API).
 func (s *Store) Get(ctx context.Context, itemID string) (contracts.ItemMetadata, error) {
-	return get(ctx, s.db, itemID)
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return contracts.ItemMetadata{}, err
+	}
+	defer tx.Rollback()
+	return get(ctx, tx, itemID)
 }
 
 func get(ctx context.Context, q querier, itemID string) (contracts.ItemMetadata, error) {
@@ -233,12 +238,16 @@ func provenance(provider, providerID sql.NullString, fetched sql.NullInt64) *con
 	return p
 }
 
-// overlay applies a stored row to the field it names. A NULL value keeps the
-// parsed one.
+// overlay applies a stored row to the field it names. A NULL value with a
+// provenance is an explicit clear; without one (a lock-only row) it keeps the
+// parsed value.
 func overlay(f *contracts.MetadataFields, field string, value sql.NullString, src *contracts.Provenance, locked bool) error {
 	set := func(v any) error {
 		if !value.Valid {
-			return nil
+			if src == nil {
+				return nil
+			}
+			return json.Unmarshal([]byte("null"), v)
 		}
 		return json.Unmarshal([]byte(value.String), v)
 	}
@@ -357,6 +366,9 @@ func (s *Store) Edit(ctx context.Context, itemID string, expectedRevision int64,
 		json     any
 		hasValue bool
 		lock     *bool
+	}
+	if len(edits) == 0 {
+		return contracts.ItemMetadata{}, invalid("no edits")
 	}
 	changes := make([]change, 0, len(edits))
 	for _, e := range edits {

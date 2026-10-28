@@ -23,7 +23,7 @@ CREATE TABLE metadata_fields (
     field       TEXT NOT NULL CHECK (field IN ('title', 'sortTitle', 'originalTitle', 'overview',
                                                'year', 'contentRating', 'genres')),
     value       TEXT,                 -- JSON; NULL = no value
-    provider    TEXT,                 -- provenance: tmdb, nfo, filename, user ...; NULL = unknown
+    provider    TEXT,                 -- provenance: a provider name, nfo (1b) or user; NULL = unknown
     provider_id TEXT,
     fetched_at  INTEGER,
     locked      INTEGER NOT NULL DEFAULT 0 CHECK (locked IN (0, 1)),

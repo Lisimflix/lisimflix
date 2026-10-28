@@ -88,6 +88,9 @@ func TestEditValidates(t *testing.T) {
 			t.Errorf("%s: %v, want ErrInvalid", name, err)
 		}
 	}
+	if _, err := e.st.Edit(context.Background(), id, 1, nil); !errors.Is(err, ErrInvalid) {
+		t.Errorf("no edits: %v, want ErrInvalid", err)
+	}
 	// Clearing an optional field is fine.
 	if _, err := e.st.Edit(context.Background(), id, 1, []Edit{{Field: FieldOverview, Value: raw(nil)}}); err != nil {
 		t.Fatal(err)
@@ -154,5 +157,26 @@ func TestEnqueueAndPause(t *testing.T) {
 	e.st.Resume(ctx, "tmdb")
 	if p, _, _ := e.st.Paused(ctx, "tmdb"); p {
 		t.Fatal("still paused after Resume")
+	}
+}
+
+// Clearing a field with null is an explicit, locked "user" choice: the parsed
+// value doesn't come back. A lock-only row still shows the parsed value.
+func TestEditClearsParsedFields(t *testing.T) {
+	e := newEnv(t)
+	e.write("Movies/Heat (1995)/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	md, err := e.st.Edit(context.Background(), id, 1, []Edit{{Field: FieldYear, Value: raw(nil)}, {Field: FieldSortTitle, Value: raw(nil)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := md.Fields
+	if f.Year.Value != nil || f.Year.Source == nil || f.Year.Source.Provider != SourceUser || !f.Year.Locked ||
+		f.SortTitle.Value != nil || f.SortTitle.Source == nil || f.SortTitle.Source.Provider != SourceUser || !f.SortTitle.Locked {
+		t.Fatalf("after clear %+v", f)
+	}
+	if got := e.get(id).Fields; got.Year.Value != nil || got.SortTitle.Value != nil {
+		t.Fatalf("Get after clear %+v", got)
 	}
 }
