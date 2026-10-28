@@ -24,7 +24,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags "$TAGS" \
 # jellyfin-ffmpeg portable build (GPLv3), used only as a separate process.
 # Not tracked by Dependabot: to update, take the new release's
 # portable_linux64-gpl asset and its sha256 from
-# https://github.com/jellyfin/jellyfin-ffmpeg/releases and change both lines.
+# https://github.com/jellyfin/jellyfin-ffmpeg/releases and change both lines,
+# and the version and source links in NOTICE.md (GPLv3 source pointer, #63).
 FROM scratch AS ffmpeg
 ADD --unpack=true --checksum=sha256:b86dc023c64a5a9a410e6e3a938a970460214fae78f31c1553c9f88f1c289b6a \
     https://github.com/jellyfin/jellyfin-ffmpeg/releases/download/v8.1.3-1/jellyfin-ffmpeg_8.1.3-1_portable_linux64-gpl.tar.xz /
@@ -38,6 +39,7 @@ FROM gcr.io/distroless/base-debian12:nonroot@sha256:7f0c72cd138b442ae0deeb69c08b
 COPY --from=build /out/lisimflix /usr/local/bin/lisimflix
 COPY --from=ffmpeg /ffprobe /usr/lib/jellyfin-ffmpeg/ffprobe
 COPY --from=ffmpeg /COPYING.GPLv3 /LICENSE.md /usr/share/doc/jellyfin-ffmpeg/
+COPY NOTICE.md LICENSE /usr/share/doc/lisimflix/
 USER 65532:65532
 EXPOSE 8420
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/usr/local/bin/lisimflix", "healthcheck"]

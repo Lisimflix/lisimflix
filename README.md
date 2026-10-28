@@ -53,3 +53,6 @@ what it describes updates it in the same PR. Agents also follow [`CLAUDE.md`](CL
 
 [GNU Affero General Public License v3.0](LICENSE) (AGPL-3.0). If you run a modified Lisimflix
 server for other people, you must offer them its source (§13).
+
+The container image also ships third-party software (jellyfin-ffmpeg's `ffprobe`, GPLv3); see
+[`NOTICE.md`](NOTICE.md) for its licence and source.
