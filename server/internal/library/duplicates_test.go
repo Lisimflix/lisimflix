@@ -309,3 +309,54 @@ func TestAmbiguousRenameIsFlagged(t *testing.T) {
 		t.Fatalf("%d shows, want 3 (nothing folded)", n)
 	}
 }
+
+// Pete's probe on #111: after a rename is folded in, the old folder's
+// mapping must not make a later, coexisting copy look like another rename
+// of it. The copy is flagged, never merged automatically.
+func TestCopyAfterAFoldedRenameIsFlagged(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Show.Name/Season 1/Show.Name.S01E01.mkv", 10)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+	os.RemoveAll(filepath.Join(m.dir, "TV/Show.Name"))
+	m.write("TV/Show Name/Season 01/Show Name - S01E01.mkv", 10)
+	scan(t, sc, lib.Roots[0].ID)
+	if d := dups(t, s, lib.ID); len(d) != 0 {
+		t.Fatalf("rename flagged: %+v", d)
+	}
+	m.write("TV/Show_Name/Season 01/Show_Name - S01E02.mkv", 20)
+	scan(t, sc, lib.Roots[0].ID)
+	if d := dups(t, s, lib.ID); len(d) != 1 {
+		t.Fatalf("coexisting copy: flags %+v, want 1; tree %v", d, s.tree(t, lib.ID))
+	}
+}
+
+// #117: hasPresentFile's library filter decides renames of loose files
+// (no folder), where renamed() can't check a folder. The same show with
+// files in another library must not make a moved loose file look alive.
+func TestLooseFileMoveFoldsWhenAnotherLibraryHasTheSameShow(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Show - S01E01.mkv", 10)
+	m.write("Anime/Show/Season 01/Show - S01E01.mkv", 10)
+	ctx := context.Background()
+	tv, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	anime, _ := s.CreateLibrary(ctx, "Anime", "anime", []string{"Anime"})
+	sc := m.scanner(s)
+	scan(t, sc, tv.Roots[0].ID)
+	scan(t, sc, anime.Roots[0].ID)
+	before := shows(t, s, tv.ID)
+
+	os.Remove(filepath.Join(m.dir, "TV/Show - S01E01.mkv"))
+	m.write("TV/Show/Season 01/Show - S01E01.mkv", 10)
+	scan(t, sc, tv.Roots[0].ID)
+	if d := dups(t, s, tv.ID); len(d) != 0 {
+		t.Fatalf("move of a loose file flagged: %+v", d)
+	}
+	if got := shows(t, s, tv.ID); len(before) != 1 || !slices.Equal(got, before) {
+		t.Fatalf("TV shows %v, want %v", got, before)
+	}
+}

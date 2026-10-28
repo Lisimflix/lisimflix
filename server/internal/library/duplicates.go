@@ -82,7 +82,10 @@ func (s *Store) settle(ctx context.Context, rootID string) error {
 			return err
 		}
 		if into != "" {
-			err = fold(ctx, tx, into, p.other)
+			err = dropGoneFolders(ctx, tx, into)
+			if err == nil {
+				err = fold(ctx, tx, into, p.other)
+			}
 		} else {
 			_, err = tx.ExecContext(ctx, `UPDATE library_duplicates SET state = 'flagged' WHERE id = ?`, p.id)
 		}
@@ -143,6 +146,18 @@ func renamed(ctx context.Context, tx *sql.Tx, other string) (string, error) {
 		return "", nil // none, or ambiguous: the admin decides
 	}
 	return found[0], nil
+}
+
+// dropGoneFolders removes the item's mappings for folders with no present
+// file left: the folder a rename replaced. Kept, it would make every later
+// folder with the same naming key look like another rename of it, and a
+// coexisting copy would be folded in silently (Pete, #111). If the old
+// folder comes back, it is a new folder and is flagged.
+func dropGoneFolders(ctx context.Context, tx *sql.Tx, itemID string) error {
+	_, err := tx.ExecContext(ctx, `DELETE FROM library_folders AS f WHERE f.item_id = ? AND f.folder != ''
+		AND NOT EXISTS (SELECT 1 FROM library_files x WHERE x.root_id = f.root_id AND x.state = 'present'
+			AND x.path >= f.folder || '/' AND x.path < f.folder || '0')`, itemID)
+	return err
 }
 
 // hasPresentFile reports whether any version under the item (or, for a
