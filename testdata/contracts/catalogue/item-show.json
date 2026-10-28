@@ -8,6 +8,12 @@
     "sortTitle": "Synthetic Show",
     "year": 2025,
     "index": null,
+    "addedAt": "2026-10-20T03:00:00Z",
+    "childCount": 2,
+    "showTitle": null,
+    "seasonIndex": null,
+    "matched": null,
+    "available": null,
     "durationMs": null,
     "contentRating": { "region": "AU", "value": "PG" },
     "primaryImageUrl": "/api/v1/items/shw-synthetic-0001/images/primary",
@@ -17,6 +23,9 @@
   "originalTitle": "Gousei Show",
   "overview": "A made-up series used only in contract fixtures.",
   "genres": ["Animation", "Comedy"],
+  "communityRating": null,
+  "directors": [],
+  "studios": [],
   "externalIds": [{ "namespace": "anilist", "id": "700001" }, { "namespace": "tvdb", "id": "600001" }],
   "versions": []
 }

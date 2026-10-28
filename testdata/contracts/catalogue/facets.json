@@ -1,0 +1,8 @@
+{
+  "genres": ["Animation", "Drama"],
+  "years": { "min": 2006, "max": 2023 },
+  "audioLanguages": ["eng", "jpn"],
+  "resolutions": ["1080p", "4k"],
+  "hdr": true,
+  "sdr": true
+}

@@ -1,0 +1,73 @@
+{
+  "item": {
+    "id": "mov-synthetic-0001",
+    "kind": "movie",
+    "libraryId": "lib-synthetic-movies",
+    "parentId": null,
+    "title": "Synthetic Test Movie",
+    "sortTitle": "Synthetic Test Movie",
+    "year": 2026,
+    "index": null,
+    "addedAt": "2026-10-20T03:00:00Z",
+    "childCount": null,
+    "showTitle": null,
+    "seasonIndex": null,
+    "matched": true,
+    "available": true,
+    "durationMs": 5400000,
+    "contentRating": { "region": "AU", "value": "M" },
+    "primaryImageUrl": "/api/v1/items/mov-synthetic-0001/images/primary",
+    "backdropUrl": null,
+    "userState": {
+      "itemId": "mov-synthetic-0001",
+      "revision": 0,
+      "resume": null,
+      "watched": null,
+      "playCount": 0,
+      "lastPlayedAt": null,
+      "hiddenFromContinueWatching": false
+    }
+  },
+  "originalTitle": null,
+  "overview": "A made-up film used only in contract fixtures.",
+  "genres": ["Drama"],
+  "communityRating": { "source": "tmdb", "value": 6.4 },
+  "directors": ["Synthetic Director"],
+  "studios": ["Synthetic Studio"],
+  "externalIds": [{ "namespace": "tmdb", "id": "900001" }],
+  "versions": [
+    {
+      "id": "ver-synthetic-0001",
+      "fileId": "fil-synthetic-0001",
+      "label": null,
+      "sizeBytes": 1181116006,
+      "available": true,
+      "fileName": "synthetic.movie.1080p.mp4",
+      "durationMs": 5400000,
+      "sourceRevision": "fbe33ec2d0dbf23469d5d40be1aff9ec70fc27ee7ca7d336cb41f0216034e659",
+      "segment": null,
+      "container": "mov,mp4,m4a,3gp,3g2,mj2",
+      "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],
+      "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "eng", "title": null, "default": true, "forced": false }],
+      "subtitles": [{ "index": 2, "codec": "mov_text", "kind": "text", "language": "eng", "title": "English", "default": false, "forced": false, "hearingImpaired": false }]
+    },
+    {
+      "id": "ver-synthetic-0002",
+      "fileId": "fil-synthetic-0002",
+      "label": "Director's Cut",
+      "sizeBytes": 24000000000,
+      "available": false,
+      "fileName": "synthetic.directors.cut.2160p.mkv",
+      "durationMs": 6300000,
+      "sourceRevision": "e833a81e45623feec47016315972f3976ae4d7afead6345a69d10786293874f4",
+      "segment": null,
+      "container": "matroska,webm",
+      "video": [{ "index": 0, "codec": "hevc", "width": 3840, "height": 2160, "hdr": "hdr10", "default": true }],
+      "audio": [
+        { "index": 1, "codec": "truehd", "profile": "Dolby TrueHD + Dolby Atmos", "channels": 8, "language": "eng", "title": "Atmos", "default": true, "forced": false },
+        { "index": 2, "codec": "ac3", "profile": null, "channels": 6, "language": null, "title": null, "default": false, "forced": false }
+      ],
+      "subtitles": [{ "index": 3, "codec": "hdmv_pgs_subtitle", "kind": "image", "language": "eng", "title": null, "default": false, "forced": true, "hearingImpaired": false }]
+    }
+  ]
+}

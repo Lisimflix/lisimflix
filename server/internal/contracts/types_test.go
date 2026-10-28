@@ -163,6 +163,7 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 				Properties           map[string]json.RawMessage `json:"properties"`
 				Required             []string                   `json:"required"`
 				AdditionalProperties *bool                      `json:"additionalProperties"`
+				Enum                 []any                      `json:"enum"` // named string enums have no Go struct (see checkSchemaEnum)
 			} `json:"schemas"`
 		} `json:"components"`
 	}
@@ -176,7 +177,7 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		// CTR-2
 		"UserItemState": UserItemState{}, "Resume": Resume{}, "Watched": Watched{},
 		"ProgressEvent": ProgressEvent{}, "ProgressResult": ProgressResult{}, "WatchedRequest": WatchedRequest{},
-		"Library": Library{}, "LibraryList": LibraryList{}, "ContentRating": ContentRating{},
+		"Library": Library{}, "LibraryList": LibraryList{}, "LibraryScan": LibraryScan{}, "LibraryFacets": LibraryFacets{}, "YearRange": YearRange{}, "CommunityRating": CommunityRating{}, "ContentRating": ContentRating{},
 		"ItemSummary": ItemSummary{}, "ItemPage": ItemPage{}, "ExternalId": ExternalID{}, "ItemDetail": ItemDetail{},
 		"MediaVersion": MediaVersion{}, "Segment": Segment{},
 		"VideoStream": VideoStream{}, "AudioStream": AudioStream{}, "SubtitleStream": SubtitleStream{},
@@ -185,7 +186,10 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		"TextField": TextField{}, "IntegerField": IntegerField{}, "RatingField": RatingField{}, "TextListField": TextListField{},
 		"Provenance": Provenance{}, "MetadataExternalId": MetadataExternalID{},
 	}
-	for name := range doc.Components.Schemas {
+	for name, s := range doc.Components.Schemas {
+		if len(s.Enum) > 0 {
+			continue
+		}
 		if _, ok := types[name]; !ok {
 			t.Errorf("schema %s has no Go type in this test", name)
 		}

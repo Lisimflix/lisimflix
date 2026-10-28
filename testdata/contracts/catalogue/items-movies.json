@@ -9,6 +9,12 @@
       "sortTitle": "Synthetic Test Movie",
       "year": 2026,
       "index": null,
+      "addedAt": "2026-10-20T03:00:00Z",
+      "childCount": null,
+      "showTitle": null,
+      "seasonIndex": null,
+      "matched": null,
+      "available": true,
       "durationMs": 5400000,
       "contentRating": { "region": "AU", "value": "M" },
       "primaryImageUrl": "/api/v1/items/mov-synthetic-0001/images/primary",
@@ -28,7 +34,37 @@
         "lastPlayedAt": "2026-10-27T08:15:00Z",
         "hiddenFromContinueWatching": false
       }
+    },
+    {
+      "id": "mov-synthetic-0002",
+      "kind": "movie",
+      "libraryId": "lib-synthetic-movies",
+      "parentId": null,
+      "title": "Synthetic Unmatched Movie",
+      "sortTitle": "Synthetic Unmatched Movie",
+      "year": 2019,
+      "index": null,
+      "addedAt": "2026-10-25T21:30:00Z",
+      "childCount": null,
+      "showTitle": null,
+      "seasonIndex": null,
+      "matched": false,
+      "available": false,
+      "durationMs": null,
+      "contentRating": null,
+      "primaryImageUrl": null,
+      "backdropUrl": null,
+      "userState": {
+        "itemId": "mov-synthetic-0002",
+        "revision": 0,
+        "resume": null,
+        "watched": null,
+        "playCount": 0,
+        "lastPlayedAt": null,
+        "hiddenFromContinueWatching": false
+      }
     }
   ],
-  "nextCursor": "cur-synthetic-0002"
+  "nextCursor": "cur-synthetic-0002",
+  "total": 412
 }
