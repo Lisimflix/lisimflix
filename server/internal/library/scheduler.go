@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -163,7 +164,7 @@ func (s *Scheduler) reload(ctx context.Context, cause string) error {
 			continue
 		}
 		s.roots[r.ID] = &rootSched{Root: r, abs: filepath.Join(base, filepath.FromSlash(r.Path)), full: cause, due: now,
-			nextFull: now.Add(s.opt.FullScanEvery), watch: WatchOff, scopes: map[string]string{}}
+			nextFull: now.Add(s.stagger(r.ID)), watch: WatchOff, scopes: map[string]string{}}
 	}
 	for id := range s.roots {
 		if seen[id] {
@@ -294,15 +295,35 @@ func (s *Scheduler) Status(ctx context.Context) ([]RootStatus, error) {
 	return out, nil
 }
 
-// queueFull queues a whole-root scan, which replaces pending scoped ones.
+// queueFull queues a whole-root scan. An urgent one replaces pending scoped
+// scans; a scheduled or startup one leaves them to run first (#106).
 func (s *Scheduler) queueFull(rs *rootSched, cause string, due time.Time) {
-	if rs.full == "" || cause == CauseManual {
+	if rs.full == "" || cause == CauseManual || urgent(cause) && !urgent(rs.full) {
 		rs.full = cause
 	}
-	clear(rs.scopes)
+	if urgent(rs.full) {
+		clear(rs.scopes)
+	}
 	if rs.due.IsZero() || due.Before(rs.due) {
 		rs.due = due
 	}
+}
+
+// urgent reports whether a whole-root scan with this cause should run ahead
+// of scoped scans: everything except the periodic and startup reconciliation
+// scans, which may wait behind imports and watched changes (#106).
+func urgent(cause string) bool {
+	return cause != CauseSchedule && cause != CauseStartup
+}
+
+// stagger spreads roots' periodic scans over the interval, so they don't all
+// fall due together (#106): between half and one and a half intervals,
+// fixed per root.
+func (s *Scheduler) stagger(rootID string) time.Duration {
+	h := fnv.New64a()
+	h.Write([]byte(rootID))
+	every := s.opt.FullScanEvery
+	return every/2 + time.Duration(h.Sum64()%uint64(every))
 }
 
 func (s *Scheduler) hooks() watchHooks {
@@ -370,14 +391,18 @@ func (s *Scheduler) Hint(rootID, scope, cause string) error {
 // one adds nothing, pending scopes inside it are replaced, and too many
 // become one whole-root scan. A pending whole-root scan covers everything.
 func (s *Scheduler) queueScope(rs *rootSched, scope, cause string) {
-	if rs.full != "" {
-		return
+	if rs.full != "" && urgent(rs.full) {
+		return // an urgent whole-root scan is queued and covers it
 	}
 	now := s.now()
 	if rs.first.IsZero() {
 		rs.first = now
 	}
-	rs.due = minTime(now.Add(s.opt.Debounce), rs.first.Add(s.opt.MaxDelay))
+	due := minTime(now.Add(s.opt.Debounce), rs.first.Add(s.opt.MaxDelay))
+	if rs.full != "" && rs.due.Before(due) {
+		due = rs.due // a queued scheduled scan is due sooner: don't delay the root
+	}
+	rs.due = due
 	for p := range rs.scopes {
 		if within(scope, p) {
 			return
@@ -392,6 +417,15 @@ func (s *Scheduler) queueScope(rs *rootSched, scope, cause string) {
 		clear(rs.scopes)
 	}
 	wake(s.scanWake)
+}
+
+// priority orders due work: 0 for scoped scans and urgent whole-root scans,
+// 1 for a scheduled or startup whole-root scan with nothing else pending.
+func priority(rs *rootSched) int {
+	if len(rs.scopes) == 0 && rs.full != "" && !urgent(rs.full) {
+		return 1
+	}
+	return 0
 }
 
 // within reports whether p is q or inside it.
@@ -468,20 +502,30 @@ func (s *Scheduler) nextScan() (*job, time.Duration) {
 			}
 			continue
 		}
-		if best == nil || rs.due.Before(best.due) {
+		// Scoped scans and urgent whole-root scans first; scheduled and
+		// startup whole-root scans after them (#106). Then earliest due.
+		if best == nil || priority(rs) < priority(best) || priority(rs) == priority(best) && rs.due.Before(best.due) {
 			best = rs
 		}
 	}
 	if best == nil {
 		return nil, wait
 	}
-	j := &job{root: best.ID, full: best.full, scopes: slices.Sorted(maps.Keys(best.scopes)), causes: maps.Clone(best.scopes)}
-	if j.full != "" {
-		j.scopes = nil
+	var j *job
+	if len(best.scopes) > 0 && (best.full == "" || !urgent(best.full)) {
+		// The scoped scans alone; a scheduled whole-root scan stays queued.
+		j = &job{root: best.ID, scopes: slices.Sorted(maps.Keys(best.scopes)), causes: maps.Clone(best.scopes)}
+		clear(best.scopes)
+		best.first = time.Time{}
+		if best.full == "" {
+			best.due = time.Time{}
+		}
+	} else {
+		j = &job{root: best.ID, full: best.full}
 		best.nextFull = now.Add(s.opt.FullScanEvery)
+		best.full, best.first, best.due = "", time.Time{}, time.Time{}
+		clear(best.scopes)
 	}
-	best.full, best.first, best.due = "", time.Time{}, time.Time{}
-	clear(best.scopes)
 	s.scanning = j
 	return j, 0
 }
@@ -530,24 +574,30 @@ func (s *Scheduler) execute(ctx context.Context, j *job) {
 		}
 		s.logRun(j.root, run, time.Since(start))
 		s.after(ctx, j.root, run)
+		if run.Status == RunCancelled {
+			s.finishJob(j, scopes[i:])
+			return
+		}
 	}
 	s.finishJob(j, nil)
 }
 
-// finishJob clears the running job; paused work goes back on the queue.
+// finishJob clears the running job. Work that Pause stopped before it
+// finished (left) goes back on the queue; work that had already finished
+// when Pause arrived isn't repeated.
 func (s *Scheduler) finishJob(j *job, left []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.scanning = nil
 	rs := s.roots[j.root]
-	if rs == nil || !j.requeue {
+	if rs == nil || !j.requeue || len(left) == 0 {
 		return
 	}
 	if j.full != "" {
 		s.queueFull(rs, j.full, s.now())
 		return
 	}
-	if rs.full == "" {
+	if rs.full == "" || !urgent(rs.full) {
 		for _, p := range left {
 			rs.scopes[p] = j.causes[p]
 		}

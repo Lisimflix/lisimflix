@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/Lisimflix/lisimflix/server/internal/probe"
 	"os"
 	"path/filepath"
@@ -359,4 +360,119 @@ func TestSchedulerHint(t *testing.T) {
 	if n := f.runs(t, `cause = 'import'`); n != 1 {
 		t.Fatalf("%d import runs, want 1", n)
 	}
+}
+
+// #106: a scoped scan (an import or a watched change) runs before scheduled
+// whole-root scans of other roots, and a scope for a root whose only pending
+// work is a scheduled whole-root scan isn't folded into it.
+func TestScopedScansRunBeforeScheduledFullScans(t *testing.T) {
+	s, _ := newStore(t)
+	s.now = time.Now
+	m := newMedia(t)
+	for _, r := range []string{"A", "B", "C"} {
+		m.write("Movies"+r+"/X (2001)/X (2001).mkv", 10)
+	}
+	lib, err := s.CreateLibrary(context.Background(), "Movies", "movies", []string{"MoviesA", "MoviesB", "MoviesC"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, r := range lib.Roots {
+		ids[r.Path] = r.ID
+	}
+	opts := fastOpts
+	opts.NoWatch, opts.Debounce = true, time.Millisecond
+	sch := NewScheduler(m.scanner(s), &scriptedProber{}, nil, opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sch.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	runs := func(where string) int {
+		var n int
+		s.db.QueryRow(`SELECT COUNT(*) FROM library_scan_runs WHERE ` + where).Scan(&n)
+		return n
+	}
+	eventually(t, "startup scans", func() bool { return runs(`status = 'completed'`) == 3 })
+
+	sch.Pause()
+	eventually(t, "idle", func() bool { sch.mu.Lock(); defer sch.mu.Unlock(); return sch.scanning == nil })
+	sch.mu.Lock()
+	for _, rs := range sch.roots {
+		// Every root's scheduled scan is queued and due, as at the end of
+		// an interval.
+		sch.queueFull(rs, CauseSchedule, time.Now())
+		rs.nextFull = time.Now().Add(time.Hour)
+	}
+	sch.mu.Unlock()
+	if err := sch.Hint(ids["MoviesC"], "X (2001)", CauseImport); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond) // past the debounce: all four are due
+	sch.Resume()
+	eventually(t, "all scans", func() bool {
+		return runs(`cause IN ('import', 'schedule') AND status = 'completed'`) == 4
+	})
+	var first, firstCause string
+	s.db.QueryRow(`SELECT root_id, cause FROM library_scan_runs WHERE cause IN ('import', 'schedule') ORDER BY rowid LIMIT 1`).Scan(&first, &firstCause)
+	if first != ids["MoviesC"] || firstCause != CauseImport {
+		t.Fatalf("first scan after resume: root %s cause %s, want the import on MoviesC", first, firstCause)
+	}
+	if n := runs(`cause = 'schedule' AND scope IS NULL`); n != 3 {
+		t.Fatalf("%d scheduled whole-root scans, want 3 (the import didn't replace C's)", n)
+	}
+}
+
+// #106: roots added together don't all fall due for their periodic scan at
+// once; each first periodic scan is spread over half to one and a half
+// intervals.
+func TestPeriodicScansAreStaggered(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	var roots []string
+	for i := range 10 {
+		roots = append(roots, fmt.Sprintf("M%d", i))
+	}
+	if _, err := s.CreateLibrary(context.Background(), "Movies", "movies", roots); err != nil {
+		t.Fatal(err)
+	}
+	opts := fastOpts
+	opts.FullScanEvery = time.Hour
+	sch := NewScheduler(m.scanner(s), &scriptedProber{}, nil, opts)
+	start := time.Now()
+	if err := sch.reload(context.Background(), CauseStartup); err != nil {
+		t.Fatal(err)
+	}
+	seen := map[time.Duration]bool{}
+	for _, rs := range sch.roots {
+		d := rs.nextFull.Sub(start)
+		if d < 30*time.Minute || d > 91*time.Minute {
+			t.Fatalf("first periodic scan after %v, want between 30 and 90 minutes", d)
+		}
+		seen[d.Truncate(time.Second)] = true
+	}
+	if len(seen) < 8 {
+		t.Fatalf("only %d distinct first scan times for 10 roots", len(seen))
+	}
+}
+
+// #106: a hint for a root whose scheduled scan is already due doesn't push
+// the root back by the debounce; the root runs now, scoped scan first.
+func TestHintDoesNotDelayADueRoot(t *testing.T) {
+	opts := fastOpts
+	opts.NoWatch, opts.Debounce, opts.MaxDelay = true, time.Hour, time.Hour
+	f := startScheduler(t, "movies", opts, &scriptedProber{}, "A (2001)/A (2001).mkv")
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed'`) == 1 })
+	f.sch.Pause()
+	eventually(t, "idle", func() bool { f.sch.mu.Lock(); defer f.sch.mu.Unlock(); return f.sch.scanning == nil })
+	f.sch.mu.Lock()
+	f.sch.queueFull(f.sch.roots[f.root], CauseSchedule, time.Now())
+	f.sch.mu.Unlock()
+	if err := f.sch.Hint(f.root, "A (2001)", CauseImport); err != nil {
+		t.Fatal(err)
+	}
+	f.sch.Resume()
+	eventually(t, "import and scheduled scan run now", func() bool {
+		return f.runs(t, `cause = 'import' AND status = 'completed'`) == 1 &&
+			f.runs(t, `cause = 'schedule' AND status = 'completed'`) == 1
+	})
 }
