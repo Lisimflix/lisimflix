@@ -82,7 +82,9 @@ PR and turn it back on straight after.
 - You don't need to request anyone: `.github/CODEOWNERS` requests the `reviewers`
   team on every PR, and GitHub assigns one member, spreading reviews evenly. Set
   your GitHub status to Busy while you're away and you'll be skipped.
-- If the assigned reviewer hasn't responded within 24 hours, anyone else can review.
+- The assigned member is expected to review, but anyone on the team can review and
+  approve at any time. If the assigned reviewer hasn't responded within 24 hours,
+  someone else should pick it up.
 
 ## Working together
 
