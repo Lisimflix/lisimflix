@@ -5,8 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
+	"path"
 	"strconv"
+	"strings"
 
 	"github.com/Lisimflix/lisimflix/server/internal/library/naming"
 )
@@ -27,6 +31,7 @@ const (
 // Run is the outcome of one scan of one root.
 type Run struct {
 	ID, Status, Reason                                string
+	Scope, Cause                                      string // "." for the whole root
 	Seen, Added, Changed, Returned, Missing, Unplaced int
 }
 
@@ -42,24 +47,40 @@ type Scanner struct {
 // database's single writer for long (spec §10.2).
 const batchSize = 500
 
+// Scan causes, recorded on each run.
+const (
+	CauseStartup  = "startup"  // reconciliation after the server starts
+	CauseSchedule = "schedule" // the periodic full scan
+	CauseWatch    = "watch"    // a file watcher event
+	CauseRecheck  = "recheck"  // an offline or degraded root is reachable again
+	CauseManual   = "manual"   // Scan now
+	CauseAdded    = "added"    // a new library folder
+	CauseImport   = "import"   // a Sonarr/Radarr import notification (LIB-4)
+)
+
 // ScanRoot walks one root and brings its files, items and versions up to
-// date. Files that weren't found are marked missing only after a complete
-// walk of a reachable, non-empty root (spec §3.6, SCAN-01); a failed or
-// cancelled scan keeps the work it did and marks nothing missing. The error
-// is for database failures only; a failed scan is reported in Run.
-// Planned: LIB-2b (the watcher, schedule and Scan now call it).
+// date: Scan of the whole root, started by hand.
 func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
+	return sc.Scan(ctx, rootID, ".", CauseManual)
+}
+
+// Scan reconciles scope, a folder or file inside the root ("." for the whole
+// root). Files that weren't found are marked missing only after a complete
+// walk of a reachable, non-empty root, and only inside scope (spec §3.6,
+// SCAN-01); a failed or cancelled scan keeps the work it did and marks
+// nothing missing. A scope that no longer exists, inside a folder that does,
+// has its files marked missing without a walk. Only a
+// whole-root scan changes the root's state, except that an unreachable or
+// empty root is offline whatever the scope. The error is for database
+// failures and invalid scopes; a failed scan is reported in Run.
+func (sc *Scanner) Scan(ctx context.Context, rootID, scope, cause string) (Run, error) {
+	scope = path.Clean(scope)
+	if !fs.ValidPath(scope) || skippedPath(scope) {
+		return Run{}, fmt.Errorf("%w: scope %q", ErrInvalid, scope)
+	}
 	st := sc.Store
 	root, libType, err := st.root(ctx, rootID)
 	if err != nil {
-		return Run{}, err
-	}
-	run := Run{ID: newID("scan"), Status: RunRunning}
-	if _, err := st.db.ExecContext(ctx, `INSERT INTO library_scan_runs(id, root_id, started_at, status) VALUES(?, ?, ?, 'running')`,
-		run.ID, rootID, ms(st.now())); err != nil {
-		return Run{}, err
-	}
-	if err := st.setRoot(ctx, rootID, RootScanning, root.Reason, false); err != nil {
 		return Run{}, err
 	}
 	// The run's bookkeeping must be written even if ctx was cancelled.
@@ -75,68 +96,200 @@ func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
 			dir.Close()
 		}
 	}
+	var target fs.FileInfo
 	if err != nil {
-		return sc.finish(bg, root, run, RunFailed, ReasonRootUnavailable, RootOffline)
+		err = errRootGone
+	} else {
+		defer dir.Close()
+		scope, target, err = resolve(dir, scope)
 	}
-	defer dir.Close()
+	run, rerr := st.startRun(ctx, root, scope, cause)
+	if rerr != nil {
+		return Run{}, rerr
+	}
+	full := scope == "."
+	if err != nil {
+		if errors.Is(err, errRootGone) {
+			return sc.finish(bg, root, run, true, RunFailed, ReasonRootUnavailable, RootOffline)
+		}
+		return sc.finish(bg, root, run, full, RunFailed, ReasonEnumerationFailed, RootDegraded)
+	}
 
-	discover := sc.Discover
-	if discover == nil {
-		discover = Discover
-	}
 	var batch []File
 	flush := func() error {
 		err := st.applyBatch(bg, root, libType, run.ID, batch, &run)
 		batch = batch[:0]
 		return err
 	}
-	walkErr := discover(ctx, dir, func(f File) error {
+	add := func(f File) error {
 		if batch = append(batch, f); len(batch) == batchSize {
 			return flush()
 		}
 		return nil
-	})
+	}
+	var walkErr error
+	switch {
+	case target == nil:
+		// Gone: nothing to walk; its files are marked missing below.
+	case target.IsDir():
+		discover := sc.Discover
+		if discover == nil {
+			discover = Discover
+		}
+		sub := dir
+		if !full {
+			if sub, walkErr = dir.OpenRoot(scope); walkErr == nil {
+				defer sub.Close()
+			}
+		}
+		if walkErr == nil {
+			walkErr = discover(ctx, sub, func(f File) error {
+				if !full {
+					f.Path = scope + "/" + f.Path
+				}
+				return add(f)
+			})
+		}
+	case target.Mode().IsRegular() && isVideo(path.Base(scope)):
+		walkErr = add(File{Path: scope, Rev: RevisionOf(target)})
+	}
 	if err := flush(); err != nil {
 		return run, err
 	}
 	switch {
 	case ctx.Err() != nil:
-		return sc.finish(bg, root, run, RunCancelled, "", root.State)
+		return sc.finish(bg, root, run, full, RunCancelled, "", root.State)
 	case walkErr != nil:
-		return sc.finish(bg, root, run, RunFailed, ReasonEnumerationFailed, RootDegraded)
+		return sc.finish(bg, root, run, full, RunFailed, ReasonEnumerationFailed, RootDegraded)
 	}
 	if run.Seen == 0 {
-		var present int
-		if err := st.db.QueryRowContext(bg, `SELECT COUNT(*) FROM library_files WHERE root_id = ? AND state = 'present'`, rootID).Scan(&present); err != nil {
-			return run, err
+		// An empty folder where files were is far more likely an unmounted
+		// disk than a deleted library. Checked for scoped scans too: a
+		// scope can look empty only because its root is.
+		empty, err := rootEmpty(dir)
+		if err != nil {
+			return sc.finish(bg, root, run, full, RunFailed, ReasonEnumerationFailed, RootDegraded)
 		}
-		if present > 0 {
-			// An empty folder where files were is far more likely an unmounted
-			// disk than a deleted library.
-			return sc.finish(bg, root, run, RunFailed, ReasonRootEmpty, RootOffline)
+		if empty {
+			var present int
+			if err := st.db.QueryRowContext(bg, `SELECT COUNT(*) FROM library_files WHERE root_id = ? AND state = 'present'`, rootID).Scan(&present); err != nil {
+				return run, err
+			}
+			if present > 0 {
+				return sc.finish(bg, root, run, true, RunFailed, ReasonRootEmpty, RootOffline)
+			}
 		}
 	}
-	res, err := st.db.ExecContext(bg, `UPDATE library_files SET state = 'missing', missing_since = COALESCE(missing_since, ?)
-		WHERE root_id = ? AND state = 'present' AND last_seen_run IS NOT ?`, ms(st.now()), rootID, run.ID)
+	q := `UPDATE library_files SET state = 'missing', missing_since = COALESCE(missing_since, ?)
+		WHERE root_id = ? AND state = 'present' AND last_seen_run IS NOT ?`
+	args := []any{ms(st.now()), rootID, run.ID}
+	if !full {
+		// The scope itself, or anything under it ('0' sorts right after '/').
+		q += ` AND (path = ? OR (path >= ? AND path < ?))`
+		args = append(args, scope, scope+"/", scope+"0")
+	}
+	res, err := st.db.ExecContext(bg, q, args...)
 	if err != nil {
 		return run, err
 	}
 	n, _ := res.RowsAffected()
 	run.Missing = int(n)
-	if err := st.settle(bg, rootID); err != nil {
+	if err := st.settle(bg, rootID, full); err != nil {
 		return run, err
 	}
-	return sc.finish(bg, root, run, RunCompleted, "", RootAvailable)
+	return sc.finish(bg, root, run, full, RunCompleted, "", RootAvailable)
+}
+
+var errRootGone = errors.New("library: root unavailable")
+
+// resolve returns scope and its info if it exists. If it doesn't, it returns
+// the highest gone folder on scope's path whose parent does exist, with nil
+// info: everything under it is gone, and the existing parent proves the
+// root is still there. errRootGone means the root itself can't be read.
+func resolve(dir *os.Root, scope string) (string, fs.FileInfo, error) {
+	info, err := dir.Stat(scope)
+	switch {
+	case err == nil:
+		return scope, info, nil
+	case scope == ".":
+		return scope, nil, errRootGone
+	case !errors.Is(err, fs.ErrNotExist):
+		return scope, nil, err
+	}
+	gone := scope
+	for p := path.Dir(scope); ; p = path.Dir(p) {
+		_, err := dir.Stat(p)
+		switch {
+		case err == nil:
+			return gone, nil, nil
+		case p == ".":
+			return p, nil, errRootGone
+		case !errors.Is(err, fs.ErrNotExist):
+			return p, nil, err
+		}
+		gone = p
+	}
+}
+
+// rootEmpty reports whether the root folder has no entries at all.
+func rootEmpty(dir *os.Root) (bool, error) {
+	f, err := dir.Open(".")
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+	names, err := f.Readdirnames(1)
+	if errors.Is(err, io.EOF) {
+		return true, nil
+	}
+	return len(names) == 0, err
+}
+
+// skippedPath reports whether Discover would never reach p: one of its
+// folders is skipped (hidden, recycle bins, samples).
+func skippedPath(p string) bool {
+	if p == "." {
+		return false
+	}
+	parts := strings.Split(p, "/")
+	for _, d := range parts[:len(parts)-1] {
+		if skipDir(d) {
+			return true
+		}
+	}
+	return strings.HasPrefix(parts[len(parts)-1], ".")
+}
+
+// startRun records a running scan. A whole-root scan marks the root scanning.
+func (s *Store) startRun(ctx context.Context, root Root, scope, cause string) (Run, error) {
+	run := Run{ID: newID("scan"), Status: RunRunning, Scope: scope, Cause: cause}
+	var sc any
+	if scope != "." {
+		sc = scope
+	}
+	if _, err := s.db.ExecContext(ctx, `INSERT INTO library_scan_runs(id, root_id, started_at, status, scope, cause) VALUES(?, ?, ?, 'running', ?, ?)`,
+		run.ID, root.ID, ms(s.now()), sc, cause); err != nil {
+		return Run{}, err
+	}
+	if scope == "." {
+		return run, s.setRoot(ctx, root.ID, RootScanning, root.Reason, false)
+	}
+	return run, nil
 }
 
 // finish records the run's outcome and the root's resulting state.
-func (sc *Scanner) finish(ctx context.Context, root Root, run Run, status, reason, rootState string) (Run, error) {
+// The root's state is set only when setRoot is true: whole-root scans, and
+// any scan that found the root unreachable or empty.
+func (sc *Scanner) finish(ctx context.Context, root Root, run Run, setRoot bool, status, reason, rootState string) (Run, error) {
 	run.Status, run.Reason = status, reason
 	_, err := sc.Store.db.ExecContext(ctx, `UPDATE library_scan_runs SET status = ?, reason = NULLIF(?, ''), finished_at = ?,
 		seen = ?, added = ?, changed = ?, returned = ?, missing = ?, unplaced = ? WHERE id = ?`,
 		status, reason, ms(sc.Store.now()), run.Seen, run.Added, run.Changed, run.Returned, run.Missing, run.Unplaced, run.ID)
 	if err != nil {
 		return run, err
+	}
+	if !setRoot {
+		return run, nil
 	}
 	if status == RunCancelled {
 		reason = root.Reason
