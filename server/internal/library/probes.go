@@ -25,9 +25,9 @@ const maxProbeError = 500
 // ProbeDue probes the root's present files whose probe doesn't match their
 // current revision, using LIB-1's queue with workers at a time. Unchanged
 // files are never probed again (SCALE-01). A result is saved only if the
-// file still has the revision it describes (compare-and-set on size and
-// mtime). A file that is still changing gets a not-before time instead of
-// being re-queued at once (#62).
+// catalogue holds the revision it describes, or an older one (compare-and-set
+// on size and mtime; see resultFits). A file that is still changing gets a not-before time instead of
+// being re-queued at once (#62). workers <= 0 means DefaultWorkers.
 // Planned: LIB-2b (the scan loop runs it after each scan and on its schedule).
 func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, workers int, quiet time.Duration) (ProbeRun, error) {
 	st := sc.Store
@@ -47,6 +47,9 @@ func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, worker
 	}
 	defer dir.Close()
 
+	if workers <= 0 {
+		workers = DefaultWorkers
+	}
 	run := ProbeRun{Queued: len(paths)}
 	var mu sync.Mutex
 	var firstErr error
@@ -73,6 +76,12 @@ func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, worker
 	return run, firstErr
 }
 
+// record saves one probe outcome. A result is for the catalogue's revision,
+// or for a newer one (a file changed since the last scan and quiet now), which
+// it records with the result so the file isn't probed again before the next
+// scan (#109). A result older than the catalogue's revision is stale.
+const resultFits = `root_id = ? AND path = ? AND ((size = ? AND mtime_ns = ?) OR mtime_ns < ?)`
+
 // record saves one probe outcome.
 func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time.Duration, run *ProbeRun) error {
 	switch {
@@ -81,9 +90,9 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		if err != nil {
 			return err
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
-			probe_error = NULL, probe_after = NULL WHERE root_id = ? AND path = ? AND size = ? AND mtime_ns = ?`,
-			o.Rev.Size, o.Rev.ModTime, string(js), rootID, o.Path, o.Rev.Size, o.Rev.ModTime)
+		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
+			probe_error = NULL, probe_after = NULL WHERE `+resultFits,
+			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, string(js), rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
 		if err != nil {
 			return err
 		}
@@ -109,9 +118,9 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		if len(msg) > maxProbeError {
 			msg = msg[:maxProbeError]
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
-			probe_error = ?, probe_after = NULL WHERE root_id = ? AND path = ? AND size = ? AND mtime_ns = ?`,
-			o.Rev.Size, o.Rev.ModTime, msg, rootID, o.Path, o.Rev.Size, o.Rev.ModTime)
+		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
+			probe_error = ?, probe_after = NULL WHERE `+resultFits,
+			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg, rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
 		if err != nil {
 			return err
 		}

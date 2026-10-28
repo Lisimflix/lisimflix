@@ -191,3 +191,32 @@ func TestDeferredRevisionNeverMovesBackwards(t *testing.T) {
 		t.Fatalf("mtime_ns %d: the deferred outcome overwrote the newer revision", mtime)
 	}
 }
+
+// #109 point 2: a file that changed after the last scan and is quiet now is
+// probed once, not on every ProbeDue turn until the next scan. Its newer
+// revision is recorded with the result.
+func TestFileChangedSinceTheScanIsProbedOnce(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
+	m.write("Movies/A (2001)/A (2001).mkv", 99) // changed, and quiet (an hour old), with no scan since
+	p := &scriptedProber{}
+	if run := probeDue(t, sc, root, p); run.Stored != 1 || run.Stale != 0 {
+		t.Fatalf("first %+v", run)
+	}
+	if run := probeDue(t, sc, root, p); run.Queued != 0 || len(p.calls) != 1 {
+		t.Fatalf("probed again before a scan: %+v %v", run, p.calls)
+	}
+	var size int64
+	s.db.QueryRow(`SELECT size FROM library_files`).Scan(&size)
+	if size != 99 {
+		t.Fatalf("catalogue size %d, want the probed revision's 99", size)
+	}
+}
+
+// #109 point 3: workers <= 0 means the default, not "probe nothing".
+func TestProbeDueWithoutWorkersUsesTheDefault(t *testing.T) {
+	_, _, _, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
+	run, err := sc.ProbeDue(context.Background(), root, &scriptedProber{}, 0, quiet)
+	if err != nil || run.Stored != 1 {
+		t.Fatalf("%+v %v", run, err)
+	}
+}

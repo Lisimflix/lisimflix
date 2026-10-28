@@ -22,6 +22,7 @@ const (
 	ReasonRootUnavailable   = "root_unavailable"   // the folder can't be opened
 	ReasonRootEmpty         = "root_empty"         // empty, while the catalogue has files there
 	ReasonEnumerationFailed = "enumeration_failed" // the walk stopped part-way
+	ReasonDatabaseError     = "database_error"     // the catalogue couldn't be written
 )
 
 // Run is the outcome of one scan of one root.
@@ -46,7 +47,12 @@ const batchSize = 500
 // date. Files that weren't found are marked missing only after a complete
 // walk of a reachable, non-empty root (spec §3.6, SCAN-01); a failed or
 // cancelled scan keeps the work it did and marks nothing missing. The error
-// is for database failures only; a failed scan is reported in Run.
+// is for database failures only, which also end the run as failed with
+// ReasonDatabaseError; any other failed scan is reported in Run alone.
+//
+// The caller runs at most one scan of a root at a time: two overlapping scans
+// could each mark missing the files the other saw last (#108). LIB-2b's
+// scheduler runs one scan at a time.
 // Planned: LIB-2b (the watcher, schedule and Scan now call it).
 func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
 	st := sc.Store
@@ -59,11 +65,17 @@ func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
 		run.ID, rootID, ms(st.now())); err != nil {
 		return Run{}, err
 	}
-	if err := st.setRoot(ctx, rootID, RootScanning, root.Reason, false); err != nil {
-		return Run{}, err
-	}
 	// The run's bookkeeping must be written even if ctx was cancelled.
 	bg := context.WithoutCancel(ctx)
+	// From here on a database error ends the run as failed, best effort,
+	// instead of leaving it running until the next restart (#108).
+	dbFailed := func(err error) (Run, error) {
+		run, _ = sc.finish(bg, root, run, RunFailed, ReasonDatabaseError, RootDegraded)
+		return run, err
+	}
+	if err := st.setRoot(ctx, rootID, RootScanning, root.Reason, false); err != nil {
+		return dbFailed(err)
+	}
 
 	dir, err := sc.Media.OpenRoot(root.Path)
 	if err == nil {
@@ -90,14 +102,21 @@ func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
 		batch = batch[:0]
 		return err
 	}
+	// A flush error stops the walk too; it is kept apart so it isn't
+	// reported as a walk failure.
+	var flushErr error
 	walkErr := discover(ctx, dir, func(f File) error {
 		if batch = append(batch, f); len(batch) == batchSize {
-			return flush()
+			flushErr = flush()
+			return flushErr
 		}
 		return nil
 	})
-	if err := flush(); err != nil {
-		return run, err
+	if flushErr == nil {
+		flushErr = flush()
+	}
+	if flushErr != nil {
+		return dbFailed(flushErr)
 	}
 	switch {
 	case ctx.Err() != nil:
@@ -108,7 +127,7 @@ func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
 	if run.Seen == 0 {
 		var present int
 		if err := st.db.QueryRowContext(bg, `SELECT COUNT(*) FROM library_files WHERE root_id = ? AND state = 'present'`, rootID).Scan(&present); err != nil {
-			return run, err
+			return dbFailed(err)
 		}
 		if present > 0 {
 			// An empty folder where files were is far more likely an unmounted
@@ -116,15 +135,17 @@ func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
 			return sc.finish(bg, root, run, RunFailed, ReasonRootEmpty, RootOffline)
 		}
 	}
+	// One statement, by index, not batched by 500 files: an exception to
+	// spec §10.2's bound, to measure in LIB-2c's scale run (#110).
 	res, err := st.db.ExecContext(bg, `UPDATE library_files SET state = 'missing', missing_since = COALESCE(missing_since, ?)
 		WHERE root_id = ? AND state = 'present' AND last_seen_run IS NOT ?`, ms(st.now()), rootID, run.ID)
 	if err != nil {
-		return run, err
+		return dbFailed(err)
 	}
 	n, _ := res.RowsAffected()
 	run.Missing = int(n)
 	if err := st.settle(bg, rootID); err != nil {
-		return run, err
+		return dbFailed(err)
 	}
 	return sc.finish(bg, root, run, RunCompleted, "", RootAvailable)
 }
@@ -158,10 +179,24 @@ func (s *Store) setRoot(ctx context.Context, id, state, reason string, ok bool) 
 // applyBatch records one batch of discovered files in a single transaction:
 // new files are added and placed, changed revisions replace the old ones
 // (making the probe stale), and missing files that are back become present.
+// The batch's counts are added to run only once it has committed (#108).
 func (s *Store) applyBatch(ctx context.Context, root Root, libType, runID string, files []File, run *Run) error {
 	if len(files) == 0 {
 		return nil
 	}
+	var n Run
+	if err := s.applyFiles(ctx, root, libType, runID, files, &n); err != nil {
+		return err
+	}
+	run.Seen += n.Seen
+	run.Added += n.Added
+	run.Changed += n.Changed
+	run.Returned += n.Returned
+	run.Unplaced += n.Unplaced
+	return nil
+}
+
+func (s *Store) applyFiles(ctx context.Context, root Root, libType, runID string, files []File, run *Run) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
