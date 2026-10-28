@@ -14,15 +14,15 @@ func TestNormalize(t *testing.T) {
 		"WALL·E":                 "wall e",
 		"Straße":                 "strasse",
 		"進撃の巨人":                  "進撃の巨人",  // other scripts compare as written
-		"Amélie":                "amelie", // a decomposed Latin accent (macOS NFD names)
+		"Ame\u0301lie":           "amelie", // a decomposed Latin accent (macOS NFD names)
 		// #121 review: marks in other scripts are part of the word, not
 		// accents to drop: Devanagari virama U+094D and vowel sign U+093F,
 		// Thai U+0E34 and U+0E4C, Hebrew U+05B8, Japanese voiced mark U+3099.
-		"हिन्दी":     "हिन्दी",
-		"ภาพยนตร์":   "ภาพยนตร์",
-		"שָׁלוֹם":    "שָׁלוֹם",
-		"ガ":         "ガ", // ガ as written by macOS (NFD)
-		"かぐや様は告らせたい": "かぐや様は告らせたい",
+		"हिन्दी":       "हिन्दी",
+		"ภาพยนตร์":     "ภาพยนตร์",
+		"שָׁלוֹם":      "שָׁלוֹם",
+		"\u30AB\u3099": "\u30AB\u3099", // katakana ga as written by macOS (NFD)
+		"かぐや様は告らせたい":   "かぐや様は告らせたい",
 	} {
 		if got := Normalize(in); got != want {
 			t.Errorf("Normalize(%q) = %q, want %q", in, got, want)

@@ -9,8 +9,6 @@ import (
 // Auto-match thresholds. A search result is applied without review only when
 // the best candidate scores at least AutoScore and leads the next by at least
 // AutoMargin. reviewKeep is how many candidates are stored for review.
-//
-// Planned: META-1a (the matcher uses these in Task 4).
 const (
 	AutoScore   = 0.85
 	AutoMargin  = 0.10
