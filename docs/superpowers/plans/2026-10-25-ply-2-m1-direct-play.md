@@ -12,6 +12,7 @@
 
 - M1: complete 1080p SDR H.264 MP4, original encoded video/audio; source mounted read-only.
 - Targets: Chrome/Firefox on Linux, Windows and macOS; the real six-target proof belongs to integration.
+- M1 targets are now in spec §9.3 (four, #38).
 - Local HTTP supports real authentication; a signed URL alone is insufficient authority.
 - Claim this feature slice and `server/internal/playback/**`; no manifest, auth, UI or root wiring edits.
 - Start/module dependency: CTR-1 only. Integration needs runtime authentication and the real player, not a completed application skeleton.

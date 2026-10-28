@@ -1154,6 +1154,8 @@ part of fixture qualification, not permission to convert an incompatible track.
 MKV/remux, HDR and other containers/formats are outside M1. HDR is later expansion.
 Chrome and Firefox on Windows are not M1 targets for this proof of concept; they are
 required in a later milestone (decided by Pete and Lammy, 2026-10-27; #19).
+Windows is expected to work but is unproven until its own runs: Firefox there decodes
+H.264 through Media Foundation, a different path from Linux and macOS.
 
 | ID | Pass criterion | Required evidence |
 |---|---|---|
