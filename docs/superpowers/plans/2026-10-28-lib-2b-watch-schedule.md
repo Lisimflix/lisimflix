@@ -29,7 +29,7 @@
 | Acceptance | **SCAN-01** with the scheduler: an offline root is retried only once it can be read, then reconciled; nothing goes missing meanwhile; a dropped watch (unmount) is noticed and re-armed; interrupted runs are recovered at startup. **§3.6**: watched changes found by scoped scans; hints coalesce; a busy folder is still scanned; Scan now, Cancel, Pause/Resume; status with queued, scanning, probing, waiting-for-source and failed states. **SCALE-01** (module part): scans and probe turns are logged with counters and durations; run history is bounded. Actual scale is 2c |
 | File scope | **New:** `server/internal/library/{watch,scheduler,status}.go` + tests, `server/internal/library/scope_test.go`, `server/internal/library/migrations/20261028120000_library_scan_scope.sql`, `server/cmd/lisimflix/library.go` + test. **Changed:** `server/internal/library/{scan,duplicates,probes,retire,store}.go` (2a code, listed in Decision 8), `server/cmd/lisimflix/{main,serve,main_test}.go`, `server/go.mod`, `server/go.sum`, `README.md`, `deploy/README.md`. No contract, OpenAPI or CI change |
 | Consumes | 2a: `Store`, `NewStore`, `Migrations`, `Scanner{Store, Media, Discover}`, `ScanRoot`, `ProbeDue`, `MarkInterrupted`, `CreateLibrary`, `Library`, the run/root constants and the `settle`/`finish`/`applyBatch` internals. LIB-1: `Discover`, `skipDir`, `isVideo`, `Prober`, `DefaultQuiet`, `DefaultWorkers`, `probe.Runner`, and the image's `/usr/lib/jellyfin-ffmpeg/ffprobe`. OPS-2: `storage.Source`, `MigrateWithBackup`. OPS-5: the JSON logger |
-| Produces | `Scanner.Scan`, `Cause*` constants, `Run.Scope`/`Run.Cause`; `ProbeDue`'s `limit`; `Store.Libraries`; `Scheduler`, `NewScheduler`, `SchedulerOptions`, `Run`, `Reload`, `ScanNow`, `Cancel`, `Pause`, `Resume`, `Status`; `RootStatus`, `RunInfo`, `FileCounts`, `Activity*`, `Watch*`; the `lisimflix library add|list` command; log events `library.scan`, `library.probe`, `library.watch`, `library.recover` |
+| Produces | `Scanner.Scan`, `Cause*` constants, `Run.Scope`/`Run.Cause`; `ProbeDue`'s `limit`; `Store.Libraries`; `Scheduler`, `NewScheduler`, `SchedulerOptions`, `Run`, `Reload`, `ScanNow`, `Cancel`, `Pause`, `Resume`, `Status`, `Hint` (for LIB-4); `RootStatus`, `RunInfo`, `FileCounts`, `Activity*`, `Watch*`; the `lisimflix library add|list` command; log events `library.scan`, `library.probe`, `library.watch`, `library.recover` |
 | Start dependency | **LIB-1 code (#92) and LIB-2a code merged.** Every task builds on both. The 2a plan (#90) must be approved first; 2a's code PR follows it |
 | Standalone test | `go -C server test -race -count=1 ./internal/library/... ./cmd/...`, then `make check` |
 | Module proof | Temporary SQLite and media trees, a real inotify watcher on them, scripted probers. Mutation-checked (see Self-review) |
@@ -55,7 +55,7 @@
    - A scope that exists is walked (a folder) or recorded (a video file). A scope that's gone, inside a folder that exists, has its files marked missing **without a walk**: the existing parent proves the root is still there. If the parent is gone too, the highest gone folder is the scope. So renaming a top-level folder never walks the whole root.
    - The root-empty check (SCAN-01) runs for scoped scans too: an empty root is offline whatever the scope.
    - **Only whole-root scans** change the root's state and `last_ok_at`, count towards retirement (`scope IS NULL`), and **flag** duplicate pairs. A scoped scan only **folds** a pair whose old item has no present file: after the first scoped scan of a renamed folder, the old folder may simply not have been rescanned yet. A live pair stays pending until the next whole-root scan (6 h at most). The prototype found this: without it, every rename seen by the watcher was flagged as two folders.
-   - LIB-4's import notifications will queue scopes through the same path.
+   - LIB-4's import notifications (#98) queue scopes through the same path: `Scheduler.Hint(rootID, scope, cause)` with cause `import`, so a notification and a watcher event for the same folder coalesce into one scan.
 2. **Two lanes, one scan at a time.**
    - Scans of one root must never overlap: a whole-root scan marks every file it didn't see missing, so a concurrent scoped run that touched a file would make it look unseen. The simplest safe rule is one scan at a time across all roots; the database has one writer anyway.
    - Probes run in their own lane, one `ProbeDue` turn at a time with LIB-1's 2 workers (spec §11.2), so a long probe backlog never delays a scan. 2a's compare-and-set makes probes safe alongside scans.
@@ -95,7 +95,7 @@
     | `library.watch` | WARN | `root_id`, `state` (`off`, `limited`, `overflow`, `error`), `reason`/`err` | A watch is lost or limited, events overflowed, or the watcher failed |
     | `library.recover` | INFO | `interrupted_runs` | Startup ended runs a crash left running |
 
-13. **Not in this slice:** HTTP endpoints and admin screens, retirement and duplicate decisions in a UI (2c); PERF-05/SCALE-02 measurement (2c); Sonarr/Radarr hints (LIB-4); playback-aware throttling of probes (probes stay at 2 workers; revisit with OPS-3 if G0 measurements show contention); NFO files (META-1).
+13. **Not in this slice:** HTTP endpoints and admin screens, retirement and duplicate decisions in a UI (2c); PERF-05/SCALE-02 measurement (2c); the Sonarr/Radarr endpoint (LIB-4; this slice only adds `Hint` and the `import` cause for it); playback-aware throttling of probes (probes stay at 2 workers; revisit with OPS-3 if G0 measurements show contention); NFO files (META-1).
 
 ## Review Focus
 
@@ -146,7 +146,7 @@ README.md, deploy/README.md
 
 **Interfaces:**
 - Consumes: 2a's `Scanner`, `Store.root`, `applyBatch`, `settle`, `finish`, `setRoot`, `ErrInvalid`; LIB-1's `Discover`, `skipDir`, `isVideo`, `RevisionOf`. Test helpers `newStore`, `newMedia`, `media.write`, `media.scanner`, `scan`, `setupMovies`, `rootState`, `Store.fileStates` (2a).
-- Produces: `func (sc *Scanner) Scan(ctx context.Context, rootID, scope, cause string) (Run, error)`; `Run.Scope`, `Run.Cause` (`"."` for the whole root); `CauseStartup`, `CauseSchedule`, `CauseWatch`, `CauseRecheck`, `CauseManual`, `CauseAdded`; `func skippedPath(p string) bool`; `func rootEmpty(dir *os.Root) (bool, error)`. Test helpers `scanScope(t, sc, rootID, scope) Run`, `setupTV(t, files...)`.
+- Produces: `func (sc *Scanner) Scan(ctx context.Context, rootID, scope, cause string) (Run, error)`; `Run.Scope`, `Run.Cause` (`"."` for the whole root); `CauseStartup`, `CauseSchedule`, `CauseWatch`, `CauseRecheck`, `CauseManual`, `CauseAdded`, `CauseImport` (LIB-4); `func skippedPath(p string) bool`; `func rootEmpty(dir *os.Root) (bool, error)`. Test helpers `scanScope(t, sc, rootID, scope) Run`, `setupTV(t, files...)`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -381,7 +381,7 @@ Expected: FAIL to build: `sc.Scan undefined`, `undefined: CauseWatch`, `run.Scop
 -- cause says what started the run, for the status view and logs.
 ALTER TABLE library_scan_runs ADD COLUMN scope TEXT;
 ALTER TABLE library_scan_runs ADD COLUMN cause TEXT NOT NULL DEFAULT 'manual'
-    CHECK (cause IN ('startup', 'schedule', 'watch', 'recheck', 'manual', 'added'));
+    CHECK (cause IN ('startup', 'schedule', 'watch', 'recheck', 'manual', 'added', 'import'));
 ```
 
 - [ ] **Step 4: Implement `Scan` in `scan.go`**
@@ -751,7 +751,7 @@ git commit -m "feat(library): inotify watcher for library folders (LIB-2b)"
 - Produces:
   - `type SchedulerOptions struct { FullScanEvery, Debounce, MaxDelay, Recheck, Quiet time.Duration; Workers, ProbeBatch, MaxScopes int; NoWatch bool }` with the Decision 6 defaults for zero values.
   - `func NewScheduler(sc *Scanner, p Prober, log *slog.Logger, opt SchedulerOptions) *Scheduler` (nil log discards).
-  - `func (s *Scheduler) Run(ctx context.Context) error`, `Reload(ctx) error`, `ScanNow(libraryID string) error`, `Cancel(libraryID string) error` (both `ErrNotFound` for an unknown library), `Pause()`, `Resume()`, `Status(ctx) ([]RootStatus, error)`.
+  - `func (s *Scheduler) Run(ctx context.Context) error`, `Reload(ctx) error`, `ScanNow(libraryID string) error`, `Cancel(libraryID string) error` (both `ErrNotFound` for an unknown library), `Pause()`, `Resume()`, `Status(ctx) ([]RootStatus, error)`, and `Hint(rootID, scope, cause string) error` (`ErrNotFound` for an unknown root, `ErrInvalid` for a scope `Scan` would refuse).
   - Unexported, used by tests: `hooks() watchHooks`, `mu`, `w`, `probing`.
   - `func (sc *Scanner) reachable(rootPath string) bool`: the root opens and isn't empty.
 
@@ -1094,6 +1094,34 @@ func TestSchedulerWatchLimitIsReported(t *testing.T) {
 		t.Fatalf("%d recheck scans for a limited watch", n)
 	}
 }
+
+// Hint queues a scoped scan with the caller's cause, through the same
+// coalescing queue as watcher events (LIB-4's import notifications).
+func TestSchedulerHint(t *testing.T) {
+	opts := fastOpts
+	opts.NoWatch = true
+	f := startScheduler(t, "movies", opts, &scriptedProber{}, "A (2001)/A (2001).mkv")
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed'`) == 1 })
+	if err := f.sch.Hint("root-nope", "A (2001)", CauseImport); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown root: %v", err)
+	}
+	for _, bad := range []string{"../x", "/abs", ".grab/x.mkv"} {
+		if err := f.sch.Hint(f.root, bad, CauseImport); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("scope %q: %v", bad, err)
+		}
+	}
+	f.m.write("Movies/B (2002)/B (2002).mkv", 10)
+	if err := f.sch.Hint(f.root, "B (2002)/B (2002).mkv", CauseImport); err != nil {
+		t.Fatal(err)
+	}
+	f.sch.Hint(f.root, "B (2002)", CauseImport) // the folder replaces the file
+	eventually(t, "import scan", func() bool {
+		return f.runs(t, `cause = 'import' AND scope = 'B (2002)' AND status = 'completed'`) == 1
+	})
+	if n := f.runs(t, `cause = 'import'`); n != 1 {
+		t.Fatalf("%d import runs, want 1", n)
+	}
+}
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -1125,6 +1153,7 @@ State, under one mutex: per root a `rootSched` (the `Root`, its absolute folder,
   2. Roots whose watch is `on` but missing from `watching()` become `off`.
   3. For each root with nothing pending or running: if it's `offline`, queue a `CauseRecheck` scan only if `reachable`. If there's a watcher and its watch is `off`, queue one either way.
 - **Probe loop:** `nextProbe` round-robins over root IDs from the one after the last turn. A root whose `probeAt` has passed becomes `probe = true`, and an offline root is skipped. A turn runs `ProbeDue(…, Workers, Quiet, ProbeBatch)` and logs `library.probe` when `Queued > 0`. After the turn, `probe` stays true when the batch was full (or the turn was paused). `probeAt` is set from `nextProbeAt`, so files deferred by the quiet period are retried when due, not polled. The loop sleeps until a wake or the earliest `probeAt`.
+- **`Hint`:** clean and check the scope as `Scan` does, then queue it exactly as a watcher hint, but with the caller's cause. Pending scopes are a map scope → cause, the job carries each scope's cause, and too many scopes become a whole-root scan with that cause. Tag it `// Planned: LIB-4 (the Sonarr/Radarr webhook queues imported paths).`
 - **`ScanNow`:** a `CauseManual` whole-root scan, due now, of each of the library's roots.
 - **`Cancel`:** clear the library's pending work and probe flags, and cancel its running jobs (no requeue).
 - **`Pause`:** set paused, mark running jobs `requeue`, cancel them. **`Resume`:** unpause and wake both lanes.
@@ -1372,7 +1401,7 @@ Post the log lines and `library list` output on #77 as LIB-2 "integrated" (modul
 - **Prototype:** all of it ran on the LIB-2a prototype (LIB-1's plan code plus 2a). `make check` passed. The library and command tests passed 5 times in a row under `-race`.
 - **Rebuild:** each task was rebuilt in order on the 2a prototype. Each failed with its Step 2 messages before its implementation and passed after, and the result is identical to the prototype.
 - **Integration:** Task 6 was run on a prototype image (LIB-1's Dockerfile with ffprobe; read-only, non-root) on zraid. Every row of its table matched: new libraries scanned within the minute; the corrupt file listed as a probe failure; a copied episode scanned about 10 s later and probed after the quiet period; a deleted season marked missing by a scoped scan; an unplugged root gave one failed run in 70 s and was reconciled when it came back; shutdown took 11 ms.
-- **Mutation check:** each of these 23 made a test fail:
+- **Mutation check:** each of these 25 made a test fail:
   - scoped missing-marking not limited to the scope
   - retirement counting scoped runs
   - scoped scans flagging live duplicate pairs
@@ -1396,6 +1425,8 @@ Post the log lines and `library list` output on #77 as LIB-2 "integrated" (modul
   - no periodic scan
   - no `MaxDelay` for a busy folder
   - a watch-limit report not kept
+  - `Hint` not validating its scope
+  - `Hint` dropping its cause (both added for LIB-4)
 - **Found while prototyping:**
   - fsnotify drops a watch on unmount with no event (Decision 4).
   - The first scoped scan of a renamed folder flagged it as a duplicate (Decision 1).
