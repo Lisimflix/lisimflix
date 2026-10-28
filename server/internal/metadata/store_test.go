@@ -180,3 +180,25 @@ func TestEditClearsParsedFields(t *testing.T) {
 		t.Fatalf("Get after clear %+v", got)
 	}
 }
+
+// Fix-match takes only a well-formed ID in a provider namespace: not "user"
+// or "nfo" (provenance, not namespaces), not an unknown namespace, and not a
+// value its namespace can't hold.
+func TestFixMatchValidatesTheID(t *testing.T) {
+	e := newEnv(t)
+	e.write("Movies/Dune/Dune.mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Dune")
+	ctx := context.Background()
+	for _, c := range [][2]string{{"user", "1"}, {"nfo", "1"}, {"mystery", "1"}, {"tmdb", "abc"}, {"tmdb", "0841"},
+		{"imdb", "841"}, {"imdb", "tt12"}} {
+		if _, err := e.st.FixMatch(ctx, id, 1, c[0], c[1]); !errors.Is(err, ErrInvalid) {
+			t.Errorf("FixMatch(%s, %s) = %v, want ErrInvalid", c[0], c[1], err)
+		}
+	}
+	for _, c := range [][2]string{{"tmdb", "841"}, {"imdb", "tt0087182"}, {"tvdb", "81189"}} {
+		if _, err := e.st.FixMatch(ctx, id, e.get(id).Revision, c[0], c[1]); err != nil {
+			t.Errorf("FixMatch(%s, %s) = %v", c[0], c[1], err)
+		}
+	}
+}

@@ -66,13 +66,9 @@ const (
 	maxGenres   = 20
 	maxGenre    = 64
 	maxErrorLen = 500
-	maxIDLen    = 64
 )
 
-var (
-	nsRe     = regexp.MustCompile(`^[a-z][a-z0-9]{1,31}$`)
-	regionRe = regexp.MustCompile(`^[A-Z]{2}$`)
-)
+var regionRe = regexp.MustCompile(`^[A-Z]{2}$`)
 
 // Store keeps matched metadata in the shared database. It reads the
 // catalogue's tables but never writes them.
@@ -426,11 +422,14 @@ func (s *Store) Edit(ctx context.Context, itemID string, expectedRevision int64,
 // go, review candidates are cleared, and the item is queued now (Decision 9).
 // Planned: META-1c (the metadata HTTP API fix-match operation).
 func (s *Store) FixMatch(ctx context.Context, itemID string, expectedRevision int64, namespace, id string) (contracts.ItemMetadata, error) {
-	if !nsRe.MatchString(namespace) {
+	// Only provider namespaces with a known ID format: "user" and "nfo" are
+	// provenance, not namespaces.
+	re, ok := idPatterns[namespace]
+	if !ok {
 		return contracts.ItemMetadata{}, invalid("namespace %q", namespace)
 	}
-	if len(id) < 1 || len(id) > maxIDLen {
-		return contracts.ItemMetadata{}, invalid("id must be 1-%d bytes", maxIDLen)
+	if !re.MatchString(id) {
+		return contracts.ItemMetadata{}, invalid("%q isn't a %s ID", id, namespace)
 	}
 	now := ms(s.now())
 	tx, err := s.db.BeginTx(ctx, nil)
