@@ -72,9 +72,9 @@ func TestSweepCutsAnExpiredSessionsStream(t *testing.T) {
 	h := newHarnessWith(t, false, func(id string) { pb.RevokeAuthSession(id) }, func(mux *http.ServeMux, m *Manager) {
 		var err error
 		pb, err = playback.New(root, playback.Options{
-			Source:   playback.Source{Movie: contracts.Movie{ID: "mov-1", SourceRevision: playback.Revision("mov-1", info)}, RelativePath: "movie.mp4"},
+			Resolver: playback.Single(contracts.Movie{ID: "mov-1", SourceRevision: playback.Revision("mov-1", info)}, "movie.mp4",
+				func(contracts.Principal, string) bool { return true }),
 			GrantKey: make([]byte, 32), MaxSessions: 2,
-			Authorize: func(contracts.Principal, string) bool { return true },
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -85,7 +85,7 @@ func TestSweepCutsAnExpiredSessionsStream(t *testing.T) {
 	c := h.client()
 	c.session()
 	c.login("viewer", testPassword)
-	resp, b := c.do("POST", "/api/v1/playback/sessions", `{"movieId":"mov-1"}`, map[string]string{"Idempotency-Key": "k1"})
+	resp, b := c.do("POST", "/api/v1/playback/sessions", `{"itemId":"mov-1","versionId":"mov-1"}`, map[string]string{"Idempotency-Key": "k1"})
 	if resp.StatusCode != 201 {
 		t.Fatalf("start = %d %s", resp.StatusCode, b)
 	}

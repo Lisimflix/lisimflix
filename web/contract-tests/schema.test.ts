@@ -24,7 +24,8 @@ export const movie = {
 
 export const session = {
   id: "play-synthetic-0001",
-  movieId: "movie-synthetic-0001",
+  itemId: "item-synthetic-0001",
+  versionId: "version-synthetic-0001",
   sourceRevision: "rev-synthetic-0001",
   contentUrl: "/api/v1/playback/sessions/play-synthetic-0001/content?grant=grant-synthetic-0001",
   route: "direct",

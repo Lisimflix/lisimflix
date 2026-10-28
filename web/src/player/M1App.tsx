@@ -66,7 +66,7 @@ export function M1App({ client }: { client: M1Client }) {
     startKey.current ??= newIdempotencyKey();
     setView({ name: "preparing", username, movie });
     try {
-      const session = await client.start(movie.id, startKey.current);
+      const session = await client.start(movie.id, movie.id, startKey.current);
       if (gen !== generation.current) {
         void client.stop(session.id).catch(() => undefined);
         return;

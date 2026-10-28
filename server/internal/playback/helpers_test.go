@@ -44,6 +44,7 @@ type env struct {
 	srv    *httptest.Server
 	clock  *clock
 	policy func(contracts.Principal, string) bool
+	single *M1
 }
 
 type envOpt func(*Options)
@@ -72,13 +73,11 @@ func newEnv(t *testing.T, size int, opts ...envOpt) *env {
 		t.Fatal(err)
 	}
 	e.policy = func(p contracts.Principal, id string) bool { return p.AccountID == "acct-a" && id == movieID }
-	o := Options{
-		Source: Source{Movie: contracts.Movie{ID: movieID, SourceRevision: Revision(movieID, info), Title: "T", DurationMs: 1000,
-			Container: "mp4", VideoCodec: "h264", Width: 1920, Height: 800, AudioCodec: "mp3"}, RelativePath: "Movies/movie.mp4"},
-		GrantKey:    bytes.Repeat([]byte{5}, 32),
-		MaxSessions: 4,
-		Authorize:   func(p contracts.Principal, id string) bool { return e.policy(p, id) },
-	}
+	single := Single(contracts.Movie{ID: movieID, SourceRevision: Revision(movieID, info), Title: "T", DurationMs: 1000,
+		Container: "mp4", VideoCodec: "h264", Width: 1920, Height: 800, AudioCodec: "mp3"}, "Movies/movie.mp4",
+		func(p contracts.Principal, id string) bool { return e.policy(p, id) })
+	e.single = single
+	o := Options{Resolver: single, Movies: single.Movies, GrantKey: bytes.Repeat([]byte{5}, 32), MaxSessions: 4}
 	for _, fn := range opts {
 		fn(&o)
 	}
@@ -130,7 +129,7 @@ func (e *env) req(p *contracts.Principal, method, path, body string, hdr map[str
 
 func (e *env) start(p contracts.Principal, key string) (int, contracts.PlaybackSession, []byte) {
 	e.t.Helper()
-	resp, b := e.req(&p, "POST", "/api/v1/playback/sessions", `{"movieId":"`+movieID+`"}`, map[string]string{"Idempotency-Key": key})
+	resp, b := e.req(&p, "POST", "/api/v1/playback/sessions", `{"itemId":"`+movieID+`","versionId":"`+movieID+`"}`, map[string]string{"Idempotency-Key": key})
 	var ps contracts.PlaybackSession
 	json.Unmarshal(b, &ps)
 	return resp.StatusCode, ps, b
@@ -153,3 +152,5 @@ func errCode(t *testing.T, b []byte) string {
 	}
 	return e.Code
 }
+
+func (e *env) check() error { return e.single.Check(e.root) }

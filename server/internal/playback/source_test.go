@@ -77,9 +77,8 @@ func TestUnsatisfiableRange(t *testing.T) {
 func TestPrivatePathAndSymlinkEscapeDenied(t *testing.T) {
 	for _, rel := range []string{"../movie.mp4", "/etc/passwd", "Movies/../../x.mp4", ""} {
 		e := newEnv(t, 16)
-		if _, err := New(e.root, Options{Source: Source{Movie: contracts.Movie{ID: movieID, SourceRevision: "r"}, RelativePath: rel},
-			GrantKey: bytes.Repeat([]byte{1}, 32), MaxSessions: 1, Authorize: func(contracts.Principal, string) bool { return true }}); err == nil {
-			t.Errorf("New accepted RelativePath %q", rel)
+		if err := Single(contracts.Movie{ID: movieID, SourceRevision: "r"}, rel, nil).Check(e.root); err == nil {
+			t.Errorf("Check accepted RelativePath %q", rel)
 		}
 	}
 
@@ -90,8 +89,9 @@ func TestPrivatePathAndSymlinkEscapeDenied(t *testing.T) {
 	}
 	outInfo, _ := os.Stat(outside)
 	e := newEnv(t, 16, func(o *Options) {
-		o.Source.RelativePath = "Movies/link.mp4"
-		o.Source.Movie.SourceRevision = Revision(movieID, outInfo)
+		single := Single(contracts.Movie{ID: movieID, SourceRevision: Revision(movieID, outInfo)}, "Movies/link.mp4",
+			func(p contracts.Principal, id string) bool { return true })
+		o.Resolver, o.Movies = single, single.Movies
 	})
 	if err := os.Symlink(outside, filepath.Join(e.dir, "Movies", "link.mp4")); err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestPrivatePathAndSymlinkEscapeDenied(t *testing.T) {
 		}
 	}
 	// A play request carries no path, and unknown fields are rejected.
-	resp, b := e.req(&alice, "POST", "/api/v1/playback/sessions", `{"movieId":"mov-1","path":"/etc/passwd"}`, map[string]string{"Idempotency-Key": "k2"})
+	resp, b := e.req(&alice, "POST", "/api/v1/playback/sessions", `{"itemId":"mov-1","versionId":"mov-1","path":"/etc/passwd"}`, map[string]string{"Idempotency-Key": "k2"})
 	if resp.StatusCode != 400 || errCode(t, b) != contracts.CodeInvalidRequest {
 		t.Fatalf("path in request = %d %s", resp.StatusCode, b)
 	}
@@ -132,7 +132,7 @@ func TestSourceReplacementRejected(t *testing.T) {
 	if code, _, b := e.start(alice, "k2"); code != 409 || errCode(t, b) != contracts.CodeSourceChanged {
 		t.Fatalf("start after replacement = %d %s", code, b)
 	}
-	if e.s.Check() == nil {
+	if e.check() == nil {
 		t.Fatal("Check() reports a replaced source as ready")
 	}
 }
@@ -164,7 +164,7 @@ func TestMissingSourceIsUnavailable(t *testing.T) {
 	if code, _, b := e.start(alice, "k2"); code != 503 || errCode(t, b) != contracts.CodeSourceUnavailable {
 		t.Fatalf("start with a missing source = %d %s", code, b)
 	}
-	if e.s.Check() == nil {
+	if e.check() == nil {
 		t.Fatal("Check() reports a missing source as ready")
 	}
 }

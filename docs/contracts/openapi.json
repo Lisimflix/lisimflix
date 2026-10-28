@@ -351,7 +351,7 @@
       "CSRFToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "description": "Token from AuthState.csrfToken; mismatch is 403 csrf_failed", "schema": { "type": "string", "minLength": 1 } },
       "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
       "SessionId": { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
-      "Grant": { "name": "grant", "in": "query", "required": true, "description": "Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session", "schema": { "type": "string", "minLength": 1 } },
+      "Grant": { "name": "grant", "in": "query", "required": true, "description": "Signature bound to playback ID, auth session, account/profile, item, version and source revision; not authority without the live session", "schema": { "type": "string", "minLength": 1 } },
       "ItemId": { "name": "itemId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
       "Cursor": { "name": "cursor", "in": "query", "required": false, "description": "nextCursor from the previous page; opaque", "schema": { "type": "string", "minLength": 1, "maxLength": 512 } },
       "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
@@ -430,10 +430,11 @@
       "PlaybackSession": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "movieId", "sourceRevision", "contentUrl", "route", "heartbeatIntervalSeconds", "idleTimeoutSeconds"],
+        "required": ["id", "itemId", "versionId", "sourceRevision", "contentUrl", "route", "heartbeatIntervalSeconds", "idleTimeoutSeconds"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
-          "movieId": { "type": "string", "minLength": 1 },
+          "itemId": { "type": "string", "minLength": 1 },
+          "versionId": { "type": "string", "minLength": 1 },
           "sourceRevision": { "type": "string", "minLength": 1 },
           "contentUrl": { "type": "string", "pattern": "^/api/v1/playback/sessions/", "description": "Same-origin relative URL carrying the grant" },
           "route": { "type": "string", "enum": ["direct"] },
@@ -466,9 +467,10 @@
       "PlaybackSessionRequest": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["movieId"],
+        "required": ["itemId", "versionId"],
         "properties": {
-          "movieId": { "type": "string", "minLength": 1 }
+          "itemId": { "type": "string", "minLength": 1 },
+          "versionId": { "type": "string", "minLength": 1 }
         }
       },
       "HeartbeatRequest": {

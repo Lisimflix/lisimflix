@@ -352,7 +352,8 @@ export interface components {
         };
         PlaybackSession: {
             id: string;
-            movieId: string;
+            itemId: string;
+            versionId: string;
             sourceRevision: string;
             /** @description Same-origin relative URL carrying the grant */
             contentUrl: string;
@@ -374,7 +375,8 @@ export interface components {
             password: string;
         };
         PlaybackSessionRequest: {
-            movieId: string;
+            itemId: string;
+            versionId: string;
         };
         HeartbeatRequest: {
             /** Format: int64 */
@@ -727,7 +729,7 @@ export interface components {
         CSRFToken: string;
         IdempotencyKey: string;
         SessionId: string;
-        /** @description Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session */
+        /** @description Signature bound to playback ID, auth session, account/profile, item, version and source revision; not authority without the live session */
         Grant: string;
         ItemId: string;
         /** @description nextCursor from the previous page; opaque */
@@ -974,7 +976,7 @@ export interface operations {
     getPlaybackContent: {
         parameters: {
             query: {
-                /** @description Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session */
+                /** @description Signature bound to playback ID, auth session, account/profile, item, version and source revision; not authority without the live session */
                 grant: components["parameters"]["Grant"];
             };
             header?: {
@@ -1033,7 +1035,7 @@ export interface operations {
     headPlaybackContent: {
         parameters: {
             query: {
-                /** @description Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session */
+                /** @description Signature bound to playback ID, auth session, account/profile, item, version and source revision; not authority without the live session */
                 grant: components["parameters"]["Grant"];
             };
             header?: {
