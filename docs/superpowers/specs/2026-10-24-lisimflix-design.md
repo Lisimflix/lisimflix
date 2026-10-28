@@ -1728,7 +1728,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 | D10 | Plex/Jellyfin source access and import completeness? | Approved as later optional G4 features; validate read-only source/version data before promising complete history. Core compatibility is required under 10.3 now | Source adapters only; not basic development |
 | D11 | Which remaining numeric defaults/targets are accepted? | Approved: actual-scale baseline and PERF-05 one-second browse/search target. Discovery has no universal one-minute deadline; remaining budgets/targets await measurement/review | Remaining acceptance sign-off |
 | D12 | Backup destination, recovery owner and key custody? | Owner names external copy target and tests restore before remote trial | Disaster-recovery claim |
-| D13 | Original mockups missing from tracked repo? | Supply versioned references or approve described layout C without them | Visual sign-off, not playback spike |
+| D13 | Original mockups missing from tracked repo? | Settled by Pete, 2026-10-27: new versioned layout C mockups and logo in [`docs/design/ui-2/`](../../design/ui-2/README.md) replace the untracked originals; details may still change in the UI-2 plan | Settled; UI-2 plan builds on them |
 | D14 | License and specialist fixture redistribution? | Pin builds; document notices/source and sample rights before publication | Image/test artifact distribution |
 
 ### 14.1 Resolved documentation contradictions in this draft
