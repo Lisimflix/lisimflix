@@ -26,7 +26,7 @@ Never bypass it with `--no-verify`.
    or the spec section you built.
    If the PR changes anything `README.md` describes (status, layout, setup,
    commands or checks), update `README.md` in the same PR.
-5. Another member reviews: run `/code-review` in Claude Code on the PR branch as a
+5. Another member (see Reviewers below) reviews: run `/code-review` in Claude Code on the PR branch as a
    first pass, then read it yourself and approve or request changes.
    Check that `README.md` still matches the branch before approving.
 6. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
@@ -45,7 +45,7 @@ PR and turn it back on straight after.
 - The bootstrap PR that adds `make check` and GitHub Actions must run its completed
   check locally, with locked dependencies, before publishing. A new `pull_request`
   workflow can run from the PR merge branch before reaching the default branch.
-  Require the normal second-member review and report the actual Actions result.
+  Require the normal review by another member and report the actual Actions result.
 - GitHub Actions runs `make check` on every PR. Its independent result supplements
   the local preflight; a green remote run does not replace it. Every code PR,
   including bootstrap, must pass both the local check and its GitHub Actions run.
@@ -68,14 +68,22 @@ PR and turn it back on straight after.
 
 - **Git hygiene and CI** (`.github/`, `.githooks/`, `CONTRIBUTING.md`, `CLAUDE.md`, the
   `main` ruleset): Pete.
-- **Spec, plans and code**: shared. Anyone can improve them through a PR that the
-  other member reviews. If someone is actively working on a doc (open PR or assigned
+- **Spec, plans and code**: shared. Anyone can improve them through a PR that
+  another member reviews. If someone is actively working on a doc (open PR or assigned
   issue), don't edit it; open an issue for them instead.
-- Code always needs the other member's review, whoever owns the area.
+- Code always needs another member's review, whoever owns the area.
+
+## Reviewers
+
+- Main reviewers: Pete (`lisim`) and Lammy (`Lammy93`).
+- Ondo (`ondona`) and Millzy (`Millzy99`) can also review and approve.
+- One approval from any of them is enough, as long as it isn't the PR's author.
+  Never approve your own PR.
+- Request one reviewer; if they don't respond, ask another.
 
 ## Working together
 
-- We plan for 2–3 contributors working in parallel. Choose an unclaimed ready
+- We plan for 2–4 contributors working in parallel. Choose an unclaimed ready
   feature yourself; work is not allocated by Pete or by fixed subsystem teams.
   Assign its issue to yourself before coding; record its feature ID, reviewer, file scope, consumed/
   produced contracts, standalone checks and integration dependencies. Do not claim
