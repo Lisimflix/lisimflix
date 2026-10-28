@@ -1,0 +1,22 @@
+{
+  "item": {
+    "id": "shw-synthetic-0001",
+    "kind": "show",
+    "libraryId": "lib-synthetic-anime",
+    "parentId": null,
+    "title": "Synthetic Show",
+    "sortTitle": "Synthetic Show",
+    "year": 2025,
+    "index": null,
+    "durationMs": null,
+    "contentRating": { "region": "AU", "value": "PG" },
+    "primaryImageUrl": "/api/v1/items/shw-synthetic-0001/images/primary",
+    "backdropUrl": "/api/v1/items/shw-synthetic-0001/images/backdrop",
+    "userState": null
+  },
+  "originalTitle": "Gousei Show",
+  "overview": "A made-up series used only in contract fixtures.",
+  "genres": ["Animation", "Comedy"],
+  "externalIds": [{ "namespace": "anilist", "id": "700001" }, { "namespace": "tvdb", "id": "600001" }],
+  "versions": []
+}

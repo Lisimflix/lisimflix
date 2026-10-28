@@ -1,0 +1,17 @@
+{
+  "items": [
+    {
+      "id": "prof-synthetic-0001",
+      "name": "Sam",
+      "pinRequired": false,
+      "policy": { "libraryIds": ["lib-synthetic-movies", "lib-synthetic-anime"], "ratingCeiling": null, "allowUnrated": true }
+    },
+    {
+      "id": "prof-synthetic-0002",
+      "name": "Kids",
+      "pinRequired": true,
+      "policy": { "libraryIds": ["lib-synthetic-anime"], "ratingCeiling": { "region": "AU", "value": "PG" }, "allowUnrated": false }
+    }
+  ],
+  "nextCursor": null
+}

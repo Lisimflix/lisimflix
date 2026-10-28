@@ -1,0 +1,18 @@
+{
+  "itemId": "mov-synthetic-0001",
+  "revision": 3,
+  "matchStatus": "matched",
+  "fields": {
+    "title": { "value": "Synthetic Test Movie", "source": { "provider": "user", "providerId": null, "fetchedAt": "2026-10-26T12:00:00Z" }, "locked": true },
+    "sortTitle": { "value": "Synthetic Test Movie", "source": { "provider": "tmdb", "providerId": "900001", "fetchedAt": "2026-10-25T03:00:00Z" }, "locked": false },
+    "originalTitle": { "value": null, "source": null, "locked": false },
+    "overview": { "value": "A made-up film used only in contract fixtures.", "source": { "provider": "tmdb", "providerId": "900001", "fetchedAt": "2026-10-25T03:00:00Z" }, "locked": false },
+    "year": { "value": 2026, "source": { "provider": "nfo", "providerId": null, "fetchedAt": "2026-10-24T22:00:00Z" }, "locked": false },
+    "contentRating": { "value": { "region": "AU", "value": "M" }, "source": { "provider": "tmdb", "providerId": "900001", "fetchedAt": "2026-10-25T03:00:00Z" }, "locked": false },
+    "genres": { "value": ["Drama"], "source": { "provider": "tmdb", "providerId": "900001", "fetchedAt": "2026-10-25T03:00:00Z" }, "locked": false }
+  },
+  "externalIds": [
+    { "namespace": "tmdb", "id": "900001", "source": { "provider": "nfo", "providerId": null, "fetchedAt": "2026-10-24T22:00:00Z" }, "locked": true },
+    { "namespace": "imdb", "id": "tt9000001", "source": { "provider": "tmdb", "providerId": "900001", "fetchedAt": "2026-10-25T03:00:00Z" }, "locked": false }
+  ]
+}

@@ -1,0 +1,784 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Lisimflix API",
+    "version": "0.2.0",
+    "description": "Public HTTP contract. M1 (CTR-1): one authorised viewer plays one original MP4. CTR-2 adds the catalogue, user-data, profile and metadata-provenance shapes. Each operation's x-lisimflix names its owning feature and whether it is implemented or still planned. All /api/v1 responses are private and sent with Cache-Control: no-store. Unsafe browser operations require X-CSRF-Token. Login/logout/session behaviour belongs to the runtime (OPS-1/ACC-1); playback sessions and content belong to PLY-2. Source paths, password hashes, cookies and grants never appear in response bodies other than the grant inside contentUrl."
+  },
+  "servers": [{ "url": "/" }],
+  "security": [{ "sessionCookie": [] }],
+  "paths": {
+    "/api/v1/auth/session": {
+      "get": {
+        "operationId": "getAuthSession",
+        "x-lisimflix": { "owner": "ACC-1", "status": "implemented" },
+        "summary": "Current auth state; anonymous callers get authenticated:false, viewer:null and a CSRF token",
+        "security": [{}, { "sessionCookie": [] }],
+        "responses": {
+          "200": { "description": "Auth state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthState" } } } },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "operationId": "login",
+        "x-lisimflix": { "owner": "ACC-1", "status": "implemented" },
+        "summary": "Sign in; rotates the session cookie and issues a fresh CSRF token",
+        "security": [{}],
+        "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LoginRequest" } } } },
+        "responses": {
+          "200": {
+            "description": "Signed in",
+            "headers": { "Set-Cookie": { "description": "Rotated session cookie", "schema": { "type": "string" } } },
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/AuthState" } } }
+          },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "x-lisimflix": { "owner": "ACC-1", "status": "implemented" },
+        "summary": "Sign out; removes the cookie and revokes the auth session and its playback sessions",
+        "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }],
+        "responses": {
+          "204": { "description": "Signed out" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/movies": {
+      "get": {
+        "operationId": "listMovies",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
+        "summary": "Movies the viewer may play (M1: only the configured movie)",
+        "responses": {
+          "200": { "description": "Movies", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MovieList" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions": {
+      "post": {
+        "operationId": "createPlaybackSession",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
+        "summary": "Start playback. Replaying the same key and payload for an active session returns 200 with that session. The same key with a changed payload, or the key of a session that ended recently (its record is kept for 5 minutes), is 409 idempotency_conflict: start again with a new key.",
+        "parameters": [{ "$ref": "#/components/parameters/CSRFToken" }, { "$ref": "#/components/parameters/IdempotencyKey" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSessionRequest" } } } },
+        "responses": {
+          "200": { "description": "Replay of an active request", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSession" } } } },
+          "201": { "description": "Session created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/PlaybackSession" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "429": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions/{sessionId}/heartbeat": {
+      "post": {
+        "operationId": "heartbeatPlaybackSession",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
+        "summary": "Keep a live owned session alive; expired sessions return 410 and are not revived",
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HeartbeatRequest" } } } },
+        "responses": {
+          "204": { "description": "Session renewed" },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions/{sessionId}": {
+      "delete": {
+        "operationId": "stopPlaybackSession",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
+        "summary": "Stop an owned session; idempotent",
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
+        "responses": {
+          "204": { "description": "Stopped" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions/{sessionId}/content": {
+      "get": {
+        "operationId": "getPlaybackContent",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
+        "summary": "Original MP4 bytes, never transformed. Needs both the user cookie and the signed grant.",
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/Grant" },
+          { "$ref": "#/components/parameters/Range" },
+          { "$ref": "#/components/parameters/IfRange" },
+          { "$ref": "#/components/parameters/IfNoneMatch" },
+          { "$ref": "#/components/parameters/IfModifiedSince" }
+        ],
+        "responses": {
+          "200": { "description": "Whole file with Accept-Ranges: bytes, Content-Length, ETag and Last-Modified of the original", "content": { "video/mp4": { "schema": { "type": "string", "contentMediaType": "video/mp4" } } } },
+          "206": { "description": "Requested range", "content": { "video/mp4": { "schema": { "type": "string", "contentMediaType": "video/mp4" } } } },
+          "304": { "description": "Not modified" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" },
+          "416": { "description": "Range not satisfiable" },
+          "500": { "$ref": "#/components/responses/Error" },
+          "503": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "head": {
+        "operationId": "headPlaybackContent",
+        "x-lisimflix": { "owner": "PLY-2", "status": "implemented" },
+        "summary": "Headers of the original MP4 (length, ranges, validators) without a body",
+        "parameters": [
+          { "$ref": "#/components/parameters/SessionId" },
+          { "$ref": "#/components/parameters/Grant" },
+          { "$ref": "#/components/parameters/Range" },
+          { "$ref": "#/components/parameters/IfRange" },
+          { "$ref": "#/components/parameters/IfNoneMatch" },
+          { "$ref": "#/components/parameters/IfModifiedSince" }
+        ],
+        "responses": {
+          "200": { "description": "Whole-file headers" },
+          "206": { "description": "Range headers" },
+          "304": { "description": "Not modified" },
+          "401": { "description": "Unauthenticated" },
+          "404": { "description": "Unknown or not owned" },
+          "409": { "description": "Source changed" },
+          "410": { "description": "Playback expired" },
+          "416": { "description": "Range not satisfiable" },
+          "500": { "description": "Internal error" },
+          "503": { "description": "Source unavailable" }
+        }
+      }
+    },
+    "/api/v1/items/{itemId}/watched": {
+      "put": {
+        "operationId": "setWatched",
+        "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
+        "summary": "Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning and finishing it marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }, { "$ref": "#/components/parameters/CSRFToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WatchedRequest" } } } },
+        "responses": {
+          "200": { "description": "New state", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/UserItemState" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/playback/sessions/{sessionId}/progress": {
+      "post": {
+        "operationId": "reportProgress",
+        "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
+        "summary": "Report progress for an owned live session. A duplicate or out-of-order sequence is 200 with accepted:false. A session whose source changed is 409 source_changed; an ended session is 410.",
+        "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProgressEvent" } } } },
+        "responses": {
+          "200": { "description": "Result", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProgressResult" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "409": { "$ref": "#/components/responses/Error" },
+          "410": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/libraries": {
+      "get": {
+        "operationId": "listLibraries",
+        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "summary": "Libraries the current profile may see",
+        "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "Libraries", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LibraryList" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/items": {
+      "get": {
+        "operationId": "listItems",
+        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "summary": "Items the current profile may see, in stable sort-title order. Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. A library or parent the profile may not see is 404.",
+        "parameters": [
+          { "$ref": "#/components/parameters/LibraryIdQuery" },
+          { "$ref": "#/components/parameters/ParentIdQuery" },
+          { "$ref": "#/components/parameters/Cursor" },
+          { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": { "description": "Items", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPage" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/items/{itemId}": {
+      "get": {
+        "operationId": "getItem",
+        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "summary": "One item with its versions and streams. META-1 fills the descriptive fields and DATA-1 the user state.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Item", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemDetail" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/profiles": {
+      "get": {
+        "operationId": "listProfiles",
+        "x-lisimflix": { "owner": "ACC-1", "status": "planned" },
+        "summary": "Profiles of the signed-in account",
+        "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "Profiles", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProfileList" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/items/{itemId}/metadata": {
+      "get": {
+        "operationId": "getItemMetadata",
+        "x-lisimflix": { "owner": "META-1", "status": "planned" },
+        "summary": "Admin only: the item's metadata with provenance and locks. Non-admins get 404.",
+        "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
+        "responses": {
+          "200": { "description": "Metadata", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemMetadata" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": { "type": "apiKey", "in": "cookie", "name": "lisimflix_session", "description": "HttpOnly, SameSite=Lax session cookie; Secure when served over HTTPS" }
+    },
+    "parameters": {
+      "CSRFToken": { "name": "X-CSRF-Token", "in": "header", "required": true, "description": "Token from AuthState.csrfToken; mismatch is 403 csrf_failed", "schema": { "type": "string", "minLength": 1 } },
+      "IdempotencyKey": { "name": "Idempotency-Key", "in": "header", "required": true, "schema": { "type": "string", "minLength": 1, "maxLength": 128 } },
+      "SessionId": { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
+      "Grant": { "name": "grant", "in": "query", "required": true, "description": "Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session", "schema": { "type": "string", "minLength": 1 } },
+      "ItemId": { "name": "itemId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
+      "Cursor": { "name": "cursor", "in": "query", "required": false, "description": "nextCursor from the previous page; opaque", "schema": { "type": "string", "minLength": 1, "maxLength": 512 } },
+      "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
+      "LibraryIdQuery": { "name": "libraryId", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1 } },
+      "ParentIdQuery": { "name": "parentId", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1 } },
+      "Range": { "name": "Range", "in": "header", "required": false, "schema": { "type": "string" } },
+      "IfRange": { "name": "If-Range", "in": "header", "required": false, "schema": { "type": "string" } },
+      "IfNoneMatch": { "name": "If-None-Match", "in": "header", "required": false, "schema": { "type": "string" } },
+      "IfModifiedSince": { "name": "If-Modified-Since", "in": "header", "required": false, "schema": { "type": "string" } }
+    },
+    "responses": {
+      "Error": {
+        "description": "Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed, idempotency_conflict (reused key with a different body, or the key of a session that ended recently; start again with a fresh key) or revision_conflict (expectedRevision is not the current revision; reload and retry), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable.",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/APIError" } } }
+      }
+    },
+    "schemas": {
+      "Viewer": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accountId", "profileId", "username"],
+        "properties": {
+          "accountId": { "type": "string", "minLength": 1 },
+          "profileId": { "type": "string", "minLength": 1 },
+          "username": { "type": "string", "minLength": 1 }
+        }
+      },
+      "AuthState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["authenticated", "viewer", "csrfToken"],
+        "properties": {
+          "authenticated": { "type": "boolean" },
+          "viewer": { "oneOf": [{ "$ref": "#/components/schemas/Viewer" }, { "type": "null" }] },
+          "csrfToken": { "type": "string", "minLength": 1 }
+        },
+        "if": { "properties": { "authenticated": { "const": true } } },
+        "then": { "properties": { "viewer": { "$ref": "#/components/schemas/Viewer" } } },
+        "else": { "properties": { "viewer": { "type": "null" } } }
+      },
+      "Movie": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "sourceRevision", "title", "durationMs", "container", "videoCodec", "width", "height", "audioCodec"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "sourceRevision": { "type": "string", "minLength": 1 },
+          "title": { "type": "string", "minLength": 1 },
+          "durationMs": { "type": "integer", "format": "int64", "minimum": 1 },
+          "container": { "type": "string", "enum": ["mp4"] },
+          "videoCodec": { "type": "string", "enum": ["h264"] },
+          "width": { "type": "integer", "minimum": 1, "maximum": 1920 },
+          "height": { "type": "integer", "minimum": 1, "maximum": 1080 },
+          "audioCodec": { "type": "string", "minLength": 1 }
+        }
+      },
+      "MovieList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Movie" } },
+          "nextCursor": { "type": ["string", "null"], "description": "Always null in M1" }
+        }
+      },
+      "PlaybackSession": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "movieId", "sourceRevision", "contentUrl", "route", "heartbeatIntervalSeconds", "idleTimeoutSeconds"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "movieId": { "type": "string", "minLength": 1 },
+          "sourceRevision": { "type": "string", "minLength": 1 },
+          "contentUrl": { "type": "string", "pattern": "^/api/v1/playback/sessions/", "description": "Same-origin relative URL carrying the grant" },
+          "route": { "type": "string", "enum": ["direct"] },
+          "heartbeatIntervalSeconds": { "type": "integer", "enum": [10] },
+          "idleTimeoutSeconds": { "type": "integer", "enum": [60] }
+        }
+      },
+      "APIError": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "message", "requestId"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "enum": ["invalid_request", "unauthenticated", "csrf_failed", "not_found", "source_changed", "idempotency_conflict", "revision_conflict", "playback_expired", "capacity_unavailable", "rate_limited", "source_unavailable", "internal_error"]
+          },
+          "message": { "type": "string", "maxLength": 256 },
+          "requestId": { "type": "string", "minLength": 1 }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["username", "password"],
+        "properties": {
+          "username": { "type": "string", "minLength": 1, "maxLength": 128 },
+          "password": { "type": "string", "minLength": 1, "maxLength": 1024 }
+        }
+      },
+      "PlaybackSessionRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["movieId"],
+        "properties": {
+          "movieId": { "type": "string", "minLength": 1 }
+        }
+      },
+      "HeartbeatRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence"],
+        "properties": {
+          "sequence": { "type": "integer", "format": "int64", "minimum": 0 }
+        }
+      },
+      "UserItemState": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["itemId", "revision", "resume", "watched", "playCount", "lastPlayedAt", "hiddenFromContinueWatching"],
+        "description": "The current profile's state for one movie or episode. revision counts committed changes (0 = nothing recorded yet); writes send it back as expectedRevision.",
+        "properties": {
+          "itemId": { "type": "string", "minLength": 1 },
+          "revision": { "type": "integer", "format": "int64", "minimum": 0 },
+          "resume": { "oneOf": [{ "$ref": "#/components/schemas/Resume" }, { "type": "null" }] },
+          "watched": { "oneOf": [{ "$ref": "#/components/schemas/Watched" }, { "type": "null" }], "description": "Null: not watched yet, or reset by marking unwatched" },
+          "playCount": { "type": ["integer", "null"], "minimum": 0, "description": "Null when unknown, e.g. after an import that had no count" },
+          "lastPlayedAt": { "type": ["string", "null"], "format": "date-time" },
+          "hiddenFromContinueWatching": { "type": "boolean" }
+        }
+      },
+      "Resume": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["positionMs", "durationMs", "versionId", "sourceRevision", "updatedAt"],
+        "description": "A resume position on one version's timeline. A different version or source revision needs confirmation before the position is reused.",
+        "properties": {
+          "positionMs": { "type": "integer", "format": "int64", "minimum": 0 },
+          "durationMs": { "type": "integer", "format": "int64", "minimum": 1 },
+          "versionId": { "type": "string", "minLength": 1 },
+          "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Watched": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "origin", "at"],
+        "description": "Watched state and where it came from. A manual watched mark is never undone by later playback. Marking unwatched is a reset (watched and resume become null), not a sticky value:false.",
+        "properties": {
+          "value": { "type": "boolean" },
+          "origin": { "type": "string", "enum": ["auto", "manual", "import"] },
+          "at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ProgressEvent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["sequence", "kind", "positionMs", "fromPositionMs"],
+        "description": "One progress report for a live playback session, sent every 10 s and on pause, seek and stop. The session fixes the item, version and source revision. sequence increases within a session.",
+        "properties": {
+          "sequence": { "type": "integer", "format": "int64", "minimum": 0 },
+          "kind": { "type": "string", "enum": ["tick", "pause", "seek", "stop"] },
+          "positionMs": { "type": "integer", "format": "int64", "minimum": 0 },
+          "fromPositionMs": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Seeks only: the position before the seek" }
+        },
+        "if": { "properties": { "kind": { "const": "seek" } } },
+        "then": { "properties": { "fromPositionMs": { "type": "integer" } } },
+        "else": { "properties": { "fromPositionMs": { "type": "null" } } }
+      },
+      "ProgressResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["accepted", "reason", "state"],
+        "description": "A duplicate or stale event is answered with accepted:false and the unchanged state, not an error.",
+        "properties": {
+          "accepted": { "type": "boolean" },
+          "reason": { "type": ["string", "null"], "enum": ["duplicate", "stale", null] },
+          "state": { "$ref": "#/components/schemas/UserItemState" }
+        },
+        "if": { "properties": { "accepted": { "const": true } } },
+        "then": { "properties": { "reason": { "type": "null" } } },
+        "else": { "properties": { "reason": { "type": "string" } } }
+      },
+      "WatchedRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["watched", "expectedRevision"],
+        "properties": {
+          "watched": { "type": "boolean" },
+          "expectedRevision": { "type": "integer", "format": "int64", "minimum": 0 }
+        }
+      },
+      "Library": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "type"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "type": { "type": "string", "enum": ["movies", "tv", "anime"] }
+        }
+      },
+      "LibraryList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Library" } },
+          "nextCursor": { "type": ["string", "null"], "minLength": 1 }
+        }
+      },
+      "ContentRating": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["region", "value"],
+        "description": "A certification in one rating region, e.g. AU PG. Ratings from different regions are not comparable.",
+        "properties": {
+          "region": { "type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2" },
+          "value": { "type": "string", "minLength": 1, "maxLength": 32 }
+        }
+      },
+      "ItemSummary": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "libraryId", "parentId", "title", "sortTitle", "year", "index", "durationMs", "contentRating", "primaryImageUrl", "backdropUrl", "userState"],
+        "description": "A logical catalogue item. IDs are opaque and survive renames, provider changes and episode-order changes. title is already in the current profile's title language (spec §3.2). Unknown values are null.",
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["movie", "show", "season", "episode"] },
+          "libraryId": { "type": "string", "minLength": 1 },
+          "parentId": { "type": ["string", "null"], "minLength": 1, "description": "Season: its show. Episode: its season. Null for movies and shows." },
+          "title": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "sortTitle": { "type": "string", "minLength": 1, "maxLength": 500 },
+          "year": { "type": ["integer", "null"], "minimum": 1800, "maximum": 9999 },
+          "index": { "type": ["integer", "null"], "minimum": 0, "description": "Season or episode number in the library's chosen order (0 = specials). Null for movies and shows, or when unknown." },
+          "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1, "description": "Default version's duration. Null for shows and seasons, or when unknown." },
+          "contentRating": { "oneOf": [{ "$ref": "#/components/schemas/ContentRating" }, { "type": "null" }] },
+          "primaryImageUrl": { "type": ["string", "null"], "pattern": "^/api/v1/", "description": "Poster, or an episode's still. Same-origin relative URL." },
+          "backdropUrl": { "type": ["string", "null"], "pattern": "^/api/v1/" },
+          "userState": { "oneOf": [{ "$ref": "#/components/schemas/UserItemState" }, { "type": "null" }], "description": "The current profile's state. Null for shows and seasons." }
+        },
+        "allOf": [
+          {
+            "if": { "properties": { "kind": { "enum": ["movie", "show"] } } },
+            "then": { "properties": { "parentId": { "type": "null" } } },
+            "else": { "properties": { "parentId": { "type": "string" } } }
+          },
+          {
+            "if": { "properties": { "kind": { "enum": ["show", "season"] } } },
+            "then": { "properties": { "durationMs": { "type": "null" }, "userState": { "type": "null" } } }
+          }
+        ]
+      },
+      "ItemPage": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/ItemSummary" } },
+          "nextCursor": { "type": ["string", "null"], "minLength": 1 }
+        }
+      },
+      "ExternalId": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["namespace", "id"],
+        "description": "A provider ID in its namespace, e.g. tmdb 603. The item's kind says which of the provider's ID spaces it belongs to.",
+        "properties": {
+          "namespace": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,31}$" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "ItemDetail": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["item", "originalTitle", "overview", "genres", "externalIds", "versions"],
+        "properties": {
+          "item": { "$ref": "#/components/schemas/ItemSummary" },
+          "originalTitle": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
+          "overview": { "type": ["string", "null"], "maxLength": 10000 },
+          "genres": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+          "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
+          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons, and for a movie or episode with no available file." }
+        },
+        "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
+        "then": { "properties": { "versions": { "maxItems": 0 } } }
+      },
+      "MediaVersion": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "fileId", "label", "durationMs", "sourceRevision", "segment", "container", "video", "audio", "subtitles"],
+        "description": "One playable version (cut or quality) of a movie or episode, backed by one file. Episodes that share a file have the same fileId; segment locates the episode when its boundaries are known.",
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "fileId": { "type": "string", "minLength": 1 },
+          "label": { "type": ["string", "null"], "minLength": 1, "maxLength": 100, "description": "e.g. Director's Cut. Null when the item has one unnamed version." },
+          "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1 },
+          "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes." },
+          "segment": { "oneOf": [{ "$ref": "#/components/schemas/Segment" }, { "type": "null" }] },
+          "container": { "type": "string", "minLength": 1, "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm" },
+          "video": { "type": "array", "items": { "$ref": "#/components/schemas/VideoStream" } },
+          "audio": { "type": "array", "items": { "$ref": "#/components/schemas/AudioStream" } },
+          "subtitles": { "type": "array", "items": { "$ref": "#/components/schemas/SubtitleStream" } }
+        }
+      },
+      "Segment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["startMs", "endMs"],
+        "description": "A range of the file's media timeline; endMs is after startMs.",
+        "properties": {
+          "startMs": { "type": "integer", "format": "int64", "minimum": 0 },
+          "endMs": { "type": "integer", "format": "int64", "minimum": 1 }
+        }
+      },
+      "VideoStream": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "codec", "width", "height", "hdr", "default"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0, "description": "Original stream index in the file" },
+          "codec": { "type": "string", "minLength": 1 },
+          "width": { "type": "integer", "minimum": 1 },
+          "height": { "type": "integer", "minimum": 1 },
+          "hdr": { "type": "string", "enum": ["sdr", "hdr10", "hdr10plus", "hlg", "dolbyVision"] },
+          "default": { "type": "boolean" }
+        }
+      },
+      "AudioStream": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "codec", "profile", "channels", "language", "title", "default", "forced"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "codec": { "type": "string", "minLength": 1 },
+          "profile": { "type": ["string", "null"], "minLength": 1, "description": "ffprobe profile, e.g. LC, Dolby TrueHD + Dolby Atmos, DTS-HD MA. Null when none is reported." },
+          "channels": { "type": "integer", "minimum": 1 },
+          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$", "description": "ISO 639-2 as tagged; null when untagged or und" },
+          "title": { "type": ["string", "null"], "minLength": 1 },
+          "default": { "type": "boolean" },
+          "forced": { "type": "boolean" }
+        }
+      },
+      "SubtitleStream": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["index", "codec", "kind", "language", "title", "default", "forced", "hearingImpaired"],
+        "properties": {
+          "index": { "type": "integer", "minimum": 0 },
+          "codec": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["text", "image", "ass"] },
+          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$" },
+          "title": { "type": ["string", "null"], "minLength": 1 },
+          "default": { "type": "boolean" },
+          "forced": { "type": "boolean" },
+          "hearingImpaired": { "type": "boolean" }
+        }
+      },
+      "Profile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "pinRequired", "policy"],
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "pinRequired": { "type": "boolean" },
+          "policy": { "$ref": "#/components/schemas/ProfilePolicy" }
+        }
+      },
+      "ProfilePolicy": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["libraryIds", "ratingCeiling", "allowUnrated"],
+        "description": "Effective policy: the account's ceiling narrowed by the profile. For display; the server enforces policy on every request.",
+        "properties": {
+          "libraryIds": { "type": "array", "items": { "type": "string", "minLength": 1 }, "description": "Libraries this profile may see. Empty means none." },
+          "ratingCeiling": { "oneOf": [{ "$ref": "#/components/schemas/ContentRating" }, { "type": "null" }], "description": "Highest allowed rating in its region. Null: no rating limit. A rating from another region counts as unrated." },
+          "allowUnrated": { "type": "boolean" }
+        }
+      },
+      "ProfileList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Profile" } },
+          "nextCursor": { "type": ["string", "null"], "minLength": 1 }
+        }
+      },
+      "ItemMetadata": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["itemId", "revision", "matchStatus", "fields", "externalIds"],
+        "description": "Admin view of an item's editable metadata with provenance. revision starts at 1 and counts committed changes.",
+        "properties": {
+          "itemId": { "type": "string", "minLength": 1 },
+          "revision": { "type": "integer", "format": "int64", "minimum": 1 },
+          "matchStatus": { "type": "string", "enum": ["unmatched", "matched", "review", "conflict"] },
+          "fields": { "$ref": "#/components/schemas/MetadataFields" },
+          "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/MetadataExternalId" } }
+        }
+      },
+      "MetadataFields": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["title", "sortTitle", "originalTitle", "overview", "year", "contentRating", "genres"],
+        "properties": {
+          "title": { "$ref": "#/components/schemas/TextField" },
+          "sortTitle": { "$ref": "#/components/schemas/TextField" },
+          "originalTitle": { "$ref": "#/components/schemas/TextField" },
+          "overview": { "$ref": "#/components/schemas/TextField" },
+          "year": { "$ref": "#/components/schemas/IntegerField" },
+          "contentRating": { "$ref": "#/components/schemas/RatingField" },
+          "genres": { "$ref": "#/components/schemas/TextListField" }
+        }
+      },
+      "TextField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "type": ["string", "null"] },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "IntegerField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "type": ["integer", "null"] },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "RatingField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "oneOf": [{ "$ref": "#/components/schemas/ContentRating" }, { "type": "null" }] },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "TextListField": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "source", "locked"],
+        "properties": {
+          "value": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      },
+      "Provenance": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["provider", "providerId", "fetchedAt"],
+        "description": "Where a value came from: a provider namespace (tmdb, tvdb, anilist ...), nfo for local NFO files, or user for manual edits.",
+        "properties": {
+          "provider": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,31}$" },
+          "providerId": { "type": ["string", "null"], "minLength": 1, "maxLength": 64 },
+          "fetchedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MetadataExternalId": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["namespace", "id", "source", "locked"],
+        "properties": {
+          "namespace": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,31}$" },
+          "id": { "type": "string", "minLength": 1, "maxLength": 64 },
+          "source": { "oneOf": [{ "$ref": "#/components/schemas/Provenance" }, { "type": "null" }] },
+          "locked": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

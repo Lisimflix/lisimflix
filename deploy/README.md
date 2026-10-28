@@ -65,7 +65,9 @@ MEDIA_DIR=/path/to/media TZ=Australia/Brisbane docker compose -f deploy/compose.
 
 - **Health:** the image's `HEALTHCHECK` runs `lisimflix healthcheck`.
   `/health/ready` is 503 until the database is migrated and the movie is present
-  and unchanged since `init`.
+  and unchanged since `init`. If the movie is deleted or moved later, the server keeps
+  running and reports not-ready (and playback says the movie is unavailable)
+  until it's back; it no longer refuses to start.
 - **Backups:** a snapshot is taken before any migration of an existing
   database, and nightly at 03:00 in `TZ` (UTC if unset); 7 nightly ones are
   kept. For one now: `docker compose -f deploy/compose.m1.yml exec lisimflix lisimflix backup-now`.

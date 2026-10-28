@@ -99,7 +99,9 @@ func Load(path string) (Config, error) {
 	if dec.More() {
 		return Config{}, errors.New("m1config: unexpected data after the config object")
 	}
-	if err := validate(c, path); err != nil {
+	// The movie may be gone since init (#99): playback reports it as not
+	// ready at runtime, so it doesn't stop the server or other commands.
+	if err := validate(c, path, false); err != nil {
 		return Config{}, err
 	}
 	return c, nil
@@ -109,7 +111,7 @@ func Load(path string) (Config, error) {
 // replaces an existing file: if path exists it returns an error wrapping
 // fs.ErrExist and leaves the file unchanged.
 func SaveNew(path string, c Config) error {
-	if err := validate(c, path); err != nil {
+	if err := validate(c, path, true); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(c, "", "  ")
@@ -148,7 +150,10 @@ func SaveNew(path string, c Config) error {
 	return nil
 }
 
-func validate(c Config, cfgPath string) error {
+// validate checks every field. needMovie requires the movie file to exist,
+// as init does; without it a missing movie is accepted, but one that exists
+// must still be a regular file inside the media root.
+func validate(c Config, cfgPath string, needMovie bool) error {
 	bad := func(field, rule string) error { return fmt.Errorf("m1config: %s %s", field, rule) }
 	if host, port, err := net.SplitHostPort(c.ListenAddr); err != nil || port == "" || (host != "" && net.ParseIP(host) == nil) {
 		return bad("listenAddr", "must be host:port or :port")
@@ -188,7 +193,7 @@ func validate(c Config, cfgPath string) error {
 	if c.MaxPlaybackSessions < 1 || c.MaxPlaybackSessions > 16 {
 		return bad("maxPlaybackSessions", "must be 1-16")
 	}
-	return validSource(c, cfgPath)
+	return validSource(c, cfgPath, needMovie)
 }
 
 // validOrigin accepts https://host[:port], and http:// only for loopback,
@@ -228,8 +233,9 @@ func validOrigin(s string) error {
 
 // validSource checks the media root and the movie inside it. os.Root keeps
 // the check inside the root, including through symlinks. Playback confines
-// every open again; this is only a startup check.
-func validSource(c Config, cfgPath string) error {
+// every open again; this is only a startup check. A missing movie is an
+// error only when needMovie is set.
+func validSource(c Config, cfgPath string, needMovie bool) error {
 	if !filepath.IsAbs(c.MediaRoot) {
 		return errors.New("m1config: mediaRoot must be an absolute path")
 	}
@@ -254,6 +260,9 @@ func validSource(c Config, cfgPath string) error {
 	st, err := r.Stat(c.RelativePath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
+			if !needMovie {
+				return nil
+			}
 			return errors.New("m1config: the movie file does not exist under mediaRoot")
 		}
 		return errors.New("m1config: the movie file is not accessible inside mediaRoot")

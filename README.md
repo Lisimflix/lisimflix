@@ -17,8 +17,9 @@ only: plain HTTP, one viewer and one movie.
 |---|---|
 | `docs/superpowers/specs/` | Design spec: scope, feature catalogue (§9.4), decisions (§14) |
 | `docs/superpowers/plans/` | Implementation plans, one per claimed feature |
-| `docs/contracts/` | OpenAPI contract (`m1-openapi.json`) |
+| `docs/contracts/` | OpenAPI contract (`openapi.json`) |
 | `docs/testing/` | Test evidence templates, results and reference installations |
+| `docs/design/` | Approved visual references (UI-2 mockups and logo) |
 | `deploy/` | Container compose file and run guide |
 | `server/` | Go server |
 | `web/` | React + Vite web app |
@@ -37,7 +38,10 @@ make check
 `make check` runs gofmt, vet and Go tests (with `-race`), regenerates the API types, then runs the web
 contract tests, lint, typecheck and build. GitHub Actions runs the same target on every PR.
 It fails if `web/src/api/schema.d.ts` is stale, so commit the regenerated file after
-changing `docs/contracts/m1-openapi.json`.
+changing `docs/contracts/openapi.json`.
+
+Tests that need real ffmpeg/ffprobe use the `integration` build tag and run only on request,
+e.g. `go -C server test -tags integration ./internal/library/` (needs both on `PATH`).
 
 ## Contributing
 

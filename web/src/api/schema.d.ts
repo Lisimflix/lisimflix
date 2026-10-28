@@ -141,6 +141,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{itemId}/watched": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning and finishing it marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
+        put: operations["setWatched"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/playback/sessions/{sessionId}/progress": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Report progress for an owned live session. A duplicate or out-of-order sequence is 200 with accepted:false. A session whose source changed is 409 source_changed; an ended session is 410. */
+        post: operations["reportProgress"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/libraries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Libraries the current profile may see */
+        get: operations["listLibraries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Items the current profile may see, in stable sort-title order. Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. A library or parent the profile may not see is 404. */
+        get: operations["listItems"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{itemId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** One item with its versions and streams. META-1 fills the descriptive fields and DATA-1 the user state. */
+        get: operations["getItem"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Profiles of the signed-in account */
+        get: operations["listProfiles"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{itemId}/metadata": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Admin only: the item's metadata with provenance and locks. Non-admins get 404. */
+        get: operations["getItemMetadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -189,7 +308,7 @@ export interface components {
         };
         APIError: {
             /** @enum {string} */
-            code: "invalid_request" | "unauthenticated" | "csrf_failed" | "not_found" | "source_changed" | "idempotency_conflict" | "playback_expired" | "capacity_unavailable" | "rate_limited" | "source_unavailable" | "internal_error";
+            code: "invalid_request" | "unauthenticated" | "csrf_failed" | "not_found" | "source_changed" | "idempotency_conflict" | "revision_conflict" | "playback_expired" | "capacity_unavailable" | "rate_limited" | "source_unavailable" | "internal_error";
             message: string;
             requestId: string;
         };
@@ -204,9 +323,254 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
+        /** @description The current profile's state for one movie or episode. revision counts committed changes (0 = nothing recorded yet); writes send it back as expectedRevision. */
+        UserItemState: {
+            itemId: string;
+            /** Format: int64 */
+            revision: number;
+            resume: components["schemas"]["Resume"] | null;
+            /** @description Null: not watched yet, or reset by marking unwatched */
+            watched: components["schemas"]["Watched"] | null;
+            /** @description Null when unknown, e.g. after an import that had no count */
+            playCount: number | null;
+            /** Format: date-time */
+            lastPlayedAt: string | null;
+            hiddenFromContinueWatching: boolean;
+        };
+        /** @description A resume position on one version's timeline. A different version or source revision needs confirmation before the position is reused. */
+        Resume: {
+            /** Format: int64 */
+            positionMs: number;
+            /** Format: int64 */
+            durationMs: number;
+            versionId: string;
+            sourceRevision: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        /** @description Watched state and where it came from. A manual watched mark is never undone by later playback. Marking unwatched is a reset (watched and resume become null), not a sticky value:false. */
+        Watched: {
+            value: boolean;
+            /** @enum {string} */
+            origin: "auto" | "manual" | "import";
+            /** Format: date-time */
+            at: string;
+        };
+        /** @description One progress report for a live playback session, sent every 10 s and on pause, seek and stop. The session fixes the item, version and source revision. sequence increases within a session. */
+        ProgressEvent: {
+            /** Format: int64 */
+            sequence: number;
+            /** @enum {string} */
+            kind: "tick" | "pause" | "seek" | "stop";
+            /** Format: int64 */
+            positionMs: number;
+            /**
+             * Format: int64
+             * @description Seeks only: the position before the seek
+             */
+            fromPositionMs: number | null;
+        };
+        /** @description A duplicate or stale event is answered with accepted:false and the unchanged state, not an error. */
+        ProgressResult: {
+            accepted: boolean;
+            /** @enum {string|null} */
+            reason: "duplicate" | "stale" | null;
+            state: components["schemas"]["UserItemState"];
+        };
+        WatchedRequest: {
+            watched: boolean;
+            /** Format: int64 */
+            expectedRevision: number;
+        };
+        Library: {
+            id: string;
+            name: string;
+            /** @enum {string} */
+            type: "movies" | "tv" | "anime";
+        };
+        LibraryList: {
+            items: components["schemas"]["Library"][];
+            nextCursor: string | null;
+        };
+        /** @description A certification in one rating region, e.g. AU PG. Ratings from different regions are not comparable. */
+        ContentRating: {
+            /** @description ISO 3166-1 alpha-2 */
+            region: string;
+            value: string;
+        };
+        /** @description A logical catalogue item. IDs are opaque and survive renames, provider changes and episode-order changes. title is already in the current profile's title language (spec §3.2). Unknown values are null. */
+        ItemSummary: {
+            id: string;
+            /** @enum {string} */
+            kind: "movie" | "show" | "season" | "episode";
+            libraryId: string;
+            /** @description Season: its show. Episode: its season. Null for movies and shows. */
+            parentId: string | null;
+            title: string;
+            sortTitle: string;
+            year: number | null;
+            /** @description Season or episode number in the library's chosen order (0 = specials). Null for movies and shows, or when unknown. */
+            index: number | null;
+            /**
+             * Format: int64
+             * @description Default version's duration. Null for shows and seasons, or when unknown.
+             */
+            durationMs: number | null;
+            contentRating: components["schemas"]["ContentRating"] | null;
+            /** @description Poster, or an episode's still. Same-origin relative URL. */
+            primaryImageUrl: string | null;
+            backdropUrl: string | null;
+            /** @description The current profile's state. Null for shows and seasons. */
+            userState: components["schemas"]["UserItemState"] | null;
+        } & (unknown & unknown);
+        ItemPage: {
+            items: components["schemas"]["ItemSummary"][];
+            nextCursor: string | null;
+        };
+        /** @description A provider ID in its namespace, e.g. tmdb 603. The item's kind says which of the provider's ID spaces it belongs to. */
+        ExternalId: {
+            namespace: string;
+            id: string;
+        };
+        ItemDetail: {
+            item: components["schemas"]["ItemSummary"];
+            originalTitle: string | null;
+            overview: string | null;
+            genres: string[];
+            externalIds: components["schemas"]["ExternalId"][];
+            /** @description Playable versions. Empty for shows and seasons, and for a movie or episode with no available file. */
+            versions: components["schemas"]["MediaVersion"][];
+        };
+        /** @description One playable version (cut or quality) of a movie or episode, backed by one file. Episodes that share a file have the same fileId; segment locates the episode when its boundaries are known. */
+        MediaVersion: {
+            id: string;
+            fileId: string;
+            /** @description e.g. Director's Cut. Null when the item has one unnamed version. */
+            label: string | null;
+            /** Format: int64 */
+            durationMs: number | null;
+            /** @description Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes. */
+            sourceRevision: string;
+            segment: components["schemas"]["Segment"] | null;
+            /** @description ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm */
+            container: string;
+            video: components["schemas"]["VideoStream"][];
+            audio: components["schemas"]["AudioStream"][];
+            subtitles: components["schemas"]["SubtitleStream"][];
+        };
+        /** @description A range of the file's media timeline; endMs is after startMs. */
+        Segment: {
+            /** Format: int64 */
+            startMs: number;
+            /** Format: int64 */
+            endMs: number;
+        };
+        VideoStream: {
+            /** @description Original stream index in the file */
+            index: number;
+            codec: string;
+            width: number;
+            height: number;
+            /** @enum {string} */
+            hdr: "sdr" | "hdr10" | "hdr10plus" | "hlg" | "dolbyVision";
+            default: boolean;
+        };
+        AudioStream: {
+            index: number;
+            codec: string;
+            /** @description ffprobe profile, e.g. LC, Dolby TrueHD + Dolby Atmos, DTS-HD MA. Null when none is reported. */
+            profile: string | null;
+            channels: number;
+            /** @description ISO 639-2 as tagged; null when untagged or und */
+            language: string | null;
+            title: string | null;
+            default: boolean;
+            forced: boolean;
+        };
+        SubtitleStream: {
+            index: number;
+            codec: string;
+            /** @enum {string} */
+            kind: "text" | "image" | "ass";
+            language: string | null;
+            title: string | null;
+            default: boolean;
+            forced: boolean;
+            hearingImpaired: boolean;
+        };
+        Profile: {
+            id: string;
+            name: string;
+            pinRequired: boolean;
+            policy: components["schemas"]["ProfilePolicy"];
+        };
+        /** @description Effective policy: the account's ceiling narrowed by the profile. For display; the server enforces policy on every request. */
+        ProfilePolicy: {
+            /** @description Libraries this profile may see. Empty means none. */
+            libraryIds: string[];
+            /** @description Highest allowed rating in its region. Null: no rating limit. A rating from another region counts as unrated. */
+            ratingCeiling: components["schemas"]["ContentRating"] | null;
+            allowUnrated: boolean;
+        };
+        ProfileList: {
+            items: components["schemas"]["Profile"][];
+            nextCursor: string | null;
+        };
+        /** @description Admin view of an item's editable metadata with provenance. revision starts at 1 and counts committed changes. */
+        ItemMetadata: {
+            itemId: string;
+            /** Format: int64 */
+            revision: number;
+            /** @enum {string} */
+            matchStatus: "unmatched" | "matched" | "review" | "conflict";
+            fields: components["schemas"]["MetadataFields"];
+            externalIds: components["schemas"]["MetadataExternalId"][];
+        };
+        MetadataFields: {
+            title: components["schemas"]["TextField"];
+            sortTitle: components["schemas"]["TextField"];
+            originalTitle: components["schemas"]["TextField"];
+            overview: components["schemas"]["TextField"];
+            year: components["schemas"]["IntegerField"];
+            contentRating: components["schemas"]["RatingField"];
+            genres: components["schemas"]["TextListField"];
+        };
+        TextField: {
+            value: string | null;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        IntegerField: {
+            value: number | null;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        RatingField: {
+            value: components["schemas"]["ContentRating"] | null;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        TextListField: {
+            value: string[];
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
+        /** @description Where a value came from: a provider namespace (tmdb, tvdb, anilist ...), nfo for local NFO files, or user for manual edits. */
+        Provenance: {
+            provider: string;
+            providerId: string | null;
+            /** Format: date-time */
+            fetchedAt: string;
+        };
+        MetadataExternalId: {
+            namespace: string;
+            id: string;
+            source: components["schemas"]["Provenance"] | null;
+            locked: boolean;
+        };
     };
     responses: {
-        /** @description Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed or idempotency_conflict (reused key with a different body, or the key of a session that ended recently; start again with a fresh key), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable. */
+        /** @description Error. 400 invalid_request, 401 unauthenticated, 403 csrf_failed, 404 not_found (unknown or not owned), 409 source_changed, idempotency_conflict (reused key with a different body, or the key of a session that ended recently; start again with a fresh key) or revision_conflict (expectedRevision is not the current revision; reload and retry), 410 playback_expired, 429 rate_limited or capacity_unavailable, 500 internal_error, 503 source_unavailable. */
         Error: {
             headers: {
                 [name: string]: unknown;
@@ -223,6 +587,12 @@ export interface components {
         SessionId: string;
         /** @description Signature bound to playback ID, auth session, account/profile, movie and source revision; not authority without the live session */
         Grant: string;
+        ItemId: string;
+        /** @description nextCursor from the previous page; opaque */
+        Cursor: string;
+        Limit: number;
+        LibraryIdQuery: string;
+        ParentIdQuery: string;
         Range: string;
         IfRange: string;
         IfNoneMatch: string;
@@ -590,6 +960,211 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    setWatched: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Token from AuthState.csrfToken; mismatch is 403 csrf_failed */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                itemId: components["parameters"]["ItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WatchedRequest"];
+            };
+        };
+        responses: {
+            /** @description New state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserItemState"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    reportProgress: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Token from AuthState.csrfToken; mismatch is 403 csrf_failed */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                sessionId: components["parameters"]["SessionId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ProgressEvent"];
+            };
+        };
+        responses: {
+            /** @description Result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProgressResult"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            410: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    listLibraries: {
+        parameters: {
+            query?: {
+                /** @description nextCursor from the previous page; opaque */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Libraries */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    listItems: {
+        parameters: {
+            query?: {
+                libraryId?: components["parameters"]["LibraryIdQuery"];
+                parentId?: components["parameters"]["ParentIdQuery"];
+                /** @description nextCursor from the previous page; opaque */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Items */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    getItem: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["ItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Item */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemDetail"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    listProfiles: {
+        parameters: {
+            query?: {
+                /** @description nextCursor from the previous page; opaque */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Profiles */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileList"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    getItemMetadata: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                itemId: components["parameters"]["ItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Metadata */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemMetadata"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
         };
     };
 }

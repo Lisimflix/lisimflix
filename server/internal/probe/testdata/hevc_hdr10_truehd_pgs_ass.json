@@ -1,0 +1,218 @@
+{
+    "streams": [
+        {
+            "index": 0,
+            "codec_name": "hevc",
+            "codec_long_name": "H.265 / HEVC (High Efficiency Video Coding)",
+            "profile": "Main 10",
+            "codec_type": "video",
+            "codec_tag_string": "[0][0][0][0]",
+            "codec_tag": "0x0000",
+            "width": 3840,
+            "height": 2160,
+            "coded_width": 3840,
+            "coded_height": 2160,
+            "has_b_frames": 2,
+            "sample_aspect_ratio": "1:1",
+            "display_aspect_ratio": "16:9",
+            "pix_fmt": "yuv420p10le",
+            "level": 153,
+            "color_range": "tv",
+            "color_space": "bt2020nc",
+            "color_transfer": "smpte2084",
+            "color_primaries": "bt2020",
+            "chroma_location": "left",
+            "refs": 1,
+            "r_frame_rate": "24000/1001",
+            "avg_frame_rate": "24000/1001",
+            "time_base": "1/1000",
+            "start_pts": 0,
+            "start_time": "0.000000",
+            "extradata_size": 2484,
+            "disposition": {
+                "default": 1,
+                "dub": 0,
+                "original": 0,
+                "comment": 0,
+                "lyrics": 0,
+                "karaoke": 0,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "visual_impaired": 0,
+                "clean_effects": 0,
+                "attached_pic": 0,
+                "timed_thumbnails": 0
+            },
+            "tags": {
+                "BPS": "52034562",
+                "DURATION": "02:01:05.024000000"
+            },
+            "side_data_list": [
+                {
+                    "side_data_type": "Mastering display metadata",
+                    "red_x": "35400/50000",
+                    "red_y": "14600/50000",
+                    "green_x": "8500/50000",
+                    "green_y": "39850/50000",
+                    "blue_x": "6550/50000",
+                    "blue_y": "2300/50000",
+                    "white_point_x": "15635/50000",
+                    "white_point_y": "16450/50000",
+                    "min_luminance": "50/10000",
+                    "max_luminance": "40000000/10000"
+                },
+                {
+                    "side_data_type": "Content light level metadata",
+                    "max_content": 1000,
+                    "max_average": 400
+                }
+            ]
+        },
+        {
+            "index": 1,
+            "codec_name": "truehd",
+            "codec_long_name": "TrueHD",
+            "codec_type": "audio",
+            "codec_tag_string": "[0][0][0][0]",
+            "codec_tag": "0x0000",
+            "sample_fmt": "s32",
+            "sample_rate": "48000",
+            "channels": 8,
+            "channel_layout": "7.1",
+            "bits_per_sample": 0,
+            "bits_per_raw_sample": "24",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "time_base": "1/1000",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "title": "TrueHD 7.1 Atmos",
+                "BPS": "4523112"
+            }
+        },
+        {
+            "index": 2,
+            "codec_name": "ac3",
+            "codec_long_name": "ATSC A/52A (AC-3)",
+            "codec_type": "audio",
+            "sample_fmt": "fltp",
+            "sample_rate": "48000",
+            "channels": 6,
+            "channel_layout": "5.1(side)",
+            "bits_per_sample": 0,
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "bit_rate": "640000",
+            "disposition": {
+                "default": 0,
+                "forced": 0,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "jpn"
+            }
+        },
+        {
+            "index": 3,
+            "codec_name": "hdmv_pgs_subtitle",
+            "codec_long_name": "HDMV Presentation Graphic Stream subtitles",
+            "codec_type": "subtitle",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "width": 1920,
+            "height": 1080,
+            "disposition": {
+                "default": 0,
+                "forced": 1,
+                "hearing_impaired": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "title": "Forced"
+            }
+        },
+        {
+            "index": 4,
+            "codec_name": "ass",
+            "codec_long_name": "ASS (Advanced SSA) subtitle",
+            "codec_type": "subtitle",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "disposition": {
+                "default": 1,
+                "forced": 0,
+                "hearing_impaired": 1,
+                "attached_pic": 0
+            },
+            "tags": {
+                "language": "eng",
+                "title": "Full [SDH]"
+            }
+        },
+        {
+            "index": 5,
+            "codec_name": "ttf",
+            "codec_long_name": "TrueType font",
+            "codec_type": "attachment",
+            "r_frame_rate": "0/0",
+            "avg_frame_rate": "0/0",
+            "disposition": {
+                "default": 0,
+                "forced": 0,
+                "attached_pic": 0
+            },
+            "tags": {
+                "filename": "OpenSans-Semibold.ttf",
+                "mimetype": "application/x-truetype-font"
+            }
+        }
+    ],
+    "chapters": [
+        {
+            "id": 1,
+            "time_base": "1/1000000000",
+            "start": 0,
+            "start_time": "0.000000",
+            "end": 312000000000,
+            "end_time": "312.000000",
+            "tags": {
+                "title": "Opening"
+            }
+        },
+        {
+            "id": 2,
+            "time_base": "1/1000000000",
+            "start": 312000000000,
+            "start_time": "312.000000",
+            "end": 7265024000000,
+            "end_time": "7265.024000",
+            "tags": {
+                "title": "Chapter 02"
+            }
+        }
+    ],
+    "format": {
+        "filename": "/media/movies/Example (2024)/Example (2024) - 2160p.mkv",
+        "nb_streams": 6,
+        "nb_programs": 0,
+        "format_name": "matroska,webm",
+        "format_long_name": "Matroska / WebM",
+        "start_time": "0.000000",
+        "duration": "7265.024000",
+        "size": "51234567890",
+        "bit_rate": "56417835",
+        "probe_score": 100,
+        "tags": {
+            "title": "Example",
+            "ENCODER": "libebml v1.4.4 + libmatroska v1.7.1"
+        }
+    }
+}

@@ -1,0 +1,34 @@
+{
+  "items": [
+    {
+      "id": "mov-synthetic-0001",
+      "kind": "movie",
+      "libraryId": "lib-synthetic-movies",
+      "parentId": null,
+      "title": "Synthetic Test Movie",
+      "sortTitle": "Synthetic Test Movie",
+      "year": 2026,
+      "index": null,
+      "durationMs": 5400000,
+      "contentRating": { "region": "AU", "value": "M" },
+      "primaryImageUrl": "/api/v1/items/mov-synthetic-0001/images/primary",
+      "backdropUrl": null,
+      "userState": {
+        "itemId": "mov-synthetic-0001",
+        "revision": 7,
+        "resume": {
+          "positionMs": 1830000,
+          "durationMs": 5400000,
+          "versionId": "ver-synthetic-0001",
+          "sourceRevision": "fbe33ec2d0dbf23469d5d40be1aff9ec70fc27ee7ca7d336cb41f0216034e659",
+          "updatedAt": "2026-10-27T08:15:00Z"
+        },
+        "watched": null,
+        "playCount": 0,
+        "lastPlayedAt": "2026-10-27T08:15:00Z",
+        "hiddenFromContinueWatching": false
+      }
+    }
+  ],
+  "nextCursor": "cur-synthetic-0002"
+}

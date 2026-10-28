@@ -390,3 +390,30 @@ func TestSchemaTooNewIsNotReady(t *testing.T) {
 		t.Fatalf("ready = %d, want 503", rec.Code)
 	}
 }
+
+// #99: with the movie deleted after init, serve still starts; readiness and
+// playback report the movie as unavailable instead.
+func TestServeStartsWithoutTheMovie(t *testing.T) {
+	f := newFixture(t)
+	f.s.shutdown(context.Background(), nil)
+	if err := os.Remove(filepath.Join(f.dir, "media", "Movies", "movie.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatalf("compose without the movie: %v", err)
+	}
+	defer s.shutdown(context.Background(), nil)
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, httptest.NewRequest("GET", "/health/ready", nil))
+	if rec.Code != 503 {
+		t.Fatalf("ready = %d, want 503 while the movie is missing", rec.Code)
+	}
+	// Other commands load the config too (healthcheck reads the listen
+	// address from it): no server is listening here, but the config loads.
+	var out bytes.Buffer
+	run([]string{"healthcheck", "--config", f.cfgPath}, nil, &out, &out)
+	if strings.Contains(out.String(), "m1config") {
+		t.Fatalf("healthcheck failed on the config: %s", out.String())
+	}
+}
