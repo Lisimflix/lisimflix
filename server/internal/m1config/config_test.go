@@ -135,7 +135,6 @@ func TestConfigRejectsUnknownFieldsAndEscapingPath(t *testing.T) {
 		"absolute source": write(t, with("relativePath", filepath.Join(f.mediaRoot, "Movies/movie.mp4")), ""),
 		"dotdot source":   write(t, with("relativePath", "../media/Movies/movie.mp4"), ""),
 		"not mp4":         write(t, with("relativePath", "Movies/movie.mkv"), ""),
-		"missing source":  write(t, with("relativePath", "Movies/other.mp4"), ""),
 		"relative root":   write(t, with("mediaRoot", "media"), ""),
 	}
 	for name, p := range cases {
@@ -205,7 +204,7 @@ func TestConfigRejectsUnknownFieldsAndEscapingPath(t *testing.T) {
 		}
 		c := f.cfg
 		c.MediaRoot = link
-		if err := validate(c, p); err == nil {
+		if err := validate(c, p, false); err == nil {
 			t.Fatal("validate accepted a config under a media root given through a symlink")
 		}
 	})
@@ -262,5 +261,30 @@ func TestErrorsDoNotEchoSecrets(t *testing.T) {
 	err := SaveNew(filepath.Join(t.TempDir(), "m1.json"), c)
 	if err == nil || strings.Contains(err.Error(), "SECRET") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+// #99: the movie may be deleted after init (by Radarr, say). Loading still
+// works, so serve and the other commands start; init still requires it.
+func TestLoadAcceptsAMissingMovieButInitDoesNot(t *testing.T) {
+	f := newFixture(t)
+	if err := SaveNew(f.cfgPath, f.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(f.mediaRoot, "Movies", "movie.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(f.cfgPath); err != nil {
+		t.Fatalf("Load with the movie gone: %v", err)
+	}
+	if err := SaveNew(filepath.Join(t.TempDir(), "m1.json"), f.cfg); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("SaveNew with the movie gone = %v, want an error", err)
+	}
+	// Something else in its place is still refused.
+	if err := os.Mkdir(filepath.Join(f.mediaRoot, "Movies", "movie.mp4"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Load(f.cfgPath); err == nil {
+		t.Fatal("Load accepted a folder as the movie")
 	}
 }
