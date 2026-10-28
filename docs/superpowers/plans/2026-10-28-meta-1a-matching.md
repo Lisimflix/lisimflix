@@ -31,7 +31,7 @@ The provider here is an interface with a fake. **TMDB is META-1b**, and the HTTP
 | Acceptance | **§3.7 precedence** (locks → validated IDs/NFO → deterministic match → review queue), **conflicts instead of overwriting locks**, **provenance per field** (provider, provider ID, fetch time, lock), **locked fields survive refresh**, **outages keep metadata**, **bounded retries and pause-on-auth-error**, **SCALE-03 (module part):** bounded jobs, per-item failures reported, edits compare-and-set. **"Offline playback unaffected":** matching never writes the catalogue. Actual-scale SCALE-03/PERF-05 is 1c |
 | File scope | **New only:** `server/internal/metadata/{score,nfo,store,provider,apply,matcher}.go`, their tests and `env_test.go`, `server/internal/metadata/migrations/20261028140000_metadata_store.sql`. No changes to existing code, `go.mod`, contracts or CI |
 | Consumes | LIB-2a (#111): the tables `library_items`, `library_id_hints`, `library_versions`, `library_files`, `library_folders`, `library_roots`; in tests `library.NewStore`, `CreateLibrary`, `Scanner.ScanRoot`, `Migrations`. OPS-2: `storage.DB`, `Source`, `Core`, `Migrate`. CTR-2 (#87): `contracts.ItemMetadata`, `MetadataFields`, `Field[T]`, `Provenance`, `MetadataExternalID`, `ContentRating`, `Match*` |
-| Produces | `metadata.Migrations`, `Store` (`NewStore`, `Enqueue`, `Get`, `Edit`, `FixMatch`, `Pause`, `Resume`, `Paused`), `Edit`, the `Field*` and `Source*` constants, `ErrItemNotFound`, `ErrRevisionConflict`, `ErrInvalid`, `ErrPaused`. `Provider`, `Query`, `Candidate`, `Record`, `Rating`, `ErrNotFound`, `ErrUnavailable`, `ErrAuth`. `Normalize`, `Score`, `Rank`, `Scored`, `AutoScore`, `AutoMargin`. `Matcher` (`MatchItem`, `RunDue`), `Batch`, `ItemError`, the `Outcome*` constants |
+| Produces | `metadata.Migrations`, `Store` (`NewStore`, `Enqueue`, `Get`, `Edit`, `FixMatch`, `Pause`, `Resume`, `Paused`), `Edit`, the `Field*` constants, `SourceUser`, `ErrItemNotFound`, `ErrRevisionConflict`, `ErrInvalid`, `ErrPaused`. `Provider`, `Query`, `Candidate`, `Record`, `Rating`, `ErrNotFound`, `ErrUnavailable`, `ErrAuth`. `Normalize`, `Score`, `Rank`, `Scored`, `AutoScore`, `AutoMargin`. `Matcher` (`MatchItem`, `RunDue`), `Batch`, `ItemError`, the `Outcome*` constants |
 | Start dependency | **LIB-2a's code merged (#111):** every table read here is created there. Tasks 1–2 are pure and can start any time |
 | Standalone test | `go -C server test -race -count=1 ./internal/metadata/`, then `make check` |
 | Module proof | A real catalogue (LIB-2a scans a temporary media tree), a real database, and a fake provider. Mutation-checked (see Self-review) |
@@ -60,22 +60,33 @@ The provider here is an interface with a fake. **TMDB is META-1b**, and the HTTP
      - `communityRating`, `directors` and `studios` (Pete's UI-2 plan, #114).
    - **1c:** the HTTP API (`getItemMetadata`, edit, fix-match and review-queue operations, added to the contract through CTR-2's process), the job loop in serve (queue items after each LIB-2b scan, run due items in bounded batches), and serving the results through LIB-2c's item shapes. Also artwork, and the actual-scale SCALE-03/PERF-05 run.
    - Each later slice gets its own plan PR.
-2. **The `metadata` package reads LIB-2a's tables directly**: items, ID hints, versions/files for NFO paths, folders and roots. It never writes them, and a test pins that. Its own tables reference `library_items` with `ON DELETE CASCADE`, so retiring or deleting an item removes its metadata. When LIB-2a folds a duplicate into the existing item, the provisional item's metadata goes with it, and the kept item's metadata (and locks) stay.
+2. **The `metadata` package reads LIB-2a's tables directly**: items, ID hints, versions/files for NFO paths, folders and roots. It never writes them, and a test pins that. Its own tables reference `library_items` with `ON DELETE CASCADE`, so retiring or deleting an item removes its metadata.
+   - **Folding duplicates:** when LIB-2a folds a rename's provisional item into the existing item, the provisional item's metadata goes with it, and the kept item's metadata (and locks) stay.
+   - **An admin merge loses the removed item's metadata (#121).** LIB-2a's `Decide(merge)` deletes the merged-away item (`moveInto`), and the cascade takes its edits, locks and fix-match with it. Nothing in 1a can run before that delete, so **1c carries them across**: its merge endpoint copies the removed item's locked fields and locked IDs onto the kept one (where the kept one has none), inside the same transaction as LIB-2a's fold, before the delete.
 3. **One row per item META-1 has queued**, and a field row only when a field has a value or a lock.
    - An item without rows reads as revision 1, `unmatched`, with LIB-2a's parsed title, sort title and year and no provenance (`source: null`).
    - Displayed values are the metadata value when present, otherwise the parsed one. LIB-2c applies that when it serves items (1c).
    - Seasons and episodes aren't queued in 1a. Their titles come with the show's record in 1b.
 4. **§3.7's precedence, exactly:**
    1. **A locked ID** in one of the provider's namespaces (the admin's fix-match) is always looked up and applied. Hints are ignored.
-   2. **ID hints** come from the folder or file name (LIB-2a's `{tmdb-…}`, `[imdbid-…]`; provenance `filename`) and from NFO files (provenance `nfo`). Two different values for a namespace the provider uses make the item a **conflict** for the admin; nothing is looked up. A single hint is validated by looking it up. If the provider doesn't know it, or it's another kind (a show's ID on a movie), matching **falls back to searching**.
+   2. **ID hints** come from the folder or file name (LIB-2a's `{tmdb-…}`, `[imdbid-…]`) and from NFO files.
+      - Hints aren't stored as provenance; the record they lead to is, under its provider's namespace. CTR-2's `Provenance` lists provider namespaces, `nfo` and `user`; 1a only writes `user` and the provider's name, and 1b's NFO field provider adds `nfo`.
+      - Two different values for a namespace the provider uses make the item a **conflict** for the admin; nothing is looked up.
+      - A single hint is validated by looking it up. If the provider doesn't know it, or it's another kind (a show's ID on a movie), matching **falls back to searching**.
+      - **Hints in different namespaces must agree (#121).** The looked-up record's IDs are compared with the other hints: a `{tmdb-…}` folder for one film and an NFO IMDb ID for another make a conflict, and nothing is applied.
    3. **A confident search result** is applied (Decision 5).
    4. Otherwise the **review queue**: the five best candidates are stored for the admin.
    - **Conflicts instead of overwriting a lock:** applying a record that reports an ID different from a locked one (e.g. the admin locked IMDb `tt…1`, TMDB says `tt…2`) changes nothing except the status, which becomes `conflict`.
 5. **Scoring and auto-match thresholds:**
-   - **Title:** compared after `Normalize`: lower case, accents folded, `&` → "and", punctuation dropped, a leading "the/a/an" dropped. An exact match scores 1; otherwise word overlap × 0.8, so a partial title never auto-matches. The best of the candidate's titles counts (original and alternative titles).
+   - **Title:** compared after `Normalize`: lower case, Latin accents folded, `&` → "and", punctuation dropped, a leading "the/a/an" dropped. An exact match scores 1; otherwise word overlap × 0.8, so a partial title never auto-matches. The best of the candidate's titles counts (original and alternative titles).
    - **Year:** equal +0; ±1 −0.1 (release dates differ by country); further apart −0.5; unknown on either side −0.05. A different kind (movie vs show) scores 0.
    - **Auto-match** needs a best score ≥ **0.85** and a lead of ≥ **0.10** over the next candidate. A remake with no year ("Dune": 1984 and 2021) goes to review, but with the year it matches.
-6. **No Unicode dependency.** Accent folding uses a built-in table for Latin-1 and Latin Extended-A (`é` → `e`, `ß` → `ss`, `æ` → `ae` …). Other scripts are compared as written. `golang.org/x/text` would cover more, but it's a new dependency for a small gain; non-Latin titles match through ID hints and alternative titles. This also pins one fold rule that UI-2's sort collation (#114) could share.
+6. **Only Latin is folded, with no Unicode dependency.**
+   - **Precomposed letters:** a built-in table for Latin-1 and Latin Extended-A (`é` → `e`, `ß` → `ss`, `æ` → `ae` …).
+   - **Decomposed marks:** a combining mark is dropped only right after a Latin letter (a decomposed `é` in a macOS file name).
+   - **Other scripts:** after any other letter, marks are part of the word and are kept: the Devanagari virama, Thai vowel and tone marks, Hebrew points, the Japanese voiced mark. So Hindi, Thai, Hebrew and Japanese titles compare as written (#121).
+   - **No dependency:** `golang.org/x/text` would cover more, but it's a new dependency for a small gain; non-Latin titles match through ID hints and alternative titles.
+   - **UI-2's sort is a different rule on purpose.** UI-2's contract (#114) sorts titles by NFKD with every combining mark dropped. That's fine for ordering, where a dropped mark only nudges a title's position; matching deliberately folds Latin only, because dropping marks in other scripts would make different titles compare equal.
 7. **Revisions and compare-and-set.**
    - Every change bumps the item's revision: an edit, a fix-match, and every matching result (matched, review, conflict).
    - Admin edits and fix-match take `expectedRevision`. A mismatch is `ErrRevisionConflict`; 1c maps it to CTR-2's `revision_conflict` (409).
@@ -83,17 +94,21 @@ The provider here is an interface with a fake. **TMDB is META-1b**, and the HTTP
 8. **Edits.**
    - **Locking:** a manual value has provenance `user` and is **locked by default**. Lock-only edits lock or unlock the current value, including a parsed one. An unlocked value can be replaced by the next match.
    - **Limits:**
-     - title, sort title and original title: 1–512 bytes (title can't be cleared);
+     - title, sort title and original title: 1–512 bytes. Text is checked for emptiness after trimming spaces (a title of "  " is refused) and stored as given. Title can't be cleared;
      - overview: up to 10,000 bytes;
      - year: 1870–2200;
      - content rating: an upper-case ISO 3166-1 region and a value of 1–16 bytes;
      - genres: up to 20, each 1–64 bytes.
 
      Other fields can be cleared with `null`.
-9. **Fix-match** stores the chosen ID as a **locked `user` ID**, clears the review candidates, sets the status to `unmatched` and queues the item **now**. The matcher then applies it under the normal rules, outside the request transaction; 1c's endpoint can run `MatchItem` straight after. A locked ID keeps its `user` provenance after the match.
+9. **Fix-match** stores the chosen ID as a **locked `user` ID**, clears the review candidates, sets the status to `unmatched` and queues the item **now**.
+   - **It replaces the previous match (#121):** it deletes the item's **other** provider IDs, locked or not, and its **unlocked** fields. So a second fix-match in another namespace (IMDb first, then TMDB) applies cleanly instead of hitting a permanent conflict with the first one's locked IMDb ID, and the wrong film's overview and genres don't linger. The admin's locked fields stay. The matcher then applies it under the normal rules, outside the request transaction; 1c's endpoint can run `MatchItem` straight after. A locked ID keeps its `user` provenance after the match.
 10. **Bounded jobs and failure handling (§3.7, SCALE-03).**
     - **Queueing:** `Enqueue(limit)` queues movies and shows without metadata, oldest first. `RunDue(limit)` takes due items oldest first, each in its own transaction. A database error on one item is reported in `Batch.Failed`, and the batch goes on.
+    - **Edited items stay queued (#121).** An edit or fix-match on an item that has no metadata row yet creates the row **queued** (`next_attempt_at = now`). `Enqueue` skips items that have a row, so without this an item the admin touched before its batch came round would never be matched.
     - **Provider failures:** a timeout, 5xx or rate limit (`ErrUnavailable`) keeps all existing metadata and retries after 1, 2, 4 … minutes, capped at 24 hours, with the reason stored (bounded to 500 bytes).
+      - **Overflow (#121):** the shift is clamped before shifting (`retryBase << min(attempt−1, 11)`; 2¹¹ minutes is already past the cap), so a long outage can't overflow to a negative or zero delay and retry on every batch.
+      - **Jitter:** each delay gets up to **10%** random jitter, so items that failed together don't retry in the same instant (§3.7, "bounded retries/jitter"). 1b's TMDB client adds its own per-request retries with jitter on top.
     - **Auth errors:** `ErrAuth` (a revoked or wrong key) **pauses the provider**. The batch stops with `ErrPaused`, the item stays queued unchanged, and no further calls are made until `Resume`. 1b's settings screen resumes it when the key changes.
 11. **NFO files.**
     - **Format:** Kodi's `<uniqueid type="…">` (v18 and later), the older `<tmdbid>`, `<imdbid>`, `<tvdbid>` and `<id>` (IMDb), and an NFO that's just a provider URL. Sources: <https://kodi.wiki/view/NFO_files/Movies>, <https://kodi.wiki/view/NFO_files/TV_shows>.
@@ -115,6 +130,13 @@ The provider here is an interface with a fake. **TMDB is META-1b**, and the HTTP
 3. **A wrong or stale ID in a folder name** (a typo, or a show's ID on a movie): falls back to search instead of applying the wrong record → `TestInvalidHintFallsBackToSearch`, `TestHintOfAnotherKindFallsBack`.
 4. **A revoked TMDB key:** one failed call pauses the provider, rather than one failed call per item for the whole library → `TestAuthErrorPausesProvider`.
 5. **Hostile or broken NFO files** (huge, entity tricks, garbage, IDs in the wrong format): bounded and ignored → `TestParseNFO`, `TestReadNFOs`.
+
+Also pinned after Pete's review (#121):
+- an item failing for months stays at the 24 h cap → `TestBackoffStaysCappedAfterManyFailures`;
+- an item edited before its first match still gets matched → `TestEditBeforeFirstMatchStillMatches`;
+- a second fix-match in another namespace replaces the first → `TestSecondFixMatchReplacesTheFirst`;
+- hints that disagree across namespaces are a conflict → `TestHintsDisagreeingAcrossNamespaces`;
+- non-Latin titles keep their marks → `TestNormalize`.
 
 ---
 
@@ -148,7 +170,16 @@ func TestNormalize(t *testing.T) {
 		"The":                    "the",
 		"WALL·E":                 "wall e",
 		"Straße":                 "strasse",
-		"進撃の巨人":                  "進撃の巨人", // other scripts compare as written
+		"進撃の巨人":                  "進撃の巨人",  // other scripts compare as written
+		"Amélie":                "amelie", // a decomposed Latin accent (macOS NFD names)
+		// #121 review: marks in other scripts are part of the word, not
+		// accents to drop: Devanagari virama U+094D and vowel sign U+093F,
+		// Thai U+0E34 and U+0E4C, Hebrew U+05B8, Japanese voiced mark U+3099.
+		"हिन्दी":     "हिन्दी",
+		"ภาพยนตร์":   "ภาพยนตร์",
+		"שָׁלוֹם":    "שָׁלוֹם",
+		"ガ":         "ガ", // ガ as written by macOS (NFD)
+		"かぐや様は告らせたい": "かぐや様は告らせたい",
 	} {
 		if got := Normalize(in); got != want {
 			t.Errorf("Normalize(%q) = %q, want %q", in, got, want)
@@ -223,7 +254,7 @@ Expected: FAIL to build: `undefined: Normalize`, `undefined: Query`, `undefined:
 - **`Normalize`:**
   1. Lower-case the title.
   2. Map each rune through the fold table (Decision 6).
-  3. Drop combining accents (`unicode.Mn`), write `&` as " and ", keep letters and digits, and turn everything else into a space.
+  3. A combining mark (`unicode.M`) is dropped only if the last letter written was Latin; otherwise it's kept as part of the word. Write `&` as " and ", keep letters and digits, and turn everything else into a space.
   4. Collapse the spaces, and drop a leading "the", "a" or "an" when more words follow.
 - **`Score`:** Decision 5. The title part is the maximum over `c.Title` and `c.AltTitles` of `similarity(Normalize(q.Title), Normalize(t))`: 1 when equal, otherwise 0.8 × Jaccard overlap of their words. The result is floored at 0.
 - **`Rank`:** score every candidate and sort best first, stably (ties keep the provider's order). Report `auto` only per Decision 5.
@@ -353,10 +384,10 @@ git commit -m "feat(metadata): read provider IDs from Kodi NFO files (META-1a)"
 **Interfaces:**
 - Consumes: LIB-2a's tables and, in tests, `library.NewStore`, `CreateLibrary`, `Scanner{Store, Media}.ScanRoot`, `library.Migrations`; CTR-2's `contracts.ItemMetadata` and friends.
 - Produces:
-  - `func Migrations() storage.Source` (module `metadata`); `type Store`; `func NewStore(db *storage.DB) *Store` (unexported `now func() time.Time` for tests).
+  - `func Migrations() storage.Source` (module `metadata`); `type Store`; `func NewStore(db *storage.DB) *Store` (unexported `now func() time.Time` and `jitter func(time.Duration) time.Duration`, both replaceable in tests); `func defaultJitter(d time.Duration) time.Duration` (adds 0–10%).
   - `func (s *Store) Enqueue(ctx, limit int) (int, error)`; `Get(ctx, itemID string) (contracts.ItemMetadata, error)`; `Edit(ctx, itemID string, expectedRevision int64, edits []Edit) (contracts.ItemMetadata, error)`; `FixMatch(ctx, itemID string, expectedRevision int64, namespace, id string) (contracts.ItemMetadata, error)`; `Pause(ctx, provider, reason string) error`; `Resume(ctx, provider string) error`; `Paused(ctx, provider string) (bool, string, error)`.
   - `type Edit struct{ Field string; Value json.RawMessage; Lock *bool }`.
-  - `FieldTitle`, `FieldSortTitle`, `FieldOriginalTitle`, `FieldOverview`, `FieldYear`, `FieldContentRating`, `FieldGenres` (CTR-2's JSON keys). `SourceUser = "user"`, `SourceNFO = "nfo"`, `SourceFilename = "filename"`.
+  - `FieldTitle`, `FieldSortTitle`, `FieldOriginalTitle`, `FieldOverview`, `FieldYear`, `FieldContentRating`, `FieldGenres` (CTR-2's JSON keys). `SourceUser = "user"` (Decision 4.2: no `filename`/`nfo` constants in 1a).
   - `ErrItemNotFound`, `ErrRevisionConflict`, `ErrInvalid`, `ErrPaused`.
   - Unexported, used by Task 4: `bump(ctx, tx, itemID string, expected, now int64) error`, `get(ctx, querier, itemID)`, `ms(time.Time) int64`, `bounded(string) string` (≤ 500 bytes), `nsRe`.
   - Test helpers: `newEnv(t) *env` with `write`, `library`, `item`, `get`, plus `raw(v) json.RawMessage` and `ptr[T](v) *T`.
@@ -413,6 +444,7 @@ func newEnv(t *testing.T) *env {
 	e.scan = &library.Scanner{Store: e.lib, Media: e.media}
 	e.st = NewStore(db)
 	e.st.now = func() time.Time { return e.clock }
+	e.st.jitter = func(d time.Duration) time.Duration { return d } // exact delays in tests
 	return e
 }
 
@@ -470,6 +502,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
@@ -545,7 +578,8 @@ func TestEditValidates(t *testing.T) {
 		"year as text":    {Field: FieldYear, Value: raw("1995")},
 		"year too early":  {Field: FieldYear, Value: raw(1066)},
 		"bad region":      {Field: FieldContentRating, Value: raw(map[string]string{"region": "aus", "value": "M"})},
-		"too many genres": {Field: FieldGenres, Value: raw(make([]string, 21))},
+		"too many genres": {Field: FieldGenres, Value: raw(strings.Split("a b c d e f g h i j k l m n o p q r s t u", " "))},
+		"empty genre":     {Field: FieldGenres, Value: raw([]string{"Drama", " "})},
 		"unknown field":   {Field: "director", Value: raw("x")},
 	} {
 		if _, err := e.st.Edit(context.Background(), id, 1, []Edit{ed}); !errors.Is(err, ErrInvalid) {
@@ -681,10 +715,10 @@ CREATE TABLE metadata_providers (
   - Then `metadata_external_ids`, by namespace (an empty list, never null).
 - **`Edit`:**
   1. Validate every edit first (Decision 8), with errors wrapping `ErrInvalid`.
-  2. In one transaction, `bump` the revision: ensure the item exists (`ErrItemNotFound`), insert its row if missing, then `UPDATE … SET revision = revision + 1 WHERE item_id = ? AND revision = ?`. No row means `ErrRevisionConflict`.
+  2. In one transaction, `bump` the revision: ensure the item exists (`ErrItemNotFound`), insert its row if missing **queued** (`next_attempt_at = now`, Decision 10), then `UPDATE … SET revision = revision + 1 WHERE item_id = ? AND revision = ?`. No row means `ErrRevisionConflict`.
   3. Upsert each field: a value with provenance `user` and `fetched_at = now`, locked unless `Lock` is false; or only `locked` for lock-only edits.
   4. Return `get` inside the transaction.
-- **`FixMatch`:** check `namespace` against `^[a-z][a-z0-9]{1,31}$` and the ID length (1–64), then `bump`, then Decision 9's three writes, then `get`.
+- **`FixMatch`:** check `namespace` against `^[a-z][a-z0-9]{1,31}$` and the ID length (1–64), then `bump`, then Decision 9's writes: upsert the locked `user` ID; delete the item's other external IDs and its unlocked fields; delete the candidates; set the status to `unmatched` and queue it now. Then `get`.
 - **`Enqueue`:** a single `INSERT … SELECT` of movies and shows without a metadata row, `ORDER BY created_at, id LIMIT ?`, with `next_attempt_at = now`.
 - **`Pause`/`Resume`/`Paused`:** upsert, delete and read a `metadata_providers` row.
 - **`Planned` tags:** `Migrations`, `NewStore`, `Enqueue`, `Get`, `Edit` and `FixMatch` get `// Planned: META-1c (…)` naming their caller (serve, the scan listener and the API operations); `Resume` gets `// Planned: META-1b (the settings screen resumes TMDB when the key changes)`.
@@ -1156,6 +1190,140 @@ func TestShowMatchesFromTvshowNFO(t *testing.T) {
 		t.Fatalf("season: %v (seasons come from the show's record, META-1b)", err)
 	}
 }
+
+// #121 review: the backoff never overflows, however long an item has been
+// failing. It stays at the cap (plus at most 10% jitter).
+func TestBackoffStaysCappedAfterManyFailures(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	e.match(id)
+	e.fake.err = fmt.Errorf("%w: 503", ErrUnavailable)
+	for _, attempts := range []int{28, 29, 63, 64, 1000} {
+		e.db.Exec(`UPDATE metadata_items SET attempts = ? WHERE item_id = ?`, attempts, id)
+		if out := e.match(id); out != OutcomeRetry {
+			t.Fatalf("outcome %s", out)
+		}
+		var at int64
+		e.db.QueryRow(`SELECT next_attempt_at FROM metadata_items WHERE item_id = ?`, id).Scan(&at)
+		if d := at - e.clock.UnixMilli(); d != retryCap.Milliseconds() {
+			t.Fatalf("after %d attempts the next try is in %v, want the %v cap", attempts, time.Duration(d)*time.Millisecond, retryCap)
+		}
+	}
+}
+
+// Retries are jittered by up to 10% so items that failed together don't
+// all retry in the same instant (§3.7: bounded retries with jitter).
+func TestRetryJitterIsBounded(t *testing.T) {
+	for _, d := range []time.Duration{time.Minute, retryCap} {
+		lo, hi := d, d
+		for range 200 {
+			j := defaultJitter(d)
+			lo, hi = min(lo, j), max(hi, j)
+		}
+		if lo < d || hi > d+d/10 || hi == lo {
+			t.Fatalf("jitter of %v ranged %v..%v, want within [d, 1.1d] and not constant", d, lo, hi)
+		}
+	}
+}
+
+// #121 review: an item the admin edits before matching reaches it is still
+// queued, so it gets matched (keeping the edit).
+func TestEditBeforeFirstMatchStillMatches(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	ctx := context.Background()
+	id := e.item("Heat")
+	if _, err := e.st.Edit(ctx, id, 1, []Edit{{Field: FieldYear, Lock: ptr(true)}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.Enqueue(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := e.m.RunDue(ctx, 10); err != nil || b.Matched != 1 {
+		t.Fatalf("RunDue %+v %v: the edited item wasn't matched", b, err)
+	}
+	if md := e.get(id); !md.Fields.Year.Locked || md.Fields.Overview.Value == nil {
+		t.Fatalf("after matching %+v", md)
+	}
+}
+
+// #121 review: a second fix-match in another namespace replaces the first
+// cleanly: the old film's IDs and unlocked fields go, the admin's own
+// edits stay, and the item ends matched, not in a permanent conflict.
+func TestSecondFixMatchReplacesTheFirst(t *testing.T) {
+	e := newMatchEnv(t)
+	str := func(s string) *string { return &s }
+	r := e.fake.records["tmdb:603"]
+	r.Overview, r.Genres, r.SortTitle = str("Neo learns the truth."), []string{"Science Fiction"}, str("Matrix, The")
+	e.fake.add(r)
+	e.write("Movies/Heat (1995)/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	ctx := context.Background()
+	id := e.item("Heat")
+	md, _ := e.st.Edit(ctx, id, 1, []Edit{{Field: FieldTitle, Value: raw("Heat (my copy)")}})
+	// The wrong film, by IMDb ID.
+	md, err := e.st.FixMatch(ctx, id, md.Revision, "imdb", "tt0133093")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out := e.match(id); out != OutcomeMatched {
+		t.Fatalf("first fix-match: %s", out)
+	}
+	// The right film, by TMDB ID.
+	if _, err := e.st.FixMatch(ctx, id, e.get(id).Revision, "tmdb", "949"); err != nil {
+		t.Fatal(err)
+	}
+	if out := e.match(id); out != OutcomeMatched {
+		t.Fatalf("second fix-match: %s, want matched", out)
+	}
+	md = e.get(id)
+	f := md.Fields
+	if x, _ := extID(md, "imdb"); x.ID != "tt0113277" || x.Locked {
+		t.Fatalf("imdb %+v: the first fix-match's ID is still there", x)
+	}
+	if x, _ := extID(md, "tmdb"); x.ID != "949" || !x.Locked {
+		t.Fatalf("tmdb %+v", x)
+	}
+	if *f.Overview.Value != "A group of high-end professional thieves." || !slices.Equal(f.Genres.Value, []string{"Crime", "Drama"}) {
+		t.Fatalf("the wrong film's fields stayed: %+v", f)
+	}
+	// Heat's record has no sort title, so the wrong film's must be gone,
+	// not just overwritten: the parsed one shows again.
+	if *f.SortTitle.Value != "Heat" || f.SortTitle.Source != nil {
+		t.Fatalf("sort title %q from %+v: the wrong film's value stayed", *f.SortTitle.Value, f.SortTitle.Source)
+	}
+	if *f.Title.Value != "Heat (my copy)" || !f.Title.Locked {
+		t.Fatalf("the admin's edit was lost: %+v", f.Title)
+	}
+}
+
+// #121 review: hints in different namespaces that point at different films
+// (a {tmdb-…} folder and an NFO's IMDb ID) are a conflict, caught by
+// comparing the looked-up record's IDs with the other hints.
+func TestHintsDisagreeingAcrossNamespaces(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e.write("Movies/Heat (1995) {tmdb-949}/movie.nfo", `<movie><uniqueid type="imdb">tt0133093</uniqueid></movie>`)
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	if out := e.match(id); out != OutcomeConflict {
+		t.Fatalf("outcome %s, want conflict", out)
+	}
+	if md := e.get(id); md.MatchStatus != contracts.MatchConflict || md.Fields.Overview.Value != nil || len(md.ExternalIDs) != 0 {
+		t.Fatalf("a conflicting record was applied: %+v", md)
+	}
+	// Hints that agree across namespaces match as usual.
+	e2 := newMatchEnv(t)
+	e2.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e2.write("Movies/Heat (1995) {tmdb-949}/movie.nfo", `<movie><uniqueid type="imdb">tt0113277</uniqueid></movie>`)
+	e2.library("movies", "Movies")
+	if out := e2.match(e2.item("Heat")); out != OutcomeMatched {
+		t.Fatalf("agreeing hints: %s", out)
+	}
+}
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
@@ -1181,17 +1349,18 @@ In one transaction:
 `MatchItem` runs in this order:
 1. **Paused provider:** return `OutcomeSkipped`; no calls are made.
 2. **Read the item:** `itemInfo` gives the kind, parsed title, year, a root path (from its files or folders) and the revision, inserting the metadata row if missing. Only `movie` and `show` items are accepted; others give `ErrInvalid`.
-3. **Locked ID:** if there's one in a provider namespace, `lookup` it.
-4. **Hints:** gather `library_id_hints` and NFO IDs (`nfoPaths`, then `readNFOs` through `Media.OpenRoot(rootPath)`; errors are skipped). Two values in a provider namespace mean `setStatus(conflict)`. Otherwise the first provider namespace that has a hint is looked up; a lookup that returns "" falls through to search.
-5. **Search:** `Search`, then `Rank`. If the result is auto, look up the best candidate; if that lookup returns "", or the result isn't auto, store the top `reviewKeep` candidates, with the status set to `review`.
+3. **Locked ID:** if there's one in a provider namespace, `lookup` it with no hints to check (the admin's choice wins).
+4. **Hints:** gather `library_id_hints` and NFO IDs (`nfoPaths`, then `readNFOs` through `Media.OpenRoot(rootPath)`; errors are skipped). Two values in a provider namespace mean `setStatus(conflict)`. Otherwise the first provider namespace that has a hint is looked up, **checking the record against all the hints** (Decision 4.2); a lookup that returns "" falls through to search.
+5. **Search:** `Search`, then `Rank`. If the result is auto, look up the best candidate (no hints to check); if that lookup returns "", or the result isn't auto, store the top `reviewKeep` candidates, with the status set to `review`.
 
 The helpers:
-- **`lookup`:**
+- **`lookup(ctx, itemID, info, ns, id string, check map[string]string)`:**
   - `ErrNotFound`, or a record of another kind: return "" with no error.
   - Any other error: `failed`.
+  - If the record reports an ID (its own for the provider's namespace, else `ExternalIDs`) that differs from the hint in `check` for that namespace: `setStatus(conflict)` with a reason naming both hints, and return `OutcomeConflict`.
   - Otherwise `applyRecord`. If that returns `errStale`, call `retryLater(attempt 0)` and return `OutcomeRetry`.
 - **`failed`:** `ErrAuth` → `Pause` and `OutcomeSkipped`. Otherwise `retryLater(attempts + 1)` and `OutcomeRetry`.
-- **`retryLater`:** delay = `retryBase << (attempt − 1)` (attempt 0: `retryBase`), capped at `retryCap`. It sets `next_attempt_at`, `attempts` and a bounded `last_error`.
+- **`retryLater`:** delay = `retryBase << min(attempt − 1, 11)` (attempt 0: `retryBase`), capped at `retryCap`, then `s.jitter(delay)`. The clamp comes before the shift (Decision 10). It sets `next_attempt_at`, `attempts` and a bounded `last_error`.
 - **`setStatus` and `review`:** compare-and-set on the revision; a stale write turns into `retryLater(0)`.
 - **`RunDue`:** select due IDs (`next_attempt_at <= now`, oldest first, `LIMIT ?`), then run `MatchItem` on each. Count the outcomes, collect database errors in `Failed`, stop with `ErrPaused` on `OutcomeSkipped`, and stop if `ctx` ends.
 - **`Planned` tags:** `RunDue` and `MatchItem` get `// Planned: META-1c (the metadata job loop and the fix-match endpoint run them)`.
@@ -1261,7 +1430,7 @@ git commit -m "feat(metadata): matching with §3.7 precedence, review queue and 
 **Verified while writing this plan:**
 - **Prototype:** all of this ran on LIB-2a's code (branch `feat/lib-2a-catalogue`, PR #111). `make check` passed, and the metadata tests passed 5 times in a row under `-race`.
 - **Rebuild:** each task was rebuilt in order on an export of that base. Each failed with its Step 2 messages before its implementation and passed after, and the result is identical to the prototype.
-- **Mutation check:** each of these 24 made a test fail:
+- **Mutation check:** each of these 34 made a test fail:
   - locked fields overwritten on refresh
   - no compare-and-set when applying
   - a low score auto-matched
@@ -1286,6 +1455,23 @@ git commit -m "feat(metadata): matching with §3.7 precedence, review queue and 
   - the record kind not checked
   - year edits unbounded
   - fix-match keeping candidates
+  - added after Pete's review (#121):
+    - the backoff shift not clamped
+    - no retry jitter
+    - jitter of up to 50% instead of 10%
+    - an edited item's new row not queued
+    - fix-match keeping the other namespaces' IDs
+    - fix-match keeping unlocked fields
+    - fix-match deleting locked fields too
+    - hints not checked across namespaces
+    - marks dropped in every script
+    - Latin marks kept
+- **Pete's review on #121** found three blocking problems, each now fixed with a test that failed first:
+  - **Backoff overflow:** the plan described the backoff as `retryBase << (attempt − 1)`, which overflows after 29 attempts. The prototype already clamped the shift (at 20), so `TestBackoffStaysCappedAfterManyFailures` passed at once; its mutant (no clamp) is caught.
+  - **An edit before matching** left the item unqueued forever.
+  - **A second fix-match in another namespace** left a permanent conflict.
+
+  Four non-blocking notes are also handled here: Latin-only folding, the admin-merge note (Decision 2), hints checked across namespaces, and nits (provenance constants, trimming, the genres test, jitter).
 - **Found while prototyping:**
   - The first conflict check hid that a match could replace a locked ID's `user` provenance with the provider's; the test now pins it.
   - No test covered a hint pointing at the wrong kind of record; added.
