@@ -52,9 +52,12 @@ type itemInfo struct {
 	nfos        map[string][]string // NFO paths by root path
 }
 
-// MatchItem matches one movie or show and returns its outcome. Provider
-// failures are outcomes (retry, or skipped when paused), not errors; errors
-// are database errors and ErrInvalid for items that aren't movies or shows.
+// MatchItem matches one movie or show and returns its outcome. A non-nil
+// error takes precedence over the outcome: it is ErrItemNotFound, ErrInvalid
+// (not a movie or show), or a database error (with OutcomeSkipped if the
+// provider refused the credentials but couldn't be paused). Provider failures
+// are outcomes, not errors: OutcomeRetry (backed off), or (OutcomeSkipped,
+// nil) when the provider is paused, now or by this call.
 // Planned: META-1c (the metadata job loop and the fix-match endpoint run them).
 func (m *Matcher) MatchItem(ctx context.Context, itemID string) (string, error) {
 	prov := m.Provider.Name()
@@ -72,7 +75,7 @@ func (m *Matcher) MatchItem(ctx context.Context, itemID string) (string, error) 
 	// 1. The admin's locked ID wins; hints are ignored.
 	for _, ns := range namespaces {
 		if id, ok := info.locked[ns]; ok {
-			out, err := m.lookup(ctx, itemID, info, ns, id, nil)
+			out, err := m.lookup(ctx, itemID, info, ns, id, nil, nil)
 			if out != "" || err != nil {
 				return out, err
 			}
@@ -99,38 +102,60 @@ func (m *Matcher) MatchItem(ctx context.Context, itemID string) (string, error) 
 			check[ns] = vs[0]
 		}
 	}
+	conflict := func(reason string) (string, error) {
+		return m.Store.setStatus(ctx, itemID, info.rev, contracts.MatchConflict, reason)
+	}
 	for _, ns := range namespaces {
 		if id, ok := check[ns]; ok {
-			out, err := m.lookup(ctx, itemID, info, ns, id, check)
+			out, err := m.lookup(ctx, itemID, info, ns, id, check, conflict)
 			if out != "" || err != nil {
 				return out, err
 			}
-			break // an unknown hint, or another kind: search instead
+			delete(check, ns) // unknown, or another kind: try the next hint
 		}
 	}
 
-	// 3. A confident search result, else 4. the review queue.
-	cands, err := m.Provider.Search(ctx, Query{Kind: info.kind, Title: info.title, Year: info.year})
+	// 3. A confident search result that agrees with the remaining hints,
+	// else 4. the review queue.
+	q := Query{Kind: info.kind, Title: info.title, Year: info.year}
+	cands, err := m.Provider.Search(ctx, q)
 	if err != nil {
 		return m.failed(ctx, itemID, info, err)
 	}
-	ranked, auto := Rank(Query{Kind: info.kind, Title: info.title, Year: info.year}, cands)
+	ranked, auto := Rank(q, cands)
+	if len(ranked) == 0 {
+		return m.Store.review(ctx, itemID, info.rev, nil, "no search results")
+	}
 	if auto {
-		out, err := m.lookup(ctx, itemID, info, ranked[0].Provider, ranked[0].ID, nil)
+		toReview := func(reason string) (string, error) { return m.Store.review(ctx, itemID, info.rev, ranked, reason) }
+		out, err := m.lookup(ctx, itemID, info, ranked[0].Provider, ranked[0].ID, check, toReview)
 		if out != "" || err != nil {
 			return out, err
 		}
 	}
-	return m.Store.review(ctx, itemID, info.rev, ranked)
+	return m.Store.review(ctx, itemID, info.rev, ranked, "")
 }
 
-// hints merges the item's name hints with the IDs in its NFO files. An NFO
-// that can't be read is skipped. conflicts lists namespaces the NFO files
-// disagree on.
+// hints merges the item's name hints with the IDs in its NFO files, with
+// numeric IDs written without leading zeros ({tmdb-0949} is 949). An NFO that
+// can't be read is skipped. conflicts lists namespaces the NFO files disagree
+// on.
 func (m *Matcher) hints(info itemInfo) (map[string][]string, []string) {
 	hints := map[string][]string{}
+	add := func(ns, v string) {
+		if strings.Trim(v, "0123456789") == "" {
+			if v = strings.TrimLeft(v, "0"); v == "" {
+				return
+			}
+		}
+		if !slices.Contains(hints[ns], v) {
+			hints[ns] = append(hints[ns], v)
+		}
+	}
 	for ns, vs := range info.hints {
-		hints[ns] = slices.Clone(vs)
+		for _, v := range vs {
+			add(ns, v)
+		}
 	}
 	var conflicts []string
 	if m.Media == nil {
@@ -141,16 +166,11 @@ func (m *Matcher) hints(info itemInfo) (map[string][]string, []string) {
 		if err != nil {
 			continue
 		}
-		ids, bad, err := readNFOs(r, paths)
+		ids, bad := readNFOs(r, paths)
 		r.Close()
-		if err != nil {
-			continue
-		}
 		conflicts = append(conflicts, bad...)
 		for ns, v := range ids {
-			if !slices.Contains(hints[ns], v) {
-				hints[ns] = append(hints[ns], v)
-			}
+			add(ns, v)
 		}
 	}
 	return hints, conflicts
@@ -159,8 +179,10 @@ func (m *Matcher) hints(info itemInfo) (map[string][]string, []string) {
 // lookup fetches the record for ns:id and applies it. It returns "" with no
 // error when the provider doesn't know it or it's another kind, so the
 // caller falls back. A record reporting an ID that differs from a hint in
-// check makes the item a conflict.
-func (m *Matcher) lookup(ctx context.Context, itemID string, info itemInfo, ns, id string, check map[string]string) (string, error) {
+// check is never applied: clash settles the item with the reason instead (a
+// conflict for a hint's record, review for a search result's).
+func (m *Matcher) lookup(ctx context.Context, itemID string, info itemInfo, ns, id string, check map[string]string,
+	clash func(reason string) (string, error)) (string, error) {
 	prov := m.Provider.Name()
 	rec, err := m.Provider.Lookup(ctx, info.kind, ns, id)
 	if errors.Is(err, ErrNotFound) {
@@ -178,20 +200,20 @@ func (m *Matcher) lookup(ctx context.Context, itemID string, info itemInfo, ns, 
 			reported = rec.ID
 		}
 		if reported != "" && reported != hint {
-			return m.Store.setStatus(ctx, itemID, info.rev, contracts.MatchConflict,
-				fmt.Sprintf("the hints point at different records: %s %s is %s %s, but the hints say %s %s", ns, id, hns, reported, hns, hint))
+			return clash(fmt.Sprintf("%s %s is %s %s, but the hints say %s %s", ns, id, hns, reported, hns, hint))
 		}
 	}
 	out, err := m.Store.applyRecord(ctx, itemID, info.rev, prov, rec)
 	if errors.Is(err, errStale) {
-		return OutcomeRetry, m.Store.retryLater(ctx, itemID, 0, err.Error())
+		return OutcomeRetry, m.Store.retryLater(ctx, itemID, 0, 0, err.Error())
 	}
 	return out, err
 }
 
 // failed handles a provider error: an auth error pauses the provider and
 // leaves the item queued as it was (if pausing fails, the error comes with
-// OutcomeSkipped so RunDue stops); anything else retries with backoff.
+// OutcomeSkipped so RunDue stops); anything else retries with backoff, unless
+// the item was edited during the call.
 func (m *Matcher) failed(ctx context.Context, itemID string, info itemInfo, err error) (string, error) {
 	if ctx.Err() != nil {
 		return "", ctx.Err()
@@ -202,41 +224,47 @@ func (m *Matcher) failed(ctx context.Context, itemID string, info itemInfo, err 
 		}
 		return OutcomeSkipped, nil
 	}
-	return OutcomeRetry, m.Store.retryLater(ctx, itemID, info.attempts+1, err.Error())
+	return OutcomeRetry, m.Store.retryLater(ctx, itemID, info.rev, info.attempts+1, err.Error())
 }
 
 // RunDue matches up to limit due items, oldest first, each in its own
-// transactions. A database error on one item goes in Batch.Failed and the
-// batch goes on; a paused provider stops it with ErrPaused, a failure to pause
-// it stops it with that error, and so does ctx.
+// transactions. A database error on one item goes in Batch.Failed, the item
+// is backed off like a provider failure, and the batch goes on; a paused
+// provider stops it with ErrPaused, a failure to pause it stops it with that
+// error, and so does ctx.
 // Planned: META-1c (the metadata job loop and the fix-match endpoint run them).
 func (m *Matcher) RunDue(ctx context.Context, limit int) (Batch, error) {
 	var b Batch
 	if limit <= 0 {
 		return b, nil
 	}
-	rows, err := m.Store.db.QueryContext(ctx, `SELECT item_id FROM metadata_items WHERE next_attempt_at <= ?
+	rows, err := m.Store.db.QueryContext(ctx, `SELECT item_id, attempts FROM metadata_items WHERE next_attempt_at <= ?
 		ORDER BY next_attempt_at, item_id LIMIT ?`, ms(m.Store.now()), limit)
 	if err != nil {
 		return b, err
 	}
-	var due []string
+	type dueItem struct {
+		id       string
+		attempts int
+	}
+	var due []dueItem
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
+		var d dueItem
+		if err := rows.Scan(&d.id, &d.attempts); err != nil {
 			rows.Close()
 			return b, err
 		}
-		due = append(due, id)
+		due = append(due, d)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
 		return b, err
 	}
-	for _, id := range due {
+	for _, d := range due {
 		if err := ctx.Err(); err != nil {
 			return b, err
 		}
+		id := d.id
 		out, err := m.MatchItem(ctx, id)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -246,6 +274,10 @@ func (m *Matcher) RunDue(ctx context.Context, limit int) (Batch, error) {
 				return b, err
 			}
 			b.Failed = append(b.Failed, ItemError{ItemID: id, Err: err.Error()})
+			if !errors.Is(err, ErrInvalid) && !errors.Is(err, ErrItemNotFound) {
+				// Best effort, so the item isn't first in every batch.
+				_ = m.Store.retryLater(ctx, id, 0, d.attempts+1, err.Error())
+			}
 			continue
 		}
 		switch out {
@@ -308,27 +340,27 @@ func (s *Store) itemInfo(ctx context.Context, itemID string) (itemInfo, error) {
 		`SELECT namespace, value FROM library_id_hints WHERE item_id = ? ORDER BY namespace, value`, itemID); err != nil {
 		return info, err
 	}
-	// NFO files: beside each video and movie.nfo in its folder for a movie,
-	// tvshow.nfo in each show folder (Decision 11).
+	// NFO files (Decision 11): beside each video, and movie.nfo or
+	// tvshow.nfo in the item's own folders. A folder shared with other items
+	// (several loose films) names none of them, so its movie.nfo is ignored.
 	addNFO := func(root, p string) {
 		if !slices.Contains(info.nfos[root], p) {
 			info.nfos[root] = append(info.nfos[root], p)
 		}
 	}
 	if info.kind == "movie" {
-		err = scanPairs(ctx, tx, func(root, file string) {
-			addNFO(root, strings.TrimSuffix(file, path.Ext(file))+".nfo")
-			if dir := path.Dir(file); dir != "." {
-				addNFO(root, path.Join(dir, "movie.nfo"))
-			}
-		}, `SELECT r.path, f.path FROM library_versions v JOIN library_files f ON f.id = v.file_id
-			JOIN library_roots r ON r.id = f.root_id WHERE v.item_id = ? AND f.state = 'present' ORDER BY r.path, f.path`, itemID)
-	} else {
-		err = scanPairs(ctx, tx, func(root, folder string) { addNFO(root, path.Join(folder, "tvshow.nfo")) },
-			`SELECT r.path, f.folder FROM library_folders f JOIN library_roots r ON r.id = f.root_id
-			WHERE f.item_id = ? AND f.folder != '' ORDER BY r.path, f.folder`, itemID)
+		if err := scanPairs(ctx, tx, func(root, file string) { addNFO(root, strings.TrimSuffix(file, path.Ext(file))+".nfo") },
+			`SELECT r.path, f.path FROM library_versions v JOIN library_files f ON f.id = v.file_id
+			JOIN library_roots r ON r.id = f.root_id WHERE v.item_id = ? AND f.state = 'present' ORDER BY r.path, f.path`, itemID); err != nil {
+			return info, err
+		}
 	}
-	if err != nil {
+	folderNFO := map[string]string{"movie": "movie.nfo", "show": "tvshow.nfo"}[info.kind]
+	if err := scanPairs(ctx, tx, func(root, folder string) { addNFO(root, path.Join(folder, folderNFO)) },
+		`SELECT r.path, f.folder FROM library_folders f JOIN library_roots r ON r.id = f.root_id
+		WHERE f.item_id = ? AND f.folder != '' AND NOT EXISTS (SELECT 1 FROM library_folders o
+			WHERE o.root_id = f.root_id AND o.folder = f.folder AND o.item_id != f.item_id)
+		ORDER BY r.path, f.folder`, itemID); err != nil {
 		return info, err
 	}
 	return info, tx.Commit()

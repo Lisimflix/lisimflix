@@ -48,16 +48,36 @@ func TestReadNFOs(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer root.Close()
-	ids, conflicts, err := readNFOs(root, []string{"Heat (1995)/Heat (1995).nfo", "Heat (1995)/movie.nfo", "Heat (1995)/missing.nfo"})
-	if err != nil || ids["tmdb"] != "949" || ids["imdb"] != "tt0113277" || len(conflicts) != 1 || conflicts[0] != "tmdb" {
-		t.Fatalf("ids %v conflicts %v err %v", ids, conflicts, err)
+	ids, conflicts := readNFOs(root, []string{"Heat (1995)/Heat (1995).nfo", "Heat (1995)/movie.nfo", "Heat (1995)/missing.nfo"})
+	if ids["tmdb"] != "949" || ids["imdb"] != "tt0113277" || len(conflicts) != 1 || conflicts[0] != "tmdb" {
+		t.Fatalf("ids %v conflicts %v", ids, conflicts)
 	}
 	// Only the first MiB is read: a truncated file gives no XML IDs.
-	if ids, _, err := readNFOs(root, []string{"Big/movie.nfo"}); err != nil || len(ids) != 0 {
-		t.Fatalf("oversized NFO: %v %v", ids, err)
+	if ids, _ := readNFOs(root, []string{"Big/movie.nfo"}); len(ids) != 0 {
+		t.Fatalf("oversized NFO: %v", ids)
 	}
-	// Paths can't leave the root.
-	if _, _, err := readNFOs(root, []string{"../outside.nfo"}); err == nil {
-		t.Fatal("read outside the root")
+	// Paths can't leave the root: a real NFO above it is skipped.
+	inner, err := root.OpenRoot("Big")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer inner.Close()
+	if ids, _ := readNFOs(inner, []string{"../Heat (1995)/movie.nfo"}); len(ids) != 0 {
+		t.Fatalf("read outside the root: %v", ids)
+	}
+}
+
+// A directory named like an NFO is skipped; the real NFOs beside it are read.
+func TestReadNFOsSkipsDirectories(t *testing.T) {
+	dir := t.TempDir()
+	os.MkdirAll(filepath.Join(dir, "Heat (1995)", "movie.nfo"), 0o755)
+	os.WriteFile(filepath.Join(dir, "Heat (1995)", "Heat (1995).nfo"), []byte(`<movie><tmdbid>949</tmdbid></movie>`), 0o644)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if ids, _ := readNFOs(root, []string{"Heat (1995)/movie.nfo", "Heat (1995)/Heat (1995).nfo"}); ids["tmdb"] != "949" {
+		t.Fatalf("ids %v: the directory hid the real NFO", ids)
 	}
 }

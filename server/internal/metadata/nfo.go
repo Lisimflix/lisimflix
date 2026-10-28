@@ -3,13 +3,12 @@ package metadata
 import (
 	"bytes"
 	"encoding/xml"
-	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"regexp"
 	"slices"
 	"strings"
+	"syscall"
 )
 
 // maxNFOBytes bounds how much of an untrusted NFO file is read.
@@ -79,22 +78,15 @@ func parseNFO(b []byte) map[string]string {
 }
 
 // readNFOs reads the NFO files at paths (relative to root) and merges their
-// IDs. A missing file is skipped. A namespace given different values by two
-// files is listed in conflicts and keeps its first value.
-func readNFOs(root *os.Root, paths []string) (ids map[string]string, conflicts []string, err error) {
+// IDs. A file that is missing, unreadable or not a regular file (a directory,
+// a FIFO) is skipped. A namespace given different values by two files is
+// listed in conflicts and keeps its first value.
+func readNFOs(root *os.Root, paths []string) (ids map[string]string, conflicts []string) {
 	ids = map[string]string{}
 	for _, p := range paths {
-		f, err := root.Open(p)
-		if errors.Is(err, fs.ErrNotExist) {
+		b, ok := readNFO(root, p)
+		if !ok {
 			continue
-		}
-		if err != nil {
-			return nil, nil, err
-		}
-		b, err := io.ReadAll(io.LimitReader(f, maxNFOBytes))
-		f.Close()
-		if err != nil {
-			return nil, nil, err
 		}
 		for ns, v := range parseNFO(b) {
 			switch have, ok := ids[ns]; {
@@ -105,5 +97,20 @@ func readNFOs(root *os.Root, paths []string) (ids map[string]string, conflicts [
 			}
 		}
 	}
-	return ids, conflicts, nil
+	return ids, conflicts
+}
+
+// readNFO reads at most maxNFOBytes of a regular file. The open doesn't
+// block, so a FIFO named like an NFO can't hang matching.
+func readNFO(root *os.Root, p string) ([]byte, bool) {
+	f, err := root.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return nil, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxNFOBytes))
+	return b, err == nil
 }

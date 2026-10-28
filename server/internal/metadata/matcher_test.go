@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -43,6 +44,7 @@ type fakeProvider struct {
 	err     error
 	calls   []string
 	during  func()
+	ns      []string // Namespaces, if not the default
 }
 
 func newFake() *fakeProvider {
@@ -68,8 +70,13 @@ func (f *fakeProvider) add(r Record) {
 	}
 }
 
-func (f *fakeProvider) Name() string         { return "tmdb" }
-func (f *fakeProvider) Namespaces() []string { return []string{"tmdb", "imdb"} }
+func (f *fakeProvider) Name() string { return "tmdb" }
+func (f *fakeProvider) Namespaces() []string {
+	if f.ns != nil {
+		return f.ns
+	}
+	return []string{"tmdb", "imdb"}
+}
 
 func (f *fakeProvider) call(what string) error {
 	f.mu.Lock()
@@ -654,5 +661,142 @@ func TestFailedPauseStopsTheBatch(t *testing.T) {
 	b, err := e.m.RunDue(ctx, 10)
 	if err == nil || len(e.fake.calls) != 1 {
 		t.Fatalf("RunDue = %+v, %v after %d calls: want the pause error and one call", b, err, len(e.fake.calls))
+	}
+}
+
+func (e *menv) lastError(id string) string {
+	e.t.Helper()
+	var reason string
+	e.db.QueryRow(`SELECT coalesce(last_error, '') FROM metadata_items WHERE item_id = ?`, id).Scan(&reason)
+	return reason
+}
+
+func (e *menv) due(id string) (at int64, attempts int) {
+	e.t.Helper()
+	e.db.QueryRow(`SELECT coalesce(next_attempt_at, -1), attempts FROM metadata_items WHERE item_id = ?`, id).Scan(&at, &attempts)
+	return at, attempts
+}
+
+// Final review: a hint the provider doesn't know is dropped, and the next
+// provider-namespace hint is tried before searching.
+func TestStaleHintFallsThroughToTheNextHint(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-999}/Heat (1995).mkv", "x")
+	e.write("Movies/Heat (1995) {tmdb-999}/movie.nfo", `<movie><uniqueid type="imdb">tt0133093</uniqueid></movie>`)
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	if out := e.match(id); out != OutcomeMatched || !slices.Equal(e.fake.calls, []string{"lookup tmdb:999", "lookup imdb:tt0133093"}) {
+		t.Fatalf("outcome %s calls %v", out, e.fake.calls)
+	}
+	if x, _ := extID(e.get(id), "tmdb"); x.ID != "603" {
+		t.Fatalf("matched %+v, want the NFO's film", x)
+	}
+}
+
+// Final review: a search result that contradicts a surviving hint (here an
+// IMDb ID the provider can't look up) is never applied: the item goes to
+// review with its candidates and the reason.
+func TestSearchResultMustAgreeWithHints(t *testing.T) {
+	e := newMatchEnv(t)
+	e.fake.ns = []string{"tmdb"}
+	e.write("Movies/Heat (1995) {tmdb-999}/Heat (1995).mkv", "x")
+	e.write("Movies/Heat (1995) {tmdb-999}/movie.nfo", `<movie><uniqueid type="imdb">tt0133093</uniqueid></movie>`)
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	if out := e.match(id); out != OutcomeReview || !slices.Equal(e.fake.calls, []string{"lookup tmdb:999", "search heat", "lookup tmdb:949"}) {
+		t.Fatalf("outcome %s calls %v", out, e.fake.calls)
+	}
+	var cands int
+	e.db.QueryRow(`SELECT COUNT(*) FROM metadata_candidates WHERE item_id = ?`, id).Scan(&cands)
+	md := e.get(id)
+	if md.MatchStatus != contracts.MatchReview || cands != 2 || e.lastError(id) == "" || md.Fields.Overview.Value != nil || len(md.ExternalIDs) != 0 {
+		t.Fatalf("status %s, %d candidates, reason %q, %+v", md.MatchStatus, cands, e.lastError(id), md)
+	}
+}
+
+// Final review: a provider failure that lands after an edit made during the
+// call leaves the item alone (compare-and-set): it stays due, not backed off.
+func TestFailureAfterAnEditLeavesTheItemDue(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	e.fake.err = fmt.Errorf("%w: 503", ErrUnavailable)
+	e.fake.during = func() {
+		e.fake.during = nil
+		if _, err := e.st.Edit(context.Background(), id, 1, []Edit{{Field: FieldOverview, Value: raw("Mine.")}}); err != nil {
+			t.Error(err)
+		}
+	}
+	if out := e.match(id); out != OutcomeRetry {
+		t.Fatalf("outcome %s", out)
+	}
+	if at, attempts := e.due(id); at != e.clock.UnixMilli() || attempts != 0 || e.lastError(id) != "" {
+		t.Fatalf("due at %d (now %d), %d attempts, reason %q: the stale failure backed off the edited item", at, e.clock.UnixMilli(), attempts, e.lastError(id))
+	}
+}
+
+// Final review: an item whose matching hits a database error is backed off
+// like a provider failure, so it isn't first in every batch.
+func TestDatabaseErrorBacksOff(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	ctx := context.Background()
+	e.st.Enqueue(ctx, 10)
+	id := e.item("Heat")
+	if _, err := e.db.Exec(`CREATE TRIGGER fields_broken BEFORE INSERT ON metadata_fields BEGIN SELECT RAISE(ABORT, 'fields broken'); END`); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := e.m.RunDue(ctx, 10); err != nil || len(b.Failed) != 1 {
+		t.Fatalf("RunDue %+v %v", b, err)
+	}
+	if at, attempts := e.due(id); at != e.clock.Add(retryBase).UnixMilli() || attempts != 1 || !strings.Contains(e.lastError(id), "fields broken") {
+		t.Fatalf("due at %d, %d attempts, reason %q: want backed off a minute", at, attempts, e.lastError(id))
+	}
+	if b, err := e.m.RunDue(ctx, 10); err != nil || len(b.Failed) != 0 || len(e.fake.calls) != 1 {
+		t.Fatalf("next batch %+v %v, calls %v: the failed item ran again at once", b, err, e.fake.calls)
+	}
+}
+
+// Final review: the review queue says why an item has no candidates.
+func TestEmptySearchSaysWhy(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Unknown Film (2001)/Unknown Film (2001).mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Unknown Film")
+	if out := e.match(id); out != OutcomeReview || e.lastError(id) != "no search results" {
+		t.Fatalf("outcome %s, reason %q", out, e.lastError(id))
+	}
+}
+
+// Final review: a numeric hint with leading zeros ({tmdb-0949}) is the same
+// ID as the NFO's 949, not a conflict.
+func TestLeadingZerosInHints(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-0949}/Heat (1995).mkv", "x")
+	e.write("Movies/Heat (1995) {tmdb-0949}/movie.nfo", `<movie><tmdbid>949</tmdbid></movie>`)
+	e.library("movies", "Movies")
+	if out := e.match(e.item("Heat")); out != OutcomeMatched || !slices.Equal(e.fake.calls, []string{"lookup tmdb:949"}) {
+		t.Fatalf("outcome %s calls %v", out, e.fake.calls)
+	}
+}
+
+// Final review: a movie.nfo in a folder shared by several films belongs to
+// none of them; an NFO named after the video still applies to it.
+func TestSharedFolderMovieNFOIsIgnored(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Random/Heat (1995).mkv", "x")
+	e.write("Movies/Random/The Matrix (1999).mkv", "x")
+	e.write("Movies/Random/movie.nfo", `<movie><uniqueid type="imdb">tt0133093</uniqueid></movie>`)
+	e.write("Movies/Random/The Matrix (1999).nfo", `<movie><uniqueid type="imdb">tt0133093</uniqueid></movie>`)
+	e.library("movies", "Movies")
+	heat := e.item("Heat")
+	if out := e.match(heat); out != OutcomeMatched || !slices.Equal(e.fake.calls, []string{"search heat", "lookup tmdb:949"}) {
+		t.Fatalf("Heat: outcome %s calls %v", out, e.fake.calls)
+	}
+	e.fake.calls = nil
+	if out := e.match(e.item("The Matrix")); out != OutcomeMatched || !slices.Equal(e.fake.calls, []string{"lookup imdb:tt0133093"}) {
+		t.Fatalf("The Matrix: outcome %s calls %v", out, e.fake.calls)
 	}
 }

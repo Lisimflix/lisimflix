@@ -168,10 +168,11 @@ func (s *Store) setStatus(ctx context.Context, itemID string, rev int64, status,
 }
 
 // review puts the item in the review queue with the best reviewKeep
-// candidates, if it is still at revision rev; a stale item is retried instead.
-func (s *Store) review(ctx context.Context, itemID string, rev int64, ranked []Scored) (string, error) {
+// candidates and why ("" for no reason beyond a weak match), if it is still
+// at revision rev; a stale item is retried instead.
+func (s *Store) review(ctx context.Context, itemID string, rev int64, ranked []Scored, reason string) (string, error) {
 	return s.finish(ctx, itemID, rev, func(tx *sql.Tx, now int64) (string, error) {
-		if err := finishMatch(ctx, tx, itemID, contracts.MatchReview, "", now); err != nil {
+		if err := finishMatch(ctx, tx, itemID, contracts.MatchReview, reason, now); err != nil {
 			return "", err
 		}
 		for _, c := range ranked[:min(len(ranked), reviewKeep)] {
@@ -199,7 +200,7 @@ func (s *Store) finish(ctx context.Context, itemID string, rev int64, write func
 	if err := bump(ctx, tx, itemID, rev, now); err != nil {
 		if errors.Is(err, ErrRevisionConflict) {
 			tx.Rollback() // before retryLater's own write
-			return OutcomeRetry, s.retryLater(ctx, itemID, 0, errStale.Error())
+			return OutcomeRetry, s.retryLater(ctx, itemID, 0, 0, errStale.Error())
 		}
 		return "", err
 	}
@@ -220,11 +221,14 @@ func retryDelay(attempt int) time.Duration {
 }
 
 // retryLater queues the item again after attempt's backoff (with jitter),
-// keeping its metadata and recording why.
-func (s *Store) retryLater(ctx context.Context, itemID string, attempt int, reason string) error {
+// keeping its metadata and recording why. With rev > 0 it is compare-and-set:
+// an item edited since rev was read is left alone (the edit already queued
+// or settled it).
+func (s *Store) retryLater(ctx context.Context, itemID string, rev int64, attempt int, reason string) error {
 	now := s.now()
 	at := now.Add(s.jitter(retryDelay(attempt)))
-	_, err := s.db.ExecContext(ctx, `UPDATE metadata_items SET next_attempt_at = ?, attempts = ?, last_error = ?, updated_at = ? WHERE item_id = ?`,
-		ms(at), attempt, nullable(bounded(reason)), ms(now), itemID)
+	_, err := s.db.ExecContext(ctx, `UPDATE metadata_items SET next_attempt_at = ?, attempts = ?, last_error = ?, updated_at = ?
+		WHERE item_id = ? AND (? = 0 OR revision = ?)`,
+		ms(at), attempt, nullable(bounded(reason)), ms(now), itemID, rev, rev)
 	return err
 }
