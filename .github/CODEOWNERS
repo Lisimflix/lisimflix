@@ -1,0 +1,4 @@
+# Every PR requests the reviewers team; GitHub auto-assigns one member
+# (load balance). One approval from anyone but the author is enough;
+# code-owner review is not required. See CONTRIBUTING.md, Reviewers.
+* @Lisimflix/reviewers

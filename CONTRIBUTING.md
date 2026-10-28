@@ -79,7 +79,10 @@ PR and turn it back on straight after.
 - Ondo (`ondona`) and Millzy (`Millzy99`) can also review and approve.
 - One approval from any of them is enough, as long as it isn't the PR's author.
   Never approve your own PR.
-- Request one reviewer; if they don't respond, ask another.
+- You don't need to request anyone: `.github/CODEOWNERS` requests the `reviewers`
+  team on every PR, and GitHub assigns one member, spreading reviews evenly. Set
+  your GitHub status to Busy while you're away and you'll be skipped.
+- If the assigned reviewer hasn't responded within 24 hours, anyone else can review.
 
 ## Working together
 
