@@ -29,8 +29,13 @@ Never bypass it with `--no-verify`.
 5. Another member reviews: run `/code-review` in Claude Code on the PR branch as a
    first pass, then read it yourself and approve or request changes.
    Check that `README.md` still matches the branch before approving.
-   Don't merge your own PR unreviewed (except owners, see below).
 6. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
+
+`main` is protected by a GitHub ruleset with no bypass, so GitHub enforces the steps
+above: no direct or force pushes, and a PR merges only by squash, with one approval
+and a passing `check`. This applies to every PR, including docs, config and Dependabot.
+An admin can disable the ruleset (Settings → Rules) for an emergency; say why on the
+PR and turn it back on straight after.
 
 ## Checks (CI)
 
@@ -61,8 +66,8 @@ Never bypass it with `--no-verify`.
 
 ## Owners
 
-- **Git hygiene and CI** (`.github/`, `.githooks/`, `CONTRIBUTING.md`, `CLAUDE.md`): Pete.
-  The owner may self-merge docs and config changes in this area.
+- **Git hygiene and CI** (`.github/`, `.githooks/`, `CONTRIBUTING.md`, `CLAUDE.md`, the
+  `main` ruleset): Pete.
 - **Spec, plans and code**: shared. Anyone can improve them through a PR that the
   other member reviews. If someone is actively working on a doc (open PR or assigned
   issue), don't edit it; open an issue for them instead.
