@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -77,7 +78,13 @@ func cmdLibrary(args []string, stdout io.Writer) error {
 		}
 		defer media.Close()
 		for _, f := range folders {
-			if info, err := media.Stat(strings.TrimPrefix(f, "./")); err != nil || !info.IsDir() {
+			rel := strings.TrimPrefix(f, "./")
+			// A symlinked library folder would be scanned through its link but
+			// could also be added a second time by its target's name.
+			if info, err := media.Lstat(rel); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+				return fmt.Errorf("folder %q is a symlink; add the folder it points to instead", f)
+			}
+			if info, err := media.Stat(rel); err != nil || !info.IsDir() {
 				return fmt.Errorf("folder %q isn't a folder inside the media root", f)
 			}
 		}

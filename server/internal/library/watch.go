@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -55,11 +56,21 @@ func newWatcher(h watchHooks) (*watcher, error) {
 // added stay watched.
 func (w *watcher) watch(rootID, abs string) (string, error) {
 	w.unwatch(rootID)
+	// A library folder that is a symlink is watched at its target: inotify
+	// reports the target's paths, and WalkDir doesn't enter a symlinked root.
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = real
+	}
 	w.mu.Lock()
 	w.roots[rootID] = abs
 	w.mu.Unlock()
 	if err := w.addTree(abs); err != nil {
 		return WatchLimited, err
+	}
+	if !slices.Contains(w.fw.WatchList(), abs) {
+		// Without a watch on the root itself, rechecks would treat it as
+		// lost every minute.
+		return WatchLimited, errors.New("library: the root folder couldn't be watched")
 	}
 	return WatchOn, nil
 }
@@ -80,7 +91,11 @@ func (w *watcher) addTree(dir string) error {
 		if p != dir && skipDir(d.Name()) {
 			return filepath.SkipDir
 		}
-		return w.fw.Add(p)
+		err = w.fw.Add(p)
+		if p != dir && (errors.Is(err, fs.ErrNotExist) || errors.Is(err, fs.ErrPermission)) {
+			return nil // gone or unreadable meanwhile: the scan reports it
+		}
+		return err // the watch limit (ENOSPC) stops the walk
 	})
 }
 

@@ -72,7 +72,8 @@ type rootSched struct {
 	full     string            // cause of a pending whole-root scan; "" if none
 	scopes   map[string]string // pending scoped scans → their cause
 	first    time.Time         // first pending hint, for MaxDelay
-	due      time.Time         // pending work may start then
+	due      time.Time         // the pending scoped scans may start then
+	fullDue  time.Time         // the pending whole-root scan may start then
 	nextFull time.Time
 	watch    string
 	probe    bool      // probes may be due now
@@ -216,7 +217,7 @@ func (s *Scheduler) Cancel(libraryID string) error {
 			continue
 		}
 		n++
-		rs.full, rs.scopes, rs.first = "", map[string]string{}, time.Time{}
+		rs.full, rs.scopes, rs.first, rs.due, rs.fullDue = "", map[string]string{}, time.Time{}, time.Time{}, time.Time{}
 		rs.probe, rs.probeAt = false, time.Time{}
 		for _, j := range []*job{s.scanning, s.probing} {
 			if j != nil && j.root == rs.ID {
@@ -303,9 +304,10 @@ func (s *Scheduler) queueFull(rs *rootSched, cause string, due time.Time) {
 	}
 	if urgent(rs.full) {
 		clear(rs.scopes)
+		rs.first, rs.due = time.Time{}, time.Time{}
 	}
-	if rs.due.IsZero() || due.Before(rs.due) {
-		rs.due = due
+	if rs.fullDue.IsZero() || due.Before(rs.fullDue) {
+		rs.fullDue = due
 	}
 }
 
@@ -398,11 +400,9 @@ func (s *Scheduler) queueScope(rs *rootSched, scope, cause string) {
 	if rs.first.IsZero() {
 		rs.first = now
 	}
-	due := minTime(now.Add(s.opt.Debounce), rs.first.Add(s.opt.MaxDelay))
-	if rs.full != "" && rs.due.Before(due) {
-		due = rs.due // a queued scheduled scan is due sooner: don't delay the root
-	}
-	rs.due = due
+	// Scoped scans keep their own debounce, whatever whole-root scan is
+	// queued; that scan's due time is separate and never pushed back.
+	rs.due = minTime(now.Add(s.opt.Debounce), rs.first.Add(s.opt.MaxDelay))
 	for p := range rs.scopes {
 		if within(scope, p) {
 			return
@@ -417,15 +417,6 @@ func (s *Scheduler) queueScope(rs *rootSched, scope, cause string) {
 		clear(rs.scopes)
 	}
 	wake(s.scanWake)
-}
-
-// priority orders due work: 0 for scoped scans and urgent whole-root scans,
-// 1 for a scheduled or startup whole-root scan with nothing else pending.
-func priority(rs *rootSched) int {
-	if len(rs.scopes) == 0 && rs.full != "" && !urgent(rs.full) {
-		return 1
-	}
-	return 0
 }
 
 // within reports whether p is q or inside it.
@@ -482,7 +473,7 @@ func (s *Scheduler) nextScan() (*job, time.Duration) {
 		return nil, 0
 	}
 	now := s.now()
-	var best *rootSched
+	var best candidate
 	wait := time.Duration(0)
 	for _, rs := range s.roots {
 		if s.opt.FullScanEvery > 0 && !now.Before(rs.nextFull) && rs.full == "" {
@@ -493,41 +484,70 @@ func (s *Scheduler) nextScan() (*job, time.Duration) {
 				wait = d
 			}
 		}
-		if !rs.pending() {
-			continue
-		}
-		if rs.due.After(now) {
-			if d := rs.due.Sub(now); wait == 0 || d < wait {
-				wait = d
+		for _, c := range s.candidates(rs, now) {
+			if c.due.After(now) {
+				if d := c.due.Sub(now); wait == 0 || d < wait {
+					wait = d
+				}
+				continue
 			}
-			continue
-		}
-		// Scoped scans and urgent whole-root scans first; scheduled and
-		// startup whole-root scans after them (#106). Then earliest due.
-		if best == nil || priority(rs) < priority(best) || priority(rs) == priority(best) && rs.due.Before(best.due) {
-			best = rs
+			if best.rs == nil || c.prio < best.prio || c.prio == best.prio && c.due.Before(best.due) {
+				best = c
+			}
 		}
 	}
-	if best == nil {
+	if best.rs == nil {
 		return nil, wait
 	}
+	rs := best.rs
 	var j *job
-	if len(best.scopes) > 0 && (best.full == "" || !urgent(best.full)) {
+	if !best.full {
 		// The scoped scans alone; a scheduled whole-root scan stays queued.
-		j = &job{root: best.ID, scopes: slices.Sorted(maps.Keys(best.scopes)), causes: maps.Clone(best.scopes)}
-		clear(best.scopes)
-		best.first = time.Time{}
-		if best.full == "" {
-			best.due = time.Time{}
-		}
+		j = &job{root: rs.ID, scopes: slices.Sorted(maps.Keys(rs.scopes)), causes: maps.Clone(rs.scopes)}
 	} else {
-		j = &job{root: best.ID, full: best.full}
-		best.nextFull = now.Add(s.opt.FullScanEvery)
-		best.full, best.first, best.due = "", time.Time{}, time.Time{}
-		clear(best.scopes)
+		j = &job{root: rs.ID, full: rs.full}
+		// The startup or added scan keeps the staggered next periodic scan
+		// reload set; others restart the interval (#106).
+		if rs.full != CauseStartup && rs.full != CauseAdded {
+			rs.nextFull = now.Add(s.opt.FullScanEvery)
+		}
+		rs.full, rs.fullDue = "", time.Time{}
 	}
+	// A whole-root scan covers the pending scoped scans too.
+	clear(rs.scopes)
+	rs.first, rs.due = time.Time{}, time.Time{}
 	s.scanning = j
 	return j, 0
+}
+
+// candidate is one runnable piece of a root's pending work.
+type candidate struct {
+	rs   *rootSched
+	full bool
+	due  time.Time
+	prio int // 0 runs before 1
+}
+
+// candidates lists the root's pending work (#106): scoped scans and urgent
+// whole-root scans at priority 0; a scheduled or startup whole-root scan at
+// priority 1, until it has waited MaxDelay past its due time, so a stream
+// of hints can't starve it.
+func (s *Scheduler) candidates(rs *rootSched, now time.Time) []candidate {
+	var out []candidate
+	if rs.full != "" && urgent(rs.full) {
+		return append(out, candidate{rs, true, rs.fullDue, 0})
+	}
+	if len(rs.scopes) > 0 {
+		out = append(out, candidate{rs, false, rs.due, 0})
+	}
+	if rs.full != "" {
+		prio := 1
+		if now.Sub(rs.fullDue) >= s.opt.MaxDelay {
+			prio = 0
+		}
+		out = append(out, candidate{rs, true, rs.fullDue, prio})
+	}
+	return out
 }
 
 // execute runs one job's scans.

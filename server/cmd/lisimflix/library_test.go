@@ -94,3 +94,17 @@ func TestLibraryAddChecksInput(t *testing.T) {
 		}
 	}
 }
+
+// Review (LIB-2b): a library folder may not be a symlink. It would be
+// watched as nothing, and could add the same files twice under two paths.
+func TestLibraryAddRefusesSymlinkedFolder(t *testing.T) {
+	f := newFixture(t)
+	media := filepath.Join(f.dir, "media")
+	if err := os.Symlink("Movies", filepath.Join(media, "Films")); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Films"}, nil, &out, &out); code == 0 || !strings.Contains(out.String(), "symlink") {
+		t.Fatalf("symlinked folder accepted (%d): %s", code, out.String())
+	}
+}

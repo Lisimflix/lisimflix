@@ -456,7 +456,8 @@ func TestPeriodicScansAreStaggered(t *testing.T) {
 }
 
 // #106: a hint for a root whose scheduled scan is already due doesn't push
-// the root back by the debounce; the root runs now, scoped scan first.
+// that scan back by the debounce. The root is scanned now, and the
+// whole-root scan covers the import.
 func TestHintDoesNotDelayADueRoot(t *testing.T) {
 	opts := fastOpts
 	opts.NoWatch, opts.Debounce, opts.MaxDelay = true, time.Hour, time.Hour
@@ -471,8 +472,135 @@ func TestHintDoesNotDelayADueRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.sch.Resume()
-	eventually(t, "import and scheduled scan run now", func() bool {
-		return f.runs(t, `cause = 'import' AND status = 'completed'`) == 1 &&
-			f.runs(t, `cause = 'schedule' AND status = 'completed'`) == 1
+	eventually(t, "scheduled scan runs now", func() bool {
+		return f.runs(t, `cause = 'schedule' AND status = 'completed'`) == 1
 	})
+	time.Sleep(100 * time.Millisecond)
+	if n := f.runs(t, `cause = 'import'`); n != 0 {
+		t.Fatalf("%d separate import scans; the whole-root scan covers it", n)
+	}
+}
+
+// Review (LIB-2b): a stream of hints for a root whose scheduled scan is
+// queued keeps its debounce, and can't starve that scheduled scan.
+func TestHintStreamCannotStarveScheduledScan(t *testing.T) {
+	opts := fastOpts
+	opts.NoWatch, opts.Debounce, opts.MaxDelay = true, 100*time.Millisecond, 300*time.Millisecond
+	f := startScheduler(t, "movies", opts, &scriptedProber{}, "A (2001)/A (2001).mkv")
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed'`) == 1 })
+	f.sch.Pause()
+	eventually(t, "idle", func() bool { f.sch.mu.Lock(); defer f.sch.mu.Unlock(); return f.sch.scanning == nil })
+	f.sch.mu.Lock()
+	f.sch.queueFull(f.sch.roots[f.root], CauseSchedule, time.Now())
+	f.sch.mu.Unlock()
+	f.sch.Resume()
+	for end := time.Now().Add(1500 * time.Millisecond); time.Now().Before(end); time.Sleep(2 * time.Millisecond) {
+		f.sch.Hint(f.root, "A (2001)/A (2001).mkv", CauseWatch)
+	}
+	if n := f.runs(t, `cause = 'schedule' AND status = 'completed'`); n != 1 {
+		t.Fatalf("%d scheduled scans ran during the hint stream, want 1", n)
+	}
+	if n := f.runs(t, `cause = 'watch'`); n > 8 {
+		t.Fatalf("%d scoped scans in 1.5 s: the debounce (100 ms, max 300 ms) wasn't kept", n)
+	}
+}
+
+// Review (LIB-2b): the stagger survives the startup scans, so roots'
+// periodic scans don't all fall due together afterwards.
+func TestStaggerSurvivesStartup(t *testing.T) {
+	s, _ := newStore(t)
+	s.now = time.Now
+	m := newMedia(t)
+	var roots []string
+	for i := range 6 {
+		r := fmt.Sprintf("M%d", i)
+		roots = append(roots, r)
+		m.write(r+"/X (2001)/X (2001).mkv", 10)
+	}
+	if _, err := s.CreateLibrary(context.Background(), "Movies", "movies", roots); err != nil {
+		t.Fatal(err)
+	}
+	opts := fastOpts
+	opts.NoWatch, opts.FullScanEvery = true, time.Hour
+	sch := NewScheduler(m.scanner(s), &scriptedProber{}, nil, opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sch.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	eventually(t, "startup scans", func() bool {
+		var n int
+		s.db.QueryRow(`SELECT COUNT(*) FROM library_scan_runs WHERE status = 'completed'`).Scan(&n)
+		return n == 6
+	})
+	sch.mu.Lock()
+	lo, hi := time.Duration(1<<62), time.Duration(0)
+	for _, rs := range sch.roots {
+		d := time.Until(rs.nextFull)
+		lo, hi = min(lo, d), max(hi, d)
+	}
+	sch.mu.Unlock()
+	if hi-lo < 10*time.Minute {
+		t.Fatalf("next periodic scans span %v after startup, want them spread", hi-lo)
+	}
+}
+
+// Review (LIB-2b): a library folder that is a symlink is watched through
+// its target, so rechecks don't rescan it every minute.
+func TestSymlinkedRootIsWatched(t *testing.T) {
+	s, _ := newStore(t)
+	s.now = time.Now
+	m := newMedia(t)
+	m.write("Real/A (2001)/A (2001).mkv", 10)
+	if err := os.Symlink("Real", filepath.Join(m.dir, "Movies")); err != nil {
+		t.Fatal(err)
+	}
+	lib, _ := s.CreateLibrary(context.Background(), "Movies", "movies", []string{"Movies"})
+	sch := NewScheduler(m.scanner(s), &scriptedProber{}, nil, fastOpts)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- sch.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+	eventually(t, "watching", func() bool {
+		st, _ := sch.Status(context.Background())
+		return len(st) == 1 && st[0].Watch == WatchOn && st[0].LastRun != nil && st[0].LastRun.Status == RunCompleted
+	})
+	time.Sleep(300 * time.Millisecond) // several rechecks
+	var n int
+	s.db.QueryRow(`SELECT COUNT(*) FROM library_scan_runs WHERE cause = 'recheck' AND root_id = ?`, lib.Roots[0].ID).Scan(&n)
+	if n != 0 {
+		t.Fatalf("%d recheck scans of a symlinked root", n)
+	}
+	m.write("Real/B (2002)/B (2002).mkv", 10)
+	eventually(t, "change seen through the symlink", func() bool {
+		var n int
+		s.db.QueryRow(`SELECT COUNT(*) FROM library_scan_runs WHERE cause = 'watch'`).Scan(&n)
+		return n >= 1
+	})
+}
+
+// Review (LIB-2b): the starvation bound. A scheduled scan waits behind
+// scoped work (priority 1) only until it is MaxDelay overdue; then it
+// competes as priority 0 and, being the oldest, runs next.
+func TestOverdueScheduledScanIsPromoted(t *testing.T) {
+	sch := NewScheduler(&Scanner{}, &scriptedProber{}, nil, SchedulerOptions{MaxDelay: time.Minute})
+	now := time.Now()
+	rs := &rootSched{full: CauseSchedule, scopes: map[string]string{"x": CauseWatch}, due: now, fullDue: now}
+	prio := func() map[bool]int {
+		out := map[bool]int{}
+		for _, c := range sch.candidates(rs, now) {
+			out[c.full] = c.prio
+		}
+		return out
+	}
+	if p := prio(); p[false] != 0 || p[true] != 1 {
+		t.Fatalf("just due: scoped %d, scheduled %d; want 0 and 1", p[false], p[true])
+	}
+	rs.fullDue = now.Add(-time.Minute)
+	if p := prio(); p[true] != 0 {
+		t.Fatalf("a minute overdue: scheduled priority %d, want 0", p[true])
+	}
+	rs.full = CauseManual // urgent: one whole-root candidate, priority 0
+	if c := sch.candidates(rs, now); len(c) != 1 || !c[0].full || c[0].prio != 0 {
+		t.Fatalf("urgent: %+v", c)
+	}
 }
