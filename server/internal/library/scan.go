@@ -1,0 +1,336 @@
+package library
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"os"
+	"strconv"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library/naming"
+)
+
+// Scan run statuses and failure reasons.
+const (
+	RunRunning     = "running"
+	RunCompleted   = "completed"
+	RunFailed      = "failed"
+	RunCancelled   = "cancelled"
+	RunInterrupted = "interrupted"
+
+	ReasonRootUnavailable   = "root_unavailable"   // the folder can't be opened
+	ReasonRootEmpty         = "root_empty"         // empty, while the catalogue has files there
+	ReasonEnumerationFailed = "enumeration_failed" // the walk stopped part-way
+)
+
+// Run is the outcome of one scan of one root.
+type Run struct {
+	ID, Status, Reason                                string
+	Seen, Added, Changed, Returned, Missing, Unplaced int
+}
+
+// Scanner reconciles the catalogue with the files under each root.
+type Scanner struct {
+	Store *Store
+	Media *os.Root // the media root; library roots are folders inside it
+	// Discover walks a root; nil means the package's Discover. Tests replace it.
+	Discover func(context.Context, *os.Root, func(File) error) error
+}
+
+// batchSize bounds each write transaction, so a large scan never holds the
+// database's single writer for long (spec §10.2).
+const batchSize = 500
+
+// ScanRoot walks one root and brings its files, items and versions up to
+// date. Files that weren't found are marked missing only after a complete
+// walk of a reachable, non-empty root (spec §3.6, SCAN-01); a failed or
+// cancelled scan keeps the work it did and marks nothing missing. The error
+// is for database failures only; a failed scan is reported in Run.
+// Planned: LIB-2b (the watcher, schedule and Scan now call it).
+func (sc *Scanner) ScanRoot(ctx context.Context, rootID string) (Run, error) {
+	st := sc.Store
+	root, libType, err := st.root(ctx, rootID)
+	if err != nil {
+		return Run{}, err
+	}
+	run := Run{ID: newID("scan"), Status: RunRunning}
+	if _, err := st.db.ExecContext(ctx, `INSERT INTO library_scan_runs(id, root_id, started_at, status) VALUES(?, ?, ?, 'running')`,
+		run.ID, rootID, ms(st.now())); err != nil {
+		return Run{}, err
+	}
+	if err := st.setRoot(ctx, rootID, RootScanning, root.Reason, false); err != nil {
+		return Run{}, err
+	}
+	// The run's bookkeeping must be written even if ctx was cancelled.
+	bg := context.WithoutCancel(ctx)
+
+	dir, err := sc.Media.OpenRoot(root.Path)
+	if err == nil {
+		var info os.FileInfo
+		if info, err = dir.Stat("."); err == nil && !info.IsDir() {
+			err = fmt.Errorf("library: %s is not a folder", root.Path)
+		}
+		if err != nil {
+			dir.Close()
+		}
+	}
+	if err != nil {
+		return sc.finish(bg, root, run, RunFailed, ReasonRootUnavailable, RootOffline)
+	}
+	defer dir.Close()
+
+	discover := sc.Discover
+	if discover == nil {
+		discover = Discover
+	}
+	var batch []File
+	flush := func() error {
+		err := st.applyBatch(bg, root, libType, run.ID, batch, &run)
+		batch = batch[:0]
+		return err
+	}
+	walkErr := discover(ctx, dir, func(f File) error {
+		if batch = append(batch, f); len(batch) == batchSize {
+			return flush()
+		}
+		return nil
+	})
+	if err := flush(); err != nil {
+		return run, err
+	}
+	switch {
+	case ctx.Err() != nil:
+		return sc.finish(bg, root, run, RunCancelled, "", root.State)
+	case walkErr != nil:
+		return sc.finish(bg, root, run, RunFailed, ReasonEnumerationFailed, RootDegraded)
+	}
+	if run.Seen == 0 {
+		var present int
+		if err := st.db.QueryRowContext(bg, `SELECT COUNT(*) FROM library_files WHERE root_id = ? AND state = 'present'`, rootID).Scan(&present); err != nil {
+			return run, err
+		}
+		if present > 0 {
+			// An empty folder where files were is far more likely an unmounted
+			// disk than a deleted library.
+			return sc.finish(bg, root, run, RunFailed, ReasonRootEmpty, RootOffline)
+		}
+	}
+	res, err := st.db.ExecContext(bg, `UPDATE library_files SET state = 'missing', missing_since = COALESCE(missing_since, ?)
+		WHERE root_id = ? AND state = 'present' AND last_seen_run IS NOT ?`, ms(st.now()), rootID, run.ID)
+	if err != nil {
+		return run, err
+	}
+	n, _ := res.RowsAffected()
+	run.Missing = int(n)
+	if err := st.settle(bg, rootID); err != nil {
+		return run, err
+	}
+	return sc.finish(bg, root, run, RunCompleted, "", RootAvailable)
+}
+
+// finish records the run's outcome and the root's resulting state.
+func (sc *Scanner) finish(ctx context.Context, root Root, run Run, status, reason, rootState string) (Run, error) {
+	run.Status, run.Reason = status, reason
+	_, err := sc.Store.db.ExecContext(ctx, `UPDATE library_scan_runs SET status = ?, reason = NULLIF(?, ''), finished_at = ?,
+		seen = ?, added = ?, changed = ?, returned = ?, missing = ?, unplaced = ? WHERE id = ?`,
+		status, reason, ms(sc.Store.now()), run.Seen, run.Added, run.Changed, run.Returned, run.Missing, run.Unplaced, run.ID)
+	if err != nil {
+		return run, err
+	}
+	if status == RunCancelled {
+		reason = root.Reason
+	}
+	return run, sc.Store.setRoot(ctx, root.ID, rootState, reason, status == RunCompleted)
+}
+
+func (s *Store) setRoot(ctx context.Context, id, state, reason string, ok bool) error {
+	q := `UPDATE library_roots SET state = ?, reason = NULLIF(?, '') WHERE id = ?`
+	args := []any{state, reason, id}
+	if ok {
+		q = `UPDATE library_roots SET state = ?, reason = NULLIF(?, ''), last_ok_at = ? WHERE id = ?`
+		args = []any{state, reason, ms(s.now()), id}
+	}
+	_, err := s.db.ExecContext(ctx, q, args...)
+	return err
+}
+
+// applyBatch records one batch of discovered files in a single transaction:
+// new files are added and placed, changed revisions replace the old ones
+// (making the probe stale), and missing files that are back become present.
+func (s *Store) applyBatch(ctx context.Context, root Root, libType, runID string, files []File, run *Run) error {
+	if len(files) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, f := range files {
+		run.Seen++
+		var id, state string
+		var size, mtime int64
+		var unplaced sql.NullString
+		err := tx.QueryRowContext(ctx, `SELECT id, size, mtime_ns, state, unplaced FROM library_files WHERE root_id = ? AND path = ?`,
+			root.ID, f.Path).Scan(&id, &size, &mtime, &state, &unplaced)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			id = newID("file")
+			if _, err := tx.ExecContext(ctx, `INSERT INTO library_files(id, root_id, path, size, mtime_ns, last_seen_run) VALUES(?, ?, ?, ?, ?, ?)`,
+				id, root.ID, f.Path, f.Rev.Size, f.Rev.ModTime, runID); err != nil {
+				return err
+			}
+			run.Added++
+		case err != nil:
+			return err
+		default:
+			if size != f.Rev.Size || mtime != f.Rev.ModTime {
+				run.Changed++
+			}
+			if state != "present" {
+				run.Returned++
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, state = 'present', missing_since = NULL,
+				last_seen_run = ? WHERE id = ?`, f.Rev.Size, f.Rev.ModTime, runID, id); err != nil {
+				return err
+			}
+			if !unplaced.Valid {
+				continue // already placed
+			}
+		}
+		if err := s.place(ctx, tx, root, libType, id, f, run); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// place attaches a file to its items (creating them as needed), or records
+// why naming couldn't place it.
+func (s *Store) place(ctx context.Context, tx *sql.Tx, root Root, libType, fileID string, f File, run *Run) error {
+	libID := root.LibraryID
+	e, err := naming.Classify(libType, f.Path, f.Rev.Size)
+	if err != nil {
+		run.Unplaced++
+		reason := "unrecognised"
+		switch {
+		case errors.Is(err, naming.ErrExtra):
+			reason = "extra"
+		case errors.Is(err, naming.ErrSample):
+			reason = "sample"
+		}
+		_, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = ? WHERE id = ?`, reason, fileID)
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = NULL WHERE id = ?`, fileID); err != nil {
+		return err
+	}
+	var year any
+	if e.Year != 0 {
+		year = e.Year
+	}
+	if e.Kind == naming.Movie {
+		movie, _, err := s.groupItem(ctx, tx, root, e, item{kind: "movie", title: e.Title, year: year})
+		if err != nil {
+			return err
+		}
+		if err := s.hints(ctx, tx, movie, e.IDs); err != nil {
+			return err
+		}
+		return s.version(ctx, tx, movie, fileID, e.Version)
+	}
+	show, showKey, err := s.groupItem(ctx, tx, root, e, item{kind: "show", title: e.Title, year: year})
+	if err != nil {
+		return err
+	}
+	if err := s.hints(ctx, tx, show, e.IDs); err != nil {
+		return err
+	}
+	seasonTitle := "Season " + strconv.Itoa(e.Season)
+	if e.Season == 0 {
+		seasonTitle = "Specials"
+	}
+	seasonKey := showKey + "|s" + strconv.Itoa(e.Season)
+	season, err := s.item(ctx, tx, libID, item{kind: "season", key: seasonKey, title: seasonTitle, parent: show, idx: e.Season})
+	if err != nil {
+		return err
+	}
+	type ep struct {
+		key, title string
+		idx, abs   any
+		airDate    any
+	}
+	var eps []ep
+	if e.AirDate != "" {
+		eps = []ep{{key: seasonKey + "|d" + e.AirDate, title: firstNonEmpty(e.EpisodeTitle, e.AirDate), airDate: e.AirDate}}
+	}
+	for _, n := range e.Episodes {
+		x := ep{key: seasonKey + "|e" + strconv.Itoa(n), title: "Episode " + strconv.Itoa(n), idx: n}
+		if len(e.Episodes) == 1 {
+			x.title = firstNonEmpty(e.EpisodeTitle, x.title)
+			if e.Absolute != nil {
+				x.abs = *e.Absolute
+			}
+		}
+		eps = append(eps, x)
+	}
+	for _, x := range eps {
+		id, err := s.item(ctx, tx, libID, item{kind: "episode", key: x.key, title: x.title, parent: season,
+			idx: x.idx, absolute: x.abs, airDate: x.airDate})
+		if err != nil {
+			return err
+		}
+		// Every episode in a multi-episode file gets a version on the same
+		// file (CTR-2: same fileId, unknown segment).
+		if err := s.version(ctx, tx, id, fileID, e.Version); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
+}
+
+// idPrefix makes item IDs readable in logs; clients treat them as opaque.
+var idPrefix = map[string]string{"movie": "mov", "show": "shw", "season": "sea", "episode": "epi"}
+
+type item struct {
+	kind, key, title             string
+	parent                       any // item ID or nil
+	year, idx, absolute, airDate any
+}
+
+// item returns the ID of the library's item with it.key, creating it if
+// needed. An existing item keeps its title: later edits (META-1) win.
+func (s *Store) item(ctx context.Context, tx *sql.Tx, libID string, it item) (string, error) {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO library_items(id, library_id, kind, parent_id, scan_key, title, sort_title, year, idx, air_date, absolute, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(library_id, scan_key) DO NOTHING`,
+		newID(idPrefix[it.kind]), libID, it.kind, it.parent, it.key, it.title, naming.SortTitle(it.title), it.year, it.idx, it.airDate, it.absolute, ms(s.now())); err != nil {
+		return "", err
+	}
+	var id string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM library_items WHERE library_id = ? AND scan_key = ?`, libID, it.key).Scan(&id)
+	return id, err
+}
+
+func (s *Store) version(ctx context.Context, tx *sql.Tx, itemID, fileID, label string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO library_versions(id, item_id, file_id, label) VALUES(?, ?, ?, NULLIF(?, ''))
+		ON CONFLICT(item_id, file_id) DO NOTHING`, newID("ver"), itemID, fileID, label)
+	return err
+}
+
+func (s *Store) hints(ctx context.Context, tx *sql.Tx, itemID string, ids map[string]string) error {
+	for ns, v := range ids {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO library_id_hints(item_id, namespace, value) VALUES(?, ?, ?) ON CONFLICT DO NOTHING`,
+			itemID, ns, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
