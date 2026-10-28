@@ -11,6 +11,7 @@
 ## Global constraints
 
 - Initial target: **Linux x86-64/amd64 containers**. Browser targets: **Chrome and Firefox on Linux, Windows and macOS**.
+- M1 targets are now in spec §9.3 (four, #38).
 - M1 is one complete 1080p SDR H.264 MP4, with original encoded video/audio and a read-only source. No remux, encoding, subtitles or persistent progress is required for M1.
 - Local HTTP and local username/password access work without a domain, proxy or external provider. Remote access requires HTTPS.
 - Contributors self-claim features; this document assigns nobody. Claim CTR-1 before changing shared manifests/schema.
