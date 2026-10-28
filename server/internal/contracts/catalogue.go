@@ -56,8 +56,8 @@ const (
 	AvailabilityOffline   = "offline"
 )
 
-// Planned: LIB-2c (facets and the listItems resolution filter).
 // Resolution buckets (LibraryFacets.resolutions, listItems resolution).
+// Planned: LIB-2c (facets and the listItems resolution filter).
 const (
 	ResolutionSD   = "sd"
 	Resolution720  = "720p"
@@ -100,7 +100,9 @@ type Library struct {
 	Availability string      `json:"availability"`
 }
 
-// LibraryScan is first-scan progress; FilesTotal is null while still counting.
+// LibraryScan is first-scan progress; FilesTotal is null while still counting. When State
+// is idle, FilesSeen is 0 and FilesTotal is null; when both are known,
+// FilesSeen <= FilesTotal.
 // Planned: LIB-2b (scan counters) and LIB-2c (listLibraries).
 type LibraryScan struct {
 	State      string `json:"state"`
@@ -108,9 +110,9 @@ type LibraryScan struct {
 	FilesTotal *int64 `json:"filesTotal"`
 }
 
-// Planned: LIB-2c (getLibraryFacets).
 // LibraryFacets are the filter-menu values present in a library's permitted
 // items. AudioLanguages are ISO 639-2/T.
+// Planned: LIB-2c (getLibraryFacets).
 type LibraryFacets struct {
 	Genres         []string   `json:"genres"`
 	Years          *YearRange `json:"years"`
@@ -119,6 +121,8 @@ type LibraryFacets struct {
 	HDR            bool       `json:"hdr"`
 }
 
+// YearRange is the first and last item year in a library; Min <= Max.
+// Planned: LIB-2c (getLibraryFacets handler).
 type YearRange struct {
 	Min int64 `json:"min"`
 	Max int64 `json:"max"`
@@ -164,6 +168,7 @@ type ItemPage struct {
 }
 
 // MarshalJSON encodes nil Items as [] because the contract requires an array.
+// Planned: LIB-2c, DATA-1, DATA-2 (listItems, listContinueWatching and listNextUp handlers).
 func (p ItemPage) MarshalJSON() ([]byte, error) {
 	items := p.Items
 	if items == nil {
@@ -176,8 +181,8 @@ func (p ItemPage) MarshalJSON() ([]byte, error) {
 	}{items, p.NextCursor, p.Total})
 }
 
-// Planned: META-1 (ItemDetail.communityRating).
 // CommunityRating is a provider's rating on a 0–10 scale.
+// Planned: META-1 (ItemDetail.communityRating).
 type CommunityRating struct {
 	Source string  `json:"source"`
 	Value  float64 `json:"value"`

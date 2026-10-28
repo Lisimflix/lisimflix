@@ -40,54 +40,51 @@ func roundTripFixtures(t *testing.T, cases map[string]func() any) {
 	}
 }
 
-// checkEnum fails unless goValues are exactly the string values of the
-// OpenAPI enum at schema.prop (a null member is ignored). The Go constants
-// are producers' only spelling of each value.
-func checkEnum(t *testing.T, schema, prop string, goValues ...string) {
+// openAPIEnums is the part of the OpenAPI document the enum checks read.
+type openAPIEnums struct {
+	Components struct {
+		Schemas map[string]struct {
+			Properties map[string]struct {
+				Enum  []any `json:"enum"`
+				Items struct {
+					Enum []any `json:"enum"`
+				} `json:"items"` // array properties: the enum is on the items
+			} `json:"properties"`
+		} `json:"schemas"`
+		Parameters map[string]struct {
+			Schema struct {
+				Enum []any `json:"enum"`
+			} `json:"schema"`
+		} `json:"parameters"`
+	} `json:"components"`
+}
+
+func loadOpenAPIEnums(t *testing.T) openAPIEnums {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "openapi.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc struct {
-		Components struct {
-			Schemas map[string]struct {
-				Properties map[string]struct {
-					Enum  []any `json:"enum"`
-					Items struct {
-						Enum []any `json:"enum"`
-					} `json:"items"` // array properties: the enum is on the items
-				} `json:"properties"`
-			} `json:"schemas"`
-		} `json:"components"`
-	}
+	var doc openAPIEnums
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatal(err)
 	}
-	p := doc.Components.Schemas[schema].Properties[prop]
+	return doc
+}
+
+// checkEnum fails unless goValues are exactly the string values of the
+// OpenAPI enum at schema.prop (a null member is ignored). The Go constants
+// are producers' only spelling of each value.
+func checkEnum(t *testing.T, schema, prop string, goValues ...string) {
+	t.Helper()
+	p := loadOpenAPIEnums(t).Components.Schemas[schema].Properties[prop]
 	compareEnum(t, schema+"."+prop, append(p.Enum, p.Items.Enum...), goValues)
 }
 
 // checkParamEnum is checkEnum for a query parameter under components.parameters.
 func checkParamEnum(t *testing.T, param string, goValues ...string) {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "openapi.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var doc struct {
-		Components struct {
-			Parameters map[string]struct {
-				Schema struct {
-					Enum []any `json:"enum"`
-				} `json:"schema"`
-			} `json:"parameters"`
-		} `json:"components"`
-	}
-	if err := json.Unmarshal(b, &doc); err != nil {
-		t.Fatal(err)
-	}
-	compareEnum(t, "parameter "+param, doc.Components.Parameters[param].Schema.Enum, goValues)
+	compareEnum(t, "parameter "+param, loadOpenAPIEnums(t).Components.Parameters[param].Schema.Enum, goValues)
 }
 
 func compareEnum(t *testing.T, name string, enum []any, goValues []string) {

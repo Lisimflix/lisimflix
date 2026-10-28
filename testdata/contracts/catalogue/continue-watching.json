@@ -53,7 +53,7 @@
       "seasonIndex": 1,
       "matched": null,
       "available": true,
-      "durationMs": 1440000,
+      "durationMs": null,
       "contentRating": null,
       "primaryImageUrl": null,
       "backdropUrl": null,

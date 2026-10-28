@@ -170,6 +170,13 @@ checkFixtures(metadataFixtures, [
   ["field without a lock flag", "item-metadata.json", (d) => { delete d.fields.overview.locked; }],
 ]);
 
+test("accepts an episode whose season index is unknown", () => {
+  const data = catalogue("items-episodes.json");
+  data.items[0].seasonIndex = null;
+  const validate = ajv.getSchema("m1#/components/schemas/ItemPage");
+  assert.ok(validate(data), ajv.errorsText(validate.errors));
+});
+
 test("every catalogue fixture is validated", () => {
   const files = readdirSync(new URL("../../testdata/contracts/catalogue/", import.meta.url)).filter((f) => f.endsWith(".json"));
   const tested = Object.keys({ ...userDataFixtures, ...catalogueFixtures, ...profileFixtures, ...metadataFixtures });

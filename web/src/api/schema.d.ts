@@ -448,7 +448,7 @@ export interface components {
              */
             availability: "available" | "partial" | "offline";
         };
-        /** @description Scan progress for the first scan (decision 6; LIB-2b records the counters). */
+        /** @description Scan progress for the first scan (decision 6; LIB-2b records the counters). When state is idle (no first scan running), filesSeen is 0 and filesTotal is null. When both are known, filesSeen <= filesTotal. */
         LibraryScan: {
             /** @enum {string} */
             state: "idle" | "scanning";
@@ -462,10 +462,13 @@ export interface components {
         };
         /** @description Filter-menu values present in the library's items the profile may see. audioLanguages use ISO 639-2/T. */
         LibraryFacets: {
+            /** @description Each genre appears once */
             genres: string[];
-            /** @description Null when no item has a year */
+            /** @description Null when no item has a year. min <= max. */
             years: components["schemas"]["YearRange"] | null;
+            /** @description Each language appears once */
             audioLanguages: string[];
+            /** @description Each resolution appears once */
             resolutions: ("sd" | "720p" | "1080p" | "4k")[];
             hdr: boolean;
         };
@@ -516,7 +519,7 @@ export interface components {
             addedAt: string;
             /**
              * Format: int64
-             * @description Seasons of a show, episodes of a season; null for movies and episodes.
+             * @description Seasons of a show, episodes of a season, counting only children the profile may see (no leaks through counts); null for movies and episodes.
              */
             childCount: number | null;
             /** @description Set on episodes and seasons; null for movies and shows. Mixed rows read "[Show] · S1 E4" from this and seasonIndex. */
@@ -723,12 +726,13 @@ export interface components {
         LibraryIdPath: string;
         /** @description title: A→Z; added and year: newest first */
         Sort: "title" | "added" | "year";
-        /** @description A–Z jump; only with sort=title */
+        /** @description A–Z jump; only with sort=title. Send # percent-encoded as %23. */
         From: string;
         Genre: string;
         YearFrom: number;
         YearTo: number;
         Resolution: "sd" | "720p" | "1080p" | "4k";
+        /** @description true: HDR only; false: SDR only; omitted: no filter */
         HDR: boolean;
         /** @description ISO 639-2/T, e.g. deu, fra, zho */
         AudioLanguage: string;
@@ -1288,12 +1292,13 @@ export interface operations {
                 parentId?: components["parameters"]["ParentIdQuery"];
                 /** @description title: A→Z; added and year: newest first */
                 sort?: components["parameters"]["Sort"];
-                /** @description A–Z jump; only with sort=title */
+                /** @description A–Z jump; only with sort=title. Send # percent-encoded as %23. */
                 from?: components["parameters"]["From"];
                 genre?: components["parameters"]["Genre"];
                 yearFrom?: components["parameters"]["YearFrom"];
                 yearTo?: components["parameters"]["YearTo"];
                 resolution?: components["parameters"]["Resolution"];
+                /** @description true: HDR only; false: SDR only; omitted: no filter */
                 hdr?: components["parameters"]["HDR"];
                 /** @description ISO 639-2/T, e.g. deu, fra, zho */
                 audioLanguage?: components["parameters"]["AudioLanguage"];

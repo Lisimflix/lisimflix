@@ -1,14 +1,14 @@
 {
   "items": [
     {
-      "id": "epi-synthetic-0002",
+      "id": "epi-synthetic-0003",
       "kind": "episode",
       "libraryId": "lib-synthetic-anime",
       "parentId": "sea-synthetic-0001",
-      "title": "Synthetic Episode Two",
-      "sortTitle": "Synthetic Episode Two",
+      "title": "Synthetic Episode Three",
+      "sortTitle": "Synthetic Episode Three",
       "year": 2025,
-      "index": 2,
+      "index": 3,
       "addedAt": "2026-10-20T03:05:00Z",
       "childCount": null,
       "showTitle": "Synthetic Show",
@@ -20,7 +20,7 @@
       "primaryImageUrl": null,
       "backdropUrl": null,
       "userState": {
-        "itemId": "epi-synthetic-0002",
+        "itemId": "epi-synthetic-0003",
         "revision": 0,
         "resume": null,
         "watched": null,
