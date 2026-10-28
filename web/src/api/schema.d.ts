@@ -192,6 +192,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/libraries/{libraryId}/facets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Genres, year range, audio languages, resolutions and an HDR flag present in the library's permitted items; fills the filter menus. 404 for a library the profile may not see. */
+        get: operations["getLibraryFacets"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/continue-watching": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Movies and episodes with resume, not watched, not hidden; newest lastPlayedAt first. total is null. */
+        get: operations["listContinueWatching"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/next-up": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The next unwatched episode per show in progress, in the library's order; specials are never inserted. total is null. */
+        get: operations["listNextUp"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/items": {
         parameters: {
             query?: never;
@@ -199,7 +250,10 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Items the current profile may see, in stable sort-title order. Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. A library or parent the profile may not see is 404. */
+        /**
+         * Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter or sort with parentId, and any combination the server can't apply (including watched until DATA-1 is live) are also 400 invalid_request. A library or parent the profile may not see is 404.
+         * @description Title collation is fixed in the contract: titles compare by sortTitle folded with META-1a's Normalize (#121, decision 6), so sorting, the A–Z jump and matching all compare titles the same way. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → "and"; other punctuation becomes a space and spaces collapse; a leading "the", "a" or "an" is dropped when more words follow. Other scripts compare as written. So Élite sorts and jumps as elite. Ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.
+         */
         get: operations["listItems"];
         put?: never;
         post?: never;
@@ -387,6 +441,39 @@ export interface components {
             name: string;
             /** @enum {string} */
             type: "movies" | "tv" | "anime";
+            scan: components["schemas"]["LibraryScan"];
+            /**
+             * @description All, some or none of the library's source folders are readable. Folder paths are never sent to viewers. degraded (a scan failed part-way) is an admin scan state, not a viewer one (UI-6, LIB-2c).
+             * @enum {string}
+             */
+            availability: "available" | "partial" | "offline";
+        };
+        /** @description Scan progress for the first scan (decision 6; LIB-2b records the counters). */
+        LibraryScan: {
+            /** @enum {string} */
+            state: "idle" | "scanning";
+            /** Format: int64 */
+            filesSeen: number;
+            /**
+             * Format: int64
+             * @description Null while still counting
+             */
+            filesTotal: number | null;
+        };
+        /** @description Filter-menu values present in the library's items the profile may see. audioLanguages use ISO 639-2/T. */
+        LibraryFacets: {
+            genres: string[];
+            /** @description Null when no item has a year */
+            years: components["schemas"]["YearRange"] | null;
+            audioLanguages: string[];
+            resolutions: ("sd" | "720p" | "1080p" | "4k")[];
+            hdr: boolean;
+        };
+        YearRange: {
+            /** Format: int64 */
+            min: number;
+            /** Format: int64 */
+            max: number;
         };
         LibraryList: {
             items: components["schemas"]["Library"][];
@@ -398,7 +485,7 @@ export interface components {
             region: string;
             value: string;
         };
-        /** @description A logical catalogue item. IDs are opaque and survive renames, provider changes and episode-order changes. title is already in the current profile's title language (spec §3.2). Unknown values are null. */
+        /** @description A logical catalogue item. IDs are opaque and survive renames, provider changes and episode-order changes. title is already in the current profile's title language (spec §3.2). Unknown values are null. Decision 1: viewers see titles and version labels, never file names (MediaVersion.fileName is admin-only). Decision 7: addedAt, childCount, showTitle, seasonIndex and available are LIB-2's; matched is META-1's. */
         ItemSummary: {
             id: string;
             /** @enum {string} */
@@ -422,24 +509,56 @@ export interface components {
             backdropUrl: string | null;
             /** @description The current profile's state. Null for shows and seasons. */
             userState: components["schemas"]["UserItemState"] | null;
-        } & (unknown & unknown);
+            /**
+             * Format: date-time
+             * @description When the item entered the library; sort=added orders by it
+             */
+            addedAt: string;
+            /**
+             * Format: int64
+             * @description Seasons of a show, episodes of a season; null for movies and episodes.
+             */
+            childCount: number | null;
+            /** @description Set on episodes and seasons; null for movies and shows. Mixed rows read "[Show] · S1 E4" from this and seasonIndex. */
+            showTitle: string | null;
+            /** @description The episode's season number (0 = specials); set on episodes, null otherwise. */
+            seasonIndex: number | null;
+            /** @description META-1: null means matching hasn't run (all items until META-1 lands). Only false shows the Unmatched badge. */
+            matched: boolean | null;
+            /** @description True if any version can play, false shows a File offline badge. Null for shows and seasons. */
+            available: boolean | null;
+        } & (unknown & unknown & unknown & unknown & unknown);
         ItemPage: {
             items: components["schemas"]["ItemSummary"][];
             nextCursor: string | null;
+            /**
+             * Format: int64
+             * @description Items after permission and filters (no leaks through counts). An integer on the first page of a listItems call (no cursor); null on later pages and for continue-watching and next-up.
+             */
+            total: number | null;
         };
         /** @description A provider ID in its namespace, e.g. tmdb 603. The item's kind says which of the provider's ID spaces it belongs to. */
         ExternalId: {
             namespace: string;
             id: string;
         };
+        /** @description Decision 7: communityRating, directors and studios are META-1's. Version file names are admin-only (decision 1). */
         ItemDetail: {
             item: components["schemas"]["ItemSummary"];
             originalTitle: string | null;
             overview: string | null;
             genres: string[];
+            communityRating: components["schemas"]["CommunityRating"] | null;
+            directors: string[];
+            studios: string[];
             externalIds: components["schemas"]["ExternalId"][];
             /** @description Playable versions. Empty for shows and seasons, and for a movie or episode with no available file. */
             versions: components["schemas"]["MediaVersion"][];
+        };
+        CommunityRating: {
+            /** @description Provider, e.g. tmdb */
+            source: string;
+            value: number;
         };
         /** @description One playable version (cut or quality) of a movie or episode, backed by one file. Episodes that share a file have the same fileId; segment locates the episode when its boundaries are known. */
         MediaVersion: {
@@ -457,6 +576,15 @@ export interface components {
             video: components["schemas"]["VideoStream"][];
             audio: components["schemas"]["AudioStream"][];
             subtitles: components["schemas"]["SubtitleStream"][];
+            /**
+             * Format: int64
+             * @description Null if unknown
+             */
+            sizeBytes: number | null;
+            /** @description False when the version's source folder is offline or its file is missing; Play on it shows File offline without starting a session. */
+            available: boolean;
+            /** @description Bare file name, admins only; null for other viewers. Never a path. */
+            fileName: string | null;
         };
         /** @description A range of the file's media timeline; endMs is after startMs. */
         Segment: {
@@ -592,6 +720,20 @@ export interface components {
         Cursor: string;
         Limit: number;
         LibraryIdQuery: string;
+        LibraryIdPath: string;
+        /** @description title: A→Z; added and year: newest first */
+        Sort: "title" | "added" | "year";
+        /** @description A–Z jump; only with sort=title */
+        From: string;
+        Genre: string;
+        YearFrom: number;
+        YearTo: number;
+        Resolution: "sd" | "720p" | "1080p" | "4k";
+        HDR: boolean;
+        /** @description ISO 639-2/T, e.g. deu, fra, zho */
+        AudioLanguage: string;
+        /** @description Reads DATA-1's data; 400 invalid_request until DATA-1 is live */
+        Watched: boolean;
         ParentIdQuery: string;
         Range: string;
         IfRange: string;
@@ -1060,11 +1202,103 @@ export interface operations {
             500: components["responses"]["Error"];
         };
     };
+    getLibraryFacets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                libraryId: components["parameters"]["LibraryIdPath"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Facets */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LibraryFacets"];
+                };
+            };
+            401: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    listContinueWatching: {
+        parameters: {
+            query?: {
+                /** @description nextCursor from the previous page; opaque */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Items */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
+    listNextUp: {
+        parameters: {
+            query?: {
+                /** @description nextCursor from the previous page; opaque */
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Items */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ItemPage"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
     listItems: {
         parameters: {
             query?: {
                 libraryId?: components["parameters"]["LibraryIdQuery"];
                 parentId?: components["parameters"]["ParentIdQuery"];
+                /** @description title: A→Z; added and year: newest first */
+                sort?: components["parameters"]["Sort"];
+                /** @description A–Z jump; only with sort=title */
+                from?: components["parameters"]["From"];
+                genre?: components["parameters"]["Genre"];
+                yearFrom?: components["parameters"]["YearFrom"];
+                yearTo?: components["parameters"]["YearTo"];
+                resolution?: components["parameters"]["Resolution"];
+                hdr?: components["parameters"]["HDR"];
+                /** @description ISO 639-2/T, e.g. deu, fra, zho */
+                audioLanguage?: components["parameters"]["AudioLanguage"];
+                /** @description Reads DATA-1's data; 400 invalid_request until DATA-1 is live */
+                watched?: components["parameters"]["Watched"];
                 /** @description nextCursor from the previous page; opaque */
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];

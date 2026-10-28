@@ -227,14 +227,66 @@
         }
       }
     },
+    "/api/v1/libraries/{libraryId}/facets": {
+      "get": {
+        "operationId": "getLibraryFacets",
+        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "summary": "Genres, year range, audio languages, resolutions and an HDR flag present in the library's permitted items; fills the filter menus. 404 for a library the profile may not see.",
+        "parameters": [{ "$ref": "#/components/parameters/LibraryIdPath" }],
+        "responses": {
+          "200": { "description": "Facets", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/LibraryFacets" } } } },
+          "401": { "$ref": "#/components/responses/Error" },
+          "404": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/continue-watching": {
+      "get": {
+        "operationId": "listContinueWatching",
+        "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
+        "summary": "Movies and episodes with resume, not watched, not hidden; newest lastPlayedAt first. total is null.",
+        "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "Items", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPage" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
+    "/api/v1/next-up": {
+      "get": {
+        "operationId": "listNextUp",
+        "x-lisimflix": { "owner": "DATA-2", "status": "planned" },
+        "summary": "The next unwatched episode per show in progress, in the library's order; specials are never inserted. total is null.",
+        "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "Items", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPage" } } } },
+          "400": { "$ref": "#/components/responses/Error" },
+          "401": { "$ref": "#/components/responses/Error" },
+          "500": { "$ref": "#/components/responses/Error" }
+        }
+      }
+    },
     "/api/v1/items": {
       "get": {
         "operationId": "listItems",
         "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
-        "summary": "Items the current profile may see, in stable sort-title order. Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. A library or parent the profile may not see is 404.",
+        "summary": "Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter or sort with parentId, and any combination the server can't apply (including watched until DATA-1 is live) are also 400 invalid_request. A library or parent the profile may not see is 404.",
+        "description": "Title collation is fixed in the contract: titles compare by sortTitle folded with META-1a's Normalize (#121, decision 6), so sorting, the A–Z jump and matching all compare titles the same way. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → \"and\"; other punctuation becomes a space and spaces collapse; a leading \"the\", \"a\" or \"an\" is dropped when more words follow. Other scripts compare as written. So Élite sorts and jumps as elite. Ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.",
         "parameters": [
           { "$ref": "#/components/parameters/LibraryIdQuery" },
           { "$ref": "#/components/parameters/ParentIdQuery" },
+          { "$ref": "#/components/parameters/Sort" },
+          { "$ref": "#/components/parameters/From" },
+          { "$ref": "#/components/parameters/Genre" },
+          { "$ref": "#/components/parameters/YearFrom" },
+          { "$ref": "#/components/parameters/YearTo" },
+          { "$ref": "#/components/parameters/Resolution" },
+          { "$ref": "#/components/parameters/HDR" },
+          { "$ref": "#/components/parameters/AudioLanguage" },
+          { "$ref": "#/components/parameters/Watched" },
           { "$ref": "#/components/parameters/Cursor" },
           { "$ref": "#/components/parameters/Limit" }
         ],
@@ -303,6 +355,16 @@
       "Cursor": { "name": "cursor", "in": "query", "required": false, "description": "nextCursor from the previous page; opaque", "schema": { "type": "string", "minLength": 1, "maxLength": 512 } },
       "Limit": { "name": "limit", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 } },
       "LibraryIdQuery": { "name": "libraryId", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1 } },
+      "LibraryIdPath": { "name": "libraryId", "in": "path", "required": true, "schema": { "type": "string", "minLength": 1 } },
+      "Sort": { "name": "sort", "in": "query", "required": false, "description": "title: A→Z; added and year: newest first", "schema": { "type": "string", "enum": ["title", "added", "year"], "default": "title" } },
+      "From": { "name": "from", "in": "query", "required": false, "description": "A–Z jump; only with sort=title", "schema": { "type": "string", "pattern": "^[A-Z#]$" } },
+      "Genre": { "name": "genre", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1, "maxLength": 64 } },
+      "YearFrom": { "name": "yearFrom", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1800, "maximum": 9999 } },
+      "YearTo": { "name": "yearTo", "in": "query", "required": false, "schema": { "type": "integer", "minimum": 1800, "maximum": 9999 } },
+      "Resolution": { "name": "resolution", "in": "query", "required": false, "schema": { "type": "string", "enum": ["sd", "720p", "1080p", "4k"] } },
+      "HDR": { "name": "hdr", "in": "query", "required": false, "schema": { "type": "boolean" } },
+      "AudioLanguage": { "name": "audioLanguage", "in": "query", "required": false, "description": "ISO 639-2/T, e.g. deu, fra, zho", "schema": { "type": "string", "pattern": "^[a-z]{3}$" } },
+      "Watched": { "name": "watched", "in": "query", "required": false, "description": "Reads DATA-1's data; 400 invalid_request until DATA-1 is live", "schema": { "type": "boolean" } },
       "ParentIdQuery": { "name": "parentId", "in": "query", "required": false, "schema": { "type": "string", "minLength": 1 } },
       "Range": { "name": "Range", "in": "header", "required": false, "schema": { "type": "string" } },
       "IfRange": { "name": "If-Range", "in": "header", "required": false, "schema": { "type": "string" } },
@@ -496,11 +558,46 @@
       "Library": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "name", "type"],
+        "required": ["id", "name", "type", "scan", "availability"],
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "name": { "type": "string", "minLength": 1, "maxLength": 200 },
-          "type": { "type": "string", "enum": ["movies", "tv", "anime"] }
+          "type": { "type": "string", "enum": ["movies", "tv", "anime"] },
+          "scan": { "$ref": "#/components/schemas/LibraryScan" },
+          "availability": { "type": "string", "enum": ["available", "partial", "offline"], "description": "All, some or none of the library's source folders are readable. Folder paths are never sent to viewers. degraded (a scan failed part-way) is an admin scan state, not a viewer one (UI-6, LIB-2c)." }
+        }
+      },
+      "LibraryScan": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["state", "filesSeen", "filesTotal"],
+        "description": "Scan progress for the first scan (decision 6; LIB-2b records the counters).",
+        "properties": {
+          "state": { "type": "string", "enum": ["idle", "scanning"] },
+          "filesSeen": { "type": "integer", "format": "int64", "minimum": 0 },
+          "filesTotal": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Null while still counting" }
+        }
+      },
+      "LibraryFacets": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["genres", "years", "audioLanguages", "resolutions", "hdr"],
+        "description": "Filter-menu values present in the library's items the profile may see. audioLanguages use ISO 639-2/T.",
+        "properties": {
+          "genres": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+          "years": { "oneOf": [{ "$ref": "#/components/schemas/YearRange" }, { "type": "null" }], "description": "Null when no item has a year" },
+          "audioLanguages": { "type": "array", "items": { "type": "string", "pattern": "^[a-z]{3}$" } },
+          "resolutions": { "type": "array", "items": { "type": "string", "enum": ["sd", "720p", "1080p", "4k"] } },
+          "hdr": { "type": "boolean" }
+        }
+      },
+      "YearRange": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["min", "max"],
+        "properties": {
+          "min": { "type": "integer", "format": "int64", "minimum": 1800, "maximum": 9999 },
+          "max": { "type": "integer", "format": "int64", "minimum": 1800, "maximum": 9999 }
         }
       },
       "LibraryList": {
@@ -525,8 +622,8 @@
       "ItemSummary": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "kind", "libraryId", "parentId", "title", "sortTitle", "year", "index", "durationMs", "contentRating", "primaryImageUrl", "backdropUrl", "userState"],
-        "description": "A logical catalogue item. IDs are opaque and survive renames, provider changes and episode-order changes. title is already in the current profile's title language (spec §3.2). Unknown values are null.",
+        "required": ["id", "kind", "libraryId", "parentId", "title", "sortTitle", "year", "index", "durationMs", "contentRating", "primaryImageUrl", "backdropUrl", "userState", "addedAt", "childCount", "showTitle", "seasonIndex", "matched", "available"],
+        "description": "A logical catalogue item. IDs are opaque and survive renames, provider changes and episode-order changes. title is already in the current profile's title language (spec §3.2). Unknown values are null. Decision 1: viewers see titles and version labels, never file names (MediaVersion.fileName is admin-only). Decision 7: addedAt, childCount, showTitle, seasonIndex and available are LIB-2's; matched is META-1's.",
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "kind": { "type": "string", "enum": ["movie", "show", "season", "episode"] },
@@ -540,7 +637,13 @@
           "contentRating": { "oneOf": [{ "$ref": "#/components/schemas/ContentRating" }, { "type": "null" }] },
           "primaryImageUrl": { "type": ["string", "null"], "pattern": "^/api/v1/", "description": "Poster, or an episode's still. Same-origin relative URL." },
           "backdropUrl": { "type": ["string", "null"], "pattern": "^/api/v1/" },
-          "userState": { "oneOf": [{ "$ref": "#/components/schemas/UserItemState" }, { "type": "null" }], "description": "The current profile's state. Null for shows and seasons." }
+          "userState": { "oneOf": [{ "$ref": "#/components/schemas/UserItemState" }, { "type": "null" }], "description": "The current profile's state. Null for shows and seasons." },
+          "addedAt": { "type": "string", "format": "date-time", "description": "When the item entered the library; sort=added orders by it" },
+          "childCount": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Seasons of a show, episodes of a season; null for movies and episodes." },
+          "showTitle": { "type": ["string", "null"], "minLength": 1, "maxLength": 500, "description": "Set on episodes and seasons; null for movies and shows. Mixed rows read \"[Show] · S1 E4\" from this and seasonIndex." },
+          "seasonIndex": { "type": ["integer", "null"], "minimum": 0, "description": "The episode's season number (0 = specials); set on episodes, null otherwise." },
+          "matched": { "type": ["boolean", "null"], "description": "META-1: null means matching hasn't run (all items until META-1 lands). Only false shows the Unmatched badge." },
+          "available": { "type": ["boolean", "null"], "description": "True if any version can play, false shows a File offline badge. Null for shows and seasons." }
         },
         "allOf": [
           {
@@ -550,17 +653,34 @@
           },
           {
             "if": { "properties": { "kind": { "enum": ["show", "season"] } } },
-            "then": { "properties": { "durationMs": { "type": "null" }, "userState": { "type": "null" } } }
+            "then": { "properties": { "durationMs": { "type": "null" }, "userState": { "type": "null" }, "available": { "type": "null" } } },
+            "else": { "properties": { "available": { "type": "boolean" } } }
+          },
+          {
+            "if": { "properties": { "kind": { "enum": ["movie", "show"] } } },
+            "then": { "properties": { "showTitle": { "type": "null" }, "seasonIndex": { "type": "null" } } },
+            "else": { "properties": { "showTitle": { "type": "string" } } }
+          },
+          {
+            "if": { "properties": { "kind": { "const": "episode" } } },
+            "then": { "properties": { "seasonIndex": { "type": "integer" } } },
+            "else": { "properties": { "seasonIndex": { "type": "null" } } }
+          },
+          {
+            "if": { "properties": { "kind": { "enum": ["movie", "episode"] } } },
+            "then": { "properties": { "childCount": { "type": "null" } } },
+            "else": { "properties": { "childCount": { "type": "integer" } } }
           }
         ]
       },
       "ItemPage": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["items", "nextCursor"],
+        "required": ["items", "nextCursor", "total"],
         "properties": {
           "items": { "type": "array", "items": { "$ref": "#/components/schemas/ItemSummary" } },
-          "nextCursor": { "type": ["string", "null"], "minLength": 1 }
+          "nextCursor": { "type": ["string", "null"], "minLength": 1 },
+          "total": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Items after permission and filters (no leaks through counts). An integer on the first page of a listItems call (no cursor); null on later pages and for continue-watching and next-up." }
         }
       },
       "ExternalId": {
@@ -576,22 +696,35 @@
       "ItemDetail": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["item", "originalTitle", "overview", "genres", "externalIds", "versions"],
+        "required": ["item", "originalTitle", "overview", "genres", "externalIds", "versions", "communityRating", "directors", "studios"],
+        "description": "Decision 7: communityRating, directors and studios are META-1's. Version file names are admin-only (decision 1).",
         "properties": {
           "item": { "$ref": "#/components/schemas/ItemSummary" },
           "originalTitle": { "type": ["string", "null"], "minLength": 1, "maxLength": 500 },
           "overview": { "type": ["string", "null"], "maxLength": 10000 },
           "genres": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 64 } },
+          "communityRating": { "oneOf": [{ "$ref": "#/components/schemas/CommunityRating" }, { "type": "null" }] },
+          "directors": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
+          "studios": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
           "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons, and for a movie or episode with no available file." }
         },
         "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
         "then": { "properties": { "versions": { "maxItems": 0 } } }
       },
+      "CommunityRating": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["source", "value"],
+        "properties": {
+          "source": { "type": "string", "pattern": "^[a-z][a-z0-9]{1,31}$", "description": "Provider, e.g. tmdb" },
+          "value": { "type": "number", "minimum": 0, "maximum": 10 }
+        }
+      },
       "MediaVersion": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "fileId", "label", "durationMs", "sourceRevision", "segment", "container", "video", "audio", "subtitles"],
+        "required": ["id", "fileId", "label", "durationMs", "sourceRevision", "segment", "container", "video", "audio", "subtitles", "sizeBytes", "available", "fileName"],
         "description": "One playable version (cut or quality) of a movie or episode, backed by one file. Episodes that share a file have the same fileId; segment locates the episode when its boundaries are known.",
         "properties": {
           "id": { "type": "string", "minLength": 1 },
@@ -603,7 +736,10 @@
           "container": { "type": "string", "minLength": 1, "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm" },
           "video": { "type": "array", "items": { "$ref": "#/components/schemas/VideoStream" } },
           "audio": { "type": "array", "items": { "$ref": "#/components/schemas/AudioStream" } },
-          "subtitles": { "type": "array", "items": { "$ref": "#/components/schemas/SubtitleStream" } }
+          "subtitles": { "type": "array", "items": { "$ref": "#/components/schemas/SubtitleStream" } },
+          "sizeBytes": { "type": ["integer", "null"], "format": "int64", "minimum": 0, "description": "Null if unknown" },
+          "available": { "type": "boolean", "description": "False when the version's source folder is offline or its file is missing; Play on it shows File offline without starting a session." },
+          "fileName": { "type": ["string", "null"], "minLength": 1, "maxLength": 255, "pattern": "^[^/\\\\]+$", "description": "Bare file name, admins only; null for other viewers. Never a path." }
         }
       },
       "Segment": {

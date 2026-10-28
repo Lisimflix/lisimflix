@@ -53,7 +53,10 @@ func checkEnum(t *testing.T, schema, prop string, goValues ...string) {
 		Components struct {
 			Schemas map[string]struct {
 				Properties map[string]struct {
-					Enum []any `json:"enum"`
+					Enum  []any `json:"enum"`
+					Items struct {
+						Enum []any `json:"enum"`
+					} `json:"items"` // array properties: the enum is on the items
 				} `json:"properties"`
 			} `json:"schemas"`
 		} `json:"components"`
@@ -61,8 +64,36 @@ func checkEnum(t *testing.T, schema, prop string, goValues ...string) {
 	if err := json.Unmarshal(b, &doc); err != nil {
 		t.Fatal(err)
 	}
+	p := doc.Components.Schemas[schema].Properties[prop]
+	compareEnum(t, schema+"."+prop, append(p.Enum, p.Items.Enum...), goValues)
+}
+
+// checkParamEnum is checkEnum for a query parameter under components.parameters.
+func checkParamEnum(t *testing.T, param string, goValues ...string) {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "contracts", "openapi.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		Components struct {
+			Parameters map[string]struct {
+				Schema struct {
+					Enum []any `json:"enum"`
+				} `json:"schema"`
+			} `json:"parameters"`
+		} `json:"components"`
+	}
+	if err := json.Unmarshal(b, &doc); err != nil {
+		t.Fatal(err)
+	}
+	compareEnum(t, "parameter "+param, doc.Components.Parameters[param].Schema.Enum, goValues)
+}
+
+func compareEnum(t *testing.T, name string, enum []any, goValues []string) {
+	t.Helper()
 	var want []string
-	for _, v := range doc.Components.Schemas[schema].Properties[prop].Enum {
+	for _, v := range enum {
 		if s, ok := v.(string); ok {
 			want = append(want, s)
 		}
@@ -70,6 +101,6 @@ func checkEnum(t *testing.T, schema, prop string, goValues ...string) {
 	got := slices.Sorted(slices.Values(goValues))
 	slices.Sort(want)
 	if len(want) == 0 || !slices.Equal(got, want) {
-		t.Errorf("%s.%s: go %v, openapi %v", schema, prop, got, want)
+		t.Errorf("%s: go %v, openapi %v", name, got, want)
 	}
 }

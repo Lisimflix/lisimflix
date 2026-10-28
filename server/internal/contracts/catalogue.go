@@ -1,6 +1,9 @@
 package contracts
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"time"
+)
 
 // Catalogue wire types (CTR-2). Item, file and version IDs are opaque
 // strings: clients never parse them, and they survive renames, provider
@@ -39,6 +42,37 @@ const (
 	SubtitleASS   = "ass"
 )
 
+// Scan states (LibraryScan.state).
+const (
+	ScanIdle     = "idle"
+	ScanScanning = "scanning"
+)
+
+// Library availability (Library.availability): all, some or none of its
+// source folders are readable.
+const (
+	AvailabilityAvailable = "available"
+	AvailabilityPartial   = "partial"
+	AvailabilityOffline   = "offline"
+)
+
+// Planned: LIB-2c (facets and the listItems resolution filter).
+// Resolution buckets (LibraryFacets.resolutions, listItems resolution).
+const (
+	ResolutionSD   = "sd"
+	Resolution720  = "720p"
+	Resolution1080 = "1080p"
+	Resolution4K   = "4k"
+)
+
+// listItems sort orders.
+// Planned: LIB-2c (listItems handler).
+const (
+	SortTitle = "title"
+	SortAdded = "added"
+	SortYear  = "year"
+)
+
 // Page is one page of a cursor-paginated list. NextCursor is null on the
 // last page.
 type Page[T any] struct {
@@ -59,9 +93,35 @@ func (p Page[T]) MarshalJSON() ([]byte, error) {
 }
 
 type Library struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Type string `json:"type"`
+	ID           string      `json:"id"`
+	Name         string      `json:"name"`
+	Type         string      `json:"type"`
+	Scan         LibraryScan `json:"scan"`
+	Availability string      `json:"availability"`
+}
+
+// LibraryScan is first-scan progress; FilesTotal is null while still counting.
+// Planned: LIB-2b (scan counters) and LIB-2c (listLibraries).
+type LibraryScan struct {
+	State      string `json:"state"`
+	FilesSeen  int64  `json:"filesSeen"`
+	FilesTotal *int64 `json:"filesTotal"`
+}
+
+// Planned: LIB-2c (getLibraryFacets).
+// LibraryFacets are the filter-menu values present in a library's permitted
+// items. AudioLanguages are ISO 639-2/T.
+type LibraryFacets struct {
+	Genres         []string   `json:"genres"`
+	Years          *YearRange `json:"years"`
+	AudioLanguages []string   `json:"audioLanguages"`
+	Resolutions    []string   `json:"resolutions"`
+	HDR            bool       `json:"hdr"`
+}
+
+type YearRange struct {
+	Min int64 `json:"min"`
+	Max int64 `json:"max"`
 }
 
 type LibraryList = Page[Library]
@@ -86,9 +146,42 @@ type ItemSummary struct {
 	PrimaryImageURL *string        `json:"primaryImageUrl"`
 	BackdropURL     *string        `json:"backdropUrl"`
 	UserState       *UserItemState `json:"userState"` // null for shows and seasons
+	AddedAt         time.Time      `json:"addedAt"`
+	ChildCount      *int64         `json:"childCount"`  // seasons of a show, episodes of a season; otherwise null
+	ShowTitle       *string        `json:"showTitle"`   // episodes and seasons
+	SeasonIndex     *int64         `json:"seasonIndex"` // episodes
+	Matched         *bool          `json:"matched"`     // META-1; null until matching has run
+	Available       *bool          `json:"available"`   // null for shows and seasons
 }
 
-type ItemPage = Page[ItemSummary]
+// ItemPage is a page of items. Total is the count after permission and
+// filters: set on the first page of a listItems call, null on later pages and
+// for the home rows.
+type ItemPage struct {
+	Items      []ItemSummary `json:"items"`
+	NextCursor *string       `json:"nextCursor"`
+	Total      *int64        `json:"total"`
+}
+
+// MarshalJSON encodes nil Items as [] because the contract requires an array.
+func (p ItemPage) MarshalJSON() ([]byte, error) {
+	items := p.Items
+	if items == nil {
+		items = []ItemSummary{}
+	}
+	return json.Marshal(struct {
+		Items      []ItemSummary `json:"items"`
+		NextCursor *string       `json:"nextCursor"`
+		Total      *int64        `json:"total"`
+	}{items, p.NextCursor, p.Total})
+}
+
+// Planned: META-1 (ItemDetail.communityRating).
+// CommunityRating is a provider's rating on a 0–10 scale.
+type CommunityRating struct {
+	Source string  `json:"source"`
+	Value  float64 `json:"value"`
+}
 
 // ExternalID is a provider ID in its namespace, e.g. tmdb "603". The item's
 // kind says which of the provider's ID spaces it belongs to.
@@ -104,6 +197,10 @@ type ItemDetail struct {
 	Genres        []string       `json:"genres"`
 	ExternalIDs   []ExternalID   `json:"externalIds"`
 	Versions      []MediaVersion `json:"versions"` // empty for shows and seasons
+
+	CommunityRating *CommunityRating `json:"communityRating"`
+	Directors       []string         `json:"directors"`
+	Studios         []string         `json:"studios"`
 }
 
 // MediaVersion is one playable version of a movie or episode: a cut or
@@ -120,6 +217,9 @@ type MediaVersion struct {
 	Video          []VideoStream    `json:"video"`
 	Audio          []AudioStream    `json:"audio"`
 	Subtitles      []SubtitleStream `json:"subtitles"`
+	SizeBytes      *int64           `json:"sizeBytes"` // null if unknown
+	Available      bool             `json:"available"` // false when the source folder is offline or the file is missing
+	FileName       *string          `json:"fileName"`  // bare name, admins only; never a path
 }
 
 // Segment is a range of a file's media timeline, in milliseconds.

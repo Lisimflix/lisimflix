@@ -9,6 +9,12 @@
       "sortTitle": "Synthetic Episode One",
       "year": 2025,
       "index": 1,
+      "addedAt": "2026-10-20T03:05:00Z",
+      "childCount": null,
+      "showTitle": "Synthetic Show",
+      "seasonIndex": 1,
+      "matched": null,
+      "available": true,
       "durationMs": null,
       "contentRating": null,
       "primaryImageUrl": null,
@@ -32,6 +38,12 @@
       "sortTitle": "Synthetic Episode Two",
       "year": 2025,
       "index": 2,
+      "addedAt": "2026-10-20T03:05:00Z",
+      "childCount": null,
+      "showTitle": "Synthetic Show",
+      "seasonIndex": 1,
+      "matched": null,
+      "available": true,
       "durationMs": null,
       "contentRating": null,
       "primaryImageUrl": null,
@@ -47,5 +59,6 @@
       }
     }
   ],
-  "nextCursor": null
+  "nextCursor": null,
+  "total": null
 }

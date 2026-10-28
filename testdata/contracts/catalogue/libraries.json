@@ -1,7 +1,9 @@
 {
   "items": [
-    { "id": "lib-synthetic-movies", "name": "Movies", "type": "movies" },
-    { "id": "lib-synthetic-anime", "name": "Anime", "type": "anime" }
+    { "id": "lib-synthetic-movies", "name": "Movies", "type": "movies",
+      "scan": { "state": "idle", "filesSeen": 0, "filesTotal": null }, "availability": "partial" },
+    { "id": "lib-synthetic-anime", "name": "Anime", "type": "anime",
+      "scan": { "state": "scanning", "filesSeen": 1204, "filesTotal": 3410 }, "availability": "available" }
   ],
   "nextCursor": null
 }

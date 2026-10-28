@@ -1,0 +1,35 @@
+{
+  "items": [
+    {
+      "id": "epi-synthetic-0002",
+      "kind": "episode",
+      "libraryId": "lib-synthetic-anime",
+      "parentId": "sea-synthetic-0001",
+      "title": "Synthetic Episode Two",
+      "sortTitle": "Synthetic Episode Two",
+      "year": 2025,
+      "index": 2,
+      "addedAt": "2026-10-20T03:05:00Z",
+      "childCount": null,
+      "showTitle": "Synthetic Show",
+      "seasonIndex": 1,
+      "matched": null,
+      "available": true,
+      "durationMs": null,
+      "contentRating": null,
+      "primaryImageUrl": null,
+      "backdropUrl": null,
+      "userState": {
+        "itemId": "epi-synthetic-0002",
+        "revision": 0,
+        "resume": null,
+        "watched": null,
+        "playCount": 0,
+        "lastPlayedAt": null,
+        "hiddenFromContinueWatching": false
+      }
+    }
+  ],
+  "nextCursor": null,
+  "total": null
+}

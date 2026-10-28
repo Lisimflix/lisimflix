@@ -121,6 +121,9 @@ const catalogueFixtures = {
   "item-movie.json": "ItemDetail",
   "item-episode-shared-file.json": "ItemDetail",
   "item-show.json": "ItemDetail",
+  "facets.json": "LibraryFacets",
+  "continue-watching.json": "ItemPage",
+  "next-up.json": "ItemPage",
 };
 
 checkFixtures(catalogueFixtures, [
@@ -139,6 +142,17 @@ checkFixtures(catalogueFixtures, [
   ["und language instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].language = "und"; }],
   ["empty audio profile instead of null", "item-movie.json", (d) => { d.versions[1].audio[1].profile = ""; }],
   ["unknown HDR format", "item-movie.json", (d) => { d.versions[1].video[0].hdr = "hdr12"; }],
+  ["path in fileName", "item-movie.json", (d) => { d.versions[1].fileName = "/media/movies/x.mkv"; }],
+  ["windows path in fileName", "item-movie.json", (d) => { d.versions[1].fileName = "C:\\media\\x.mkv"; }],
+  ["negative total", "items-movies.json", (d) => { d.total = -1; }],
+  ["unknown scan state", "libraries.json", (d) => { d.items[0].scan.state = "paused"; }],
+  ["degraded is not a viewer availability", "libraries.json", (d) => { d.items[0].availability = "degraded"; }],
+  ["show with availability", "item-show.json", (d) => { d.item.available = true; }],
+  ["version without available", "item-movie.json", (d) => { delete d.versions[0].available; }],
+  ["rating above 10", "item-movie.json", (d) => { d.communityRating.value = 11; }],
+  ["unknown facet resolution", "facets.json", (d) => { d.resolutions = ["8k"]; }],
+  ["movie with a showTitle", "items-movies.json", (d) => { d.items[0].showTitle = "Synthetic Show"; }],
+  ["negative childCount", "item-show.json", (d) => { d.item.childCount = -1; }],
 ]);
 
 const profileFixtures = { "profiles.json": "ProfileList" };

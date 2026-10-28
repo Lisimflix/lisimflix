@@ -74,6 +74,12 @@ export const episode = {
   sortTitle: "Synthetic Episode Two",
   year: 2025,
   index: 2,
+  addedAt: "2026-10-20T03:05:00Z",
+  childCount: null,
+  showTitle: "Synthetic Show",
+  seasonIndex: 1,
+  matched: null,
+  available: true,
   durationMs: null,
   contentRating: null,
   primaryImageUrl: null,
@@ -83,3 +89,9 @@ export const episode = {
 
 // @ts-expect-error item kinds are a closed set
 export const badKind: ItemSummary = { ...episode, kind: "collection" };
+
+// @ts-expect-error total is required on an item page (null on later pages)
+export const noTotal: components["schemas"]["ItemPage"] = { items: [], nextCursor: null };
+
+// @ts-expect-error scan states are a closed set
+export const badScan: components["schemas"]["LibraryScan"] = { state: "paused", filesSeen: 0, filesTotal: null };

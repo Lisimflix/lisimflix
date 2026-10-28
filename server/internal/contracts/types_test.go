@@ -176,7 +176,7 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		// CTR-2
 		"UserItemState": UserItemState{}, "Resume": Resume{}, "Watched": Watched{},
 		"ProgressEvent": ProgressEvent{}, "ProgressResult": ProgressResult{}, "WatchedRequest": WatchedRequest{},
-		"Library": Library{}, "LibraryList": LibraryList{}, "ContentRating": ContentRating{},
+		"Library": Library{}, "LibraryList": LibraryList{}, "LibraryScan": LibraryScan{}, "LibraryFacets": LibraryFacets{}, "YearRange": YearRange{}, "CommunityRating": CommunityRating{}, "ContentRating": ContentRating{},
 		"ItemSummary": ItemSummary{}, "ItemPage": ItemPage{}, "ExternalId": ExternalID{}, "ItemDetail": ItemDetail{},
 		"MediaVersion": MediaVersion{}, "Segment": Segment{},
 		"VideoStream": VideoStream{}, "AudioStream": AudioStream{}, "SubtitleStream": SubtitleStream{},
