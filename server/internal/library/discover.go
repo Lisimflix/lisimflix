@@ -35,7 +35,6 @@ type File struct {
 // symlinked folders are not walked. Any unreadable folder fails the whole
 // walk, so a caller never mistakes a partial walk for a complete one (spec
 // §3.6: files go missing only after a successful enumeration).
-// Planned: LIB-2 (the catalogue scan enumerates each library root with it).
 func Discover(ctx context.Context, root *os.Root, found func(File) error) error {
 	fsys := root.FS()
 	return fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {

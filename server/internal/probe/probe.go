@@ -112,7 +112,6 @@ type Chapter struct {
 
 // Runner runs ffprobe with the spec §3.6 limits: a deadline and a cap on the
 // JSON it captures. Concurrency is bounded by the caller's worker count.
-// Planned: LIB-2 (the catalogue scan probes discovered files with it).
 type Runner struct {
 	Path      string        // ffprobe binary
 	Timeout   time.Duration // 0 means DefaultTimeout

@@ -86,3 +86,31 @@ MEDIA_DIR=/path/to/media TZ=Australia/Brisbane docker compose -f deploy/compose.
 - **Newer database:** if the log says the database is newer than this version,
   start the matching image. M1 has no restore command yet (admin restore is later
   work, spec §11.3), so keep the newer image rather than copying snapshot files by hand.
+
+## 5. Libraries (preview)
+
+Add a library with a folder inside the media root (repeat `--folder` for more):
+
+```sh
+docker compose -f deploy/compose.m1.yml exec lisimflix \
+  lisimflix library add --name Movies --type movies --folder Movies
+docker compose -f deploy/compose.m1.yml exec lisimflix lisimflix library list
+```
+
+`--type` is `movies`, `tv` or `anime`. `library list` shows each folder's state and its last
+good scan. A running server starts scanning a new library within a minute. Nothing browses
+libraries yet (LIB-2c, UI-2).
+
+- **What it does:** the server watches library folders for changes, rescans every folder every
+  6 hours, and probes new files with ffprobe once they've been unchanged for 30 seconds. It
+  never writes to the media.
+- **Watch limit:** each library folder and subfolder needs one inotify watch. If the log shows
+  `library.watch` with `"state":"limited"`, raise `fs.inotify.max_user_watches` on the host
+  (e.g. `sysctl fs.inotify.max_user_watches=524288`, made permanent in `/etc/sysctl.d/`). The
+  6-hourly scan still finds changes meanwhile.
+- **Network and pooled mounts:** changes made on another machine to an SMB or NFS share, or
+  below Unraid's `/mnt/user`, may not raise events. The 6-hourly scan picks them up.
+- **Offline disks:** an unmounted or empty library folder is shown as `offline`, and nothing in
+  it is marked missing. It's rescanned within a minute of coming back.
+- **Logs:** `library.scan` (each scan, with its counts), `library.probe` (each probe turn) and
+  `library.watch` (a lost or limited watch, or dropped events) lines.
