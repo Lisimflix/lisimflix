@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/probe"
 )
 
 // ProbeRun counts what one ProbeDue call did.
@@ -15,12 +17,18 @@ type ProbeRun struct {
 	Stored   int // results saved
 	Stale    int // results dropped: a scan saw a newer revision meanwhile
 	Deferred int // still changing: retried after the quiet period
+	TimedOut int // ffprobe timeouts, retried later with backoff (#109)
 	Failed   int // probe errors, kept for the admin list (spec §3.1)
 	Gone     int // vanished; the next scan marks them missing
 }
 
 // maxProbeError bounds the stored error text.
 const maxProbeError = 500
+
+// timeoutRetries are the waits before probing again after the 1st, 2nd, …
+// ffprobe timeout in a row: a disk spinning up or a busy NAS usually
+// recovers. The next timeout after the last wait is kept as a failure (#109).
+var timeoutRetries = []time.Duration{15 * time.Minute, time.Hour, 6 * time.Hour, 24 * time.Hour}
 
 // ProbeDue probes the root's present files whose probe doesn't match their
 // current revision, using LIB-1's queue with workers at a time. Unchanged
@@ -91,7 +99,7 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 			return err
 		}
 		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
-			probe_error = NULL, probe_after = NULL WHERE `+resultFits,
+			probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
 			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, string(js), rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
 		if err != nil {
 			return err
@@ -114,12 +122,17 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 	case errors.Is(o.Err, ErrGone):
 		run.Gone++
 	default:
+		if errors.Is(o.Err, probe.ErrTimeout) {
+			if done, err := s.retryTimeout(ctx, rootID, o, run); done || err != nil {
+				return err
+			}
+		}
 		msg := o.Err.Error()
 		if len(msg) > maxProbeError {
 			msg = msg[:maxProbeError]
 		}
 		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
-			probe_error = ?, probe_after = NULL WHERE `+resultFits,
+			probe_error = ?, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
 			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg, rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
 		if err != nil {
 			return err
@@ -133,12 +146,34 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 	return nil
 }
 
+// retryTimeout defers a file whose probe timed out, unless it has run out of
+// retries, and reports whether it dealt with the outcome. Like a stored
+// result, it applies only to the catalogue's revision or a newer one.
+func (s *Store) retryTimeout(ctx context.Context, rootID string, o Outcome, run *ProbeRun) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT probe_timeouts FROM library_files WHERE root_id = ? AND path = ?`, rootID, o.Path).Scan(&n)
+	if err != nil || n >= len(timeoutRetries) {
+		return false, err
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_timeouts = ?, probe_after = ?, probe_error = NULL
+		WHERE `+resultFits, o.Rev.Size, o.Rev.ModTime, n+1, ms(s.now().Add(timeoutRetries[n])), rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
+	if err != nil {
+		return false, err
+	}
+	if k, _ := res.RowsAffected(); k == 0 {
+		run.Stale++
+	} else {
+		run.TimedOut++
+	}
+	return true, nil
+}
+
 // RetryProbe clears a file's probe so the next ProbeDue probes it again: the
 // admin's explicit retry after a failure (spec §3.6).
 // Planned: LIB-2c (the admin retry action).
 func (s *Store) RetryProbe(ctx context.Context, fileID string) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE library_files SET probe_size = NULL, probe_mtime_ns = NULL, probe_json = NULL,
-		probe_error = NULL, probe_after = NULL WHERE id = ?`, fileID)
+		probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE id = ?`, fileID)
 	if err != nil {
 		return err
 	}

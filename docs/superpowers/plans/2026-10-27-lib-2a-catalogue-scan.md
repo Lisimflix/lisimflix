@@ -84,6 +84,7 @@ A pure `library/naming` package turns paths into items from Plex/Radarr/Sonarr a
    - **Only forward:** a "still changing" outcome may only move a file's recorded revision forward (`mtime_ns <= new`), so it can't overwrite a newer one a concurrent scan recorded (Pete's note on #90).
    - **Still changing:** `ErrNotStable` or `ErrChanged` records the newer revision and a not-before time of mtime + quiet period, so nothing spins. That fixes #62 without changing LIB-1.
    - **Errors:** kept, up to 500 bytes, for the admin list. They aren't retried until the file changes or `RetryProbe` clears them.
+   - **Timeouts (#109, Zac's decision):** an ffprobe timeout (a disk spinning up, a busy NAS) is retried after 15 min, 1 h, 6 h and 24 h (`probe_after`, counted in `probe_timeouts`, migration `20261029120000_library_probe_timeouts.sql`). The next timeout after that is kept as an error like any other. A stored result or `RetryProbe` resets the count. `ProbeRun.TimedOut` counts the deferrals.
    - `probe_json` holds `probe.Result` as Go encodes it. It's internal; LIB-2c maps it to CTR-2's stream shapes.
 6. **Multi-episode files.** Each episode of `S01E01E02` / `S01E02-E04` gets a version on the same file, matching CTR-2: same `fileId`, unknown segment. Ranges longer than 12 episodes are treated as a mis-tag, and only the first episode is used. The title in such a name labels the file, so the episodes keep placeholder titles until META-1 fetches real ones.
 7. **Scope cuts, with owners:**
