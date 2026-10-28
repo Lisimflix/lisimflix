@@ -63,6 +63,22 @@ func TestSessionNeedsPrincipalAndPolicy(t *testing.T) {
 	}
 }
 
+// tamperedGrant returns a content URL whose grant differs from the real one.
+// It changes the grant's first character rather than rewriting the last two:
+// that rewrite was a no-op whenever the grant already ended in the replacement,
+// which failed this test and the logging one about once in a thousand runs.
+func tamperedGrant(t *testing.T, contentURL string) string {
+	t.Helper()
+	base, grant, ok := strings.Cut(contentURL, "?grant=")
+	if !ok || grant == "" {
+		t.Fatalf("content URL has no grant: %q", contentURL)
+	}
+	if grant[0] == 'A' {
+		return base + "?grant=B" + grant[1:]
+	}
+	return base + "?grant=A" + grant[1:]
+}
+
 func TestGrantCannotCrossAccountOrSession(t *testing.T) {
 	e := newEnv(t, 4096)
 	e.policy = func(contracts.Principal, string) bool { return true }
@@ -74,7 +90,7 @@ func TestGrantCannotCrossAccountOrSession(t *testing.T) {
 	}{
 		"other account":            {bob, a.ContentURL},
 		"same account, other auth": {alice2, a.ContentURL},
-		"tampered grant":           {alice, a.ContentURL[:len(a.ContentURL)-2] + "AA"},
+		"tampered grant":           {alice, tamperedGrant(t, a.ContentURL)},
 		"no grant":                 {alice, strings.Split(a.ContentURL, "?")[0]},
 		"grant moved to session b": {bob, strings.Split(b.ContentURL, "?")[0] + "?" + strings.Split(a.ContentURL, "?")[1]},
 	} {
