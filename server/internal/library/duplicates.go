@@ -119,8 +119,10 @@ func fold(ctx context.Context, tx *sql.Tx, into, other string) error {
 		return err
 	}
 	// Children in key order, so a season is handled before its episodes.
+	// Scan keys are unique per library only: stay inside other's library.
 	rows, err := tx.QueryContext(ctx, `SELECT id, scan_key FROM library_items
-		WHERE substr(scan_key, 1, length(?) + 1) = ? || '|' ORDER BY length(scan_key)`, otherKey, otherKey)
+		WHERE library_id = (SELECT library_id FROM library_items WHERE id = ?)
+			AND substr(scan_key, 1, length(?) + 1) = ? || '|' ORDER BY length(scan_key)`, other, otherKey, otherKey)
 	if err != nil {
 		return err
 	}
@@ -144,8 +146,10 @@ func fold(ctx context.Context, tx *sql.Tx, into, other string) error {
 		case errors.Is(err, sql.ErrNoRows):
 			// Move it across: new key, parent = the item now at its parent key.
 			parentKey := target[:strings.LastIndex(target, "|")]
-			if _, err := tx.ExecContext(ctx, `UPDATE library_items SET scan_key = ?, parent_id = (SELECT id FROM library_items
-				WHERE scan_key = ? AND library_id = library_items.library_id) WHERE id = ?`, target, parentKey, c.id); err != nil {
+			// The alias matters: inside the subquery, library_items is the
+			// subquery's own table, so the parent must be matched to c.
+			if _, err := tx.ExecContext(ctx, `UPDATE library_items AS c SET scan_key = ?, parent_id = (SELECT p.id FROM library_items p
+				WHERE p.scan_key = ? AND p.library_id = c.library_id) WHERE c.id = ?`, target, parentKey, c.id); err != nil {
 				return err
 			}
 		case err != nil:

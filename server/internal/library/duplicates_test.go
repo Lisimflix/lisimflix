@@ -158,3 +158,48 @@ func TestRenameFoldsWhenAnotherLibraryHasTheSameShow(t *testing.T) {
 		t.Fatalf("TV shows after rename %v, want [%s]", shows, before)
 	}
 }
+
+// Review finding: folding a renamed folder moves seasons the existing item
+// doesn't have. Their parent must be found in the same library, never in
+// another library with the same show (where a cascade delete would then
+// take them).
+func TestFoldKeepsParentsInTheLibrary(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV4K/Show (2019)/Season 01/Show - S01E01.mkv", 10)
+	m.write("TV4K/Show (2019)/Season 02/Show - S02E01.mkv", 10)
+	m.write("TV/Show (2019)/Season 01/Show - S01E01.mkv", 10)
+	ctx := context.Background()
+	uhd, _ := s.CreateLibrary(ctx, "TV 4K", "tv", []string{"TV4K"})
+	tv, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, uhd.Roots[0].ID)
+	scan(t, sc, tv.Roots[0].ID)
+
+	// Renamed, with a season the old folder didn't have: folded in.
+	os.Rename(filepath.Join(m.dir, "TV/Show (2019)"), filepath.Join(m.dir, "TV/Show (2019) {tvdb-1}"))
+	m.write("TV/Show (2019) {tvdb-1}/Season 02/Show - S02E01.mkv", 10)
+	scan(t, sc, tv.Roots[0].ID)
+
+	rows, err := s.db.Query(`SELECT c.scan_key, p.library_id FROM library_items c JOIN library_items p ON p.id = c.parent_id
+		WHERE c.library_id = ?`, tv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	n := 0
+	for rows.Next() {
+		var key, parentLib string
+		rows.Scan(&key, &parentLib)
+		if parentLib != tv.ID {
+			t.Errorf("TV item %s has its parent in library %s", key, parentLib)
+		}
+		n++
+	}
+	if n != 4 { // s1, s1e1, s2, s2e1
+		t.Fatalf("%d TV items with a parent, want 4", n)
+	}
+	if len(dups(t, s, tv.ID)) != 0 {
+		t.Fatal("rename flagged")
+	}
+}
