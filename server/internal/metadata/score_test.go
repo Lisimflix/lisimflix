@@ -23,6 +23,10 @@ func TestNormalize(t *testing.T) {
 		"שָׁלוֹם":      "שָׁלוֹם",
 		"\u30AB\u3099": "\u30AB\u3099", // katakana ga as written by macOS (NFD)
 		"かぐや様は告らせたい":   "かぐや様は告らせたい",
+		// Apostrophes join the word (Decision 5: punctuation is dropped).
+		"Ocean's Eleven":   "oceans eleven",
+		"Schindler’s List": "schindlers list",
+		"Hawaiʼi Five-O":   "hawaii five o",
 	} {
 		if got := Normalize(in); got != want {
 			t.Errorf("Normalize(%q) = %q, want %q", in, got, want)
@@ -47,6 +51,12 @@ func TestScore(t *testing.T) {
 	} {
 		if got := Score(q, c.c); got < c.want-1e-9 || got > c.want+1e-9 {
 			t.Errorf("%s: Score = %.3f, want %.3f", c.name, got, c.want)
+		}
+	}
+	// A title with and without its apostrophe is an exact match.
+	for _, p := range [][2]string{{"Oceans Eleven", "Ocean's Eleven"}, {"Schindlers List", "Schindler’s List"}} {
+		if got := Score(Query{Kind: "movie", Title: p[0], Year: 2001}, Candidate{Kind: "movie", Title: p[1], Year: 2001}); got != 1 {
+			t.Errorf("%q vs %q: Score = %.3f, want 1", p[0], p[1], got)
 		}
 	}
 }

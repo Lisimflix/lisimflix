@@ -74,9 +74,9 @@ var latinFold = func() map[rune]string {
 }()
 
 // Normalize reduces a title to a comparable form: lower case, Latin accents
-// folded, "&" written as "and", punctuation turned into spaces, and a leading
-// "the", "a" or "an" dropped when more words follow. Titles in other scripts
-// compare as written.
+// folded, "&" written as "and", apostrophes dropped ("Ocean's" is "oceans"),
+// other punctuation turned into spaces, and a leading "the", "a" or "an"
+// dropped when more words follow. Titles in other scripts compare as written.
 func Normalize(title string) string {
 	var b strings.Builder
 	lastLatin := false // was the last letter written Latin?
@@ -87,6 +87,7 @@ func Normalize(title string) string {
 			continue
 		}
 		switch {
+		case r == '\'' || r == '\u2019' || r == '\u02BC': // ' ’ ʼ join the word
 		case r == '&':
 			b.WriteString(" and ")
 		case unicode.IsLetter(r):
