@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -458,9 +459,9 @@ func TestGrantBindsVersion(t *testing.T) {
 	if grant == sess.grant {
 		t.Fatal("grant ignores the version")
 	}
-	resp, _ := e.req(&alice, "GET", "/api/v1/playback/sessions/"+ps.ID+"/content?grant="+grant, "", nil)
-	if resp.StatusCode != 403 && resp.StatusCode != 404 {
-		t.Fatalf("content with another version's grant = %d", resp.StatusCode)
+	resp, b := e.req(&alice, "GET", "/api/v1/playback/sessions/"+ps.ID+"/content?grant="+grant, "", nil)
+	if resp.StatusCode != 404 || errCode(t, b) != contracts.CodeNotFound {
+		t.Fatalf("content with another version's grant = %d %s", resp.StatusCode, b)
 	}
 }
 
@@ -509,5 +510,19 @@ func TestSessionsOfTwoSourcesStayApart(t *testing.T) {
 		if !bytes.Equal(body, want) || ps.SourceRevision != srcs[id].SourceRevision {
 			t.Fatalf("session %s served %d bytes, want %d", id, len(body), len(want))
 		}
+	}
+}
+
+type failing struct{}
+
+func (failing) Resolve(contracts.Principal, string, string) (Source, error) {
+	return Source{}, errors.New("catalogue down")
+}
+
+func TestStartResolverErrorIs500(t *testing.T) {
+	e := newEnv(t, 16, func(o *Options) { o.Resolver = failing{} })
+	code, b := e.post(alice, "k1", `{"itemId":"x","versionId":"y"}`)
+	if code != 500 || errCode(t, b) != contracts.CodeInternalError {
+		t.Fatalf("resolver error = %d %s", code, b)
 	}
 }

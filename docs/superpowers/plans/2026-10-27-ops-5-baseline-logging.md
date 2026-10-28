@@ -47,7 +47,10 @@
 | `playback.start` | INFO | `session_id`, `auth_session`, `item_id`, `version_id`, `request_id` | A playback session was created (not on idempotent replay) |
 | `playback.end` | INFO | `session_id`, `auth_session`, `reason` (`stopped`, `expired`, `revoked`, `closed`) | A playback session ended; heartbeat timeout is `expired`, logout is `revoked`, shutdown is `closed` |
 | `playback.source_error` | WARN | `code` (`source_changed`, `source_unavailable`), `session_id` (empty on start), `item_id`, `version_id`, `request_id` | The movie file is missing or changed |
+| `playback.resolve_error` | ERROR | `item_id`, `version_id`, `err`, `request_id` | The playback Resolver failed with something other than not-found (the request gets a 500) |
 | `http.request` | INFO for 4xx, ERROR for 5xx | `method`, `path` (no query), `status`, `bytes`, `duration_ms`, `request_id` | Any request ending in 4xx/5xx. Successful requests are not logged |
+
+Code samples below predate the UI-2 rename (`movie_id` → `item_id`, `version_id`); the table is current.
 
 `peer` is the same key the rate limiter uses: the IPv4 address, or the /64 for IPv6.
 

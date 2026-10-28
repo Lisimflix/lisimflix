@@ -22,7 +22,6 @@ type Source struct {
 
 // Resolver maps a request to a Source the principal may play. ErrNotFound
 // for an unknown or forbidden item/version (same 404 either way).
-// Planned: LIB-2c (a catalogue Resolver replaces Single).
 type Resolver interface {
 	Resolve(p contracts.Principal, itemID, versionID string) (Source, error)
 }
@@ -39,6 +38,7 @@ type M1 struct {
 
 // Single is M1's resolver: one movie, itemID == versionID == movie.ID and
 // fileID == movie.ID, so source revisions are the ones init wrote.
+// Planned: LIB-2c (a catalogue Resolver replaces Single).
 func Single(movie contracts.Movie, relativePath string, authorize func(contracts.Principal, string) bool) *M1 {
 	return &M1{movie: movie, rel: relativePath, authorize: authorize}
 }

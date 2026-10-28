@@ -94,6 +94,7 @@ func New(root *os.Root, opts Options) (*Server, error) {
 		return nil, errors.New("playback: grant key must be at least 32 bytes")
 	case opts.MaxSessions < 1:
 		return nil, errors.New("playback: MaxSessions must be at least 1")
+	// m1config validates the source at load; Check and statSource re-check at runtime.
 	case opts.Resolver == nil:
 		return nil, errors.New("playback: Resolver is required")
 	}

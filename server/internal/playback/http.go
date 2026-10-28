@@ -94,12 +94,8 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 		return
 	}
 	src, err := s.resolver.Resolve(p, req.ItemID, req.VersionID)
-	if errors.Is(err, ErrNotFound) {
-		contracts.WriteError(w, r, contracts.CodeNotFound, "Item or version not found.")
-		return
-	}
 	if err != nil {
-		contracts.WriteError(w, r, contracts.CodeInternalError, "Something went wrong.")
+		s.resolveFailed(w, r, err, req.ItemID, req.VersionID, "Item or version not found.")
 		return
 	}
 	info, err := statSource(s.root, src)
@@ -236,7 +232,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 		return
 	}
 	if _, err := s.resolver.Resolve(p, sess.src.ItemID, sess.src.VersionID); err != nil {
-		contracts.WriteError(w, r, contracts.CodeNotFound, "Playback session not found.")
+		s.resolveFailed(w, r, err, sess.src.ItemID, sess.src.VersionID, "Playback session not found.")
 		return
 	}
 	f, info, err := s.open(sess)
@@ -307,6 +303,17 @@ func (d *deliveryWriter) Write(p []byte) (int, error) {
 	n, err := d.ResponseWriter.Write(p)
 	d.written.Add(int64(n))
 	return n, err
+}
+
+// resolveFailed answers a failed Resolve: ErrNotFound is a 404 with notFoundMsg,
+// anything else is a logged 500.
+func (s *Server) resolveFailed(w http.ResponseWriter, r *http.Request, err error, itemID, versionID, notFoundMsg string) {
+	if errors.Is(err, ErrNotFound) {
+		contracts.WriteError(w, r, contracts.CodeNotFound, notFoundMsg)
+		return
+	}
+	obs.Log(r.Context(), s.log).Error("playback.resolve_error", "item_id", itemID, "version_id", versionID, "err", err)
+	contracts.WriteError(w, r, contracts.CodeInternalError, "Something went wrong.")
 }
 
 // sourceError answers and logs a missing or changed source. sessionID is ""
