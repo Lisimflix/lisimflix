@@ -117,8 +117,17 @@ func (sc *Scanner) Scan(ctx context.Context, rootID, scope, cause string) (Run, 
 
 	var batch []File
 	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
 		err := st.applyBatch(bg, root, libType, run.ID, batch, &run)
 		batch = batch[:0]
+		if err != nil {
+			return err
+		}
+		// Live counters, so a first scan shows its progress (UI-2).
+		_, err = st.db.ExecContext(bg, `UPDATE library_scan_runs SET seen = ?, added = ?, changed = ?, returned = ?, unplaced = ?
+			WHERE id = ?`, run.Seen, run.Added, run.Changed, run.Returned, run.Unplaced, run.ID)
 		return err
 	}
 	add := func(f File) error {
