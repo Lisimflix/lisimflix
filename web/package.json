@@ -6,7 +6,7 @@
     "node": "24.22.1"
   },
   "scripts": {
-    "generate:api": "openapi-typescript ../docs/contracts/m1-openapi.json -o src/api/schema.d.ts",
+    "generate:api": "openapi-typescript ../docs/contracts/openapi.json -o src/api/schema.d.ts",
     "test:contracts": "node --test contract-tests/fixtures.test.mjs",
     "lint": "eslint src contract-tests",
     "typecheck": "tsc --noEmit",

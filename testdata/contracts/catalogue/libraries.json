@@ -1,0 +1,7 @@
+{
+  "items": [
+    { "id": "lib-synthetic-movies", "name": "Movies", "type": "movies" },
+    { "id": "lib-synthetic-anime", "name": "Anime", "type": "anime" }
+  ],
+  "nextCursor": null
+}

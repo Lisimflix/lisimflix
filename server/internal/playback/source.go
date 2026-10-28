@@ -4,13 +4,10 @@
 package playback
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"io/fs"
 	"os"
 	"path/filepath"
-	"strconv"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
 )
@@ -27,12 +24,11 @@ var (
 	errSourceUnavailable = errors.New("playback: the source file is not available")
 )
 
-// Revision fingerprints a source file: lowercase hex SHA-256 of
-// movieID 0x00 size 0x00 mtimeUnixNano, with decimal numbers. init, startup
-// and playback all use it, so it must stay byte-for-byte stable.
+// Revision is the source revision of the configured movie's file
+// (contracts.SourceRevision with the movie ID as the file ID). init, startup
+// and playback all use it.
 func Revision(movieID string, info fs.FileInfo) string {
-	sum := sha256.Sum256([]byte(movieID + "\x00" + strconv.FormatInt(info.Size(), 10) + "\x00" + strconv.FormatInt(info.ModTime().UnixNano(), 10)))
-	return hex.EncodeToString(sum[:])
+	return contracts.SourceRevision(movieID, info.Size(), info.ModTime().UnixNano())
 }
 
 // statSource returns the source's metadata through the root, which refuses

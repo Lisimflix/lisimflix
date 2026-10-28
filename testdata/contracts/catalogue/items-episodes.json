@@ -1,0 +1,51 @@
+{
+  "items": [
+    {
+      "id": "epi-synthetic-0001",
+      "kind": "episode",
+      "libraryId": "lib-synthetic-anime",
+      "parentId": "sea-synthetic-0001",
+      "title": "Synthetic Episode One",
+      "sortTitle": "Synthetic Episode One",
+      "year": 2025,
+      "index": 1,
+      "durationMs": null,
+      "contentRating": null,
+      "primaryImageUrl": null,
+      "backdropUrl": null,
+      "userState": {
+        "itemId": "epi-synthetic-0001",
+        "revision": 2,
+        "resume": null,
+        "watched": { "value": true, "origin": "manual", "at": "2026-10-26T10:00:00Z" },
+        "playCount": 1,
+        "lastPlayedAt": "2026-10-26T09:40:00Z",
+        "hiddenFromContinueWatching": false
+      }
+    },
+    {
+      "id": "epi-synthetic-0002",
+      "kind": "episode",
+      "libraryId": "lib-synthetic-anime",
+      "parentId": "sea-synthetic-0001",
+      "title": "Synthetic Episode Two",
+      "sortTitle": "Synthetic Episode Two",
+      "year": 2025,
+      "index": 2,
+      "durationMs": null,
+      "contentRating": null,
+      "primaryImageUrl": null,
+      "backdropUrl": null,
+      "userState": {
+        "itemId": "epi-synthetic-0002",
+        "revision": 0,
+        "resume": null,
+        "watched": null,
+        "playCount": 0,
+        "lastPlayedAt": null,
+        "hiddenFromContinueWatching": false
+      }
+    }
+  ],
+  "nextCursor": null
+}

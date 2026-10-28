@@ -5,6 +5,10 @@ import type { components } from "../src/api/schema";
 type Movie = components["schemas"]["Movie"];
 type PlaybackSession = components["schemas"]["PlaybackSession"];
 type AuthState = components["schemas"]["AuthState"];
+type UserItemState = components["schemas"]["UserItemState"];
+type ProgressEvent = components["schemas"]["ProgressEvent"];
+type ProgressResult = components["schemas"]["ProgressResult"];
+type ItemSummary = components["schemas"]["ItemSummary"];
 
 export const movie = {
   id: "movie-synthetic-0001",
@@ -39,3 +43,43 @@ export const badDuration: Movie = { ...movie, durationMs: "5400000" };
 
 // @ts-expect-error M1 only has the direct route
 export const badRoute: PlaybackSession = { ...session, route: "transcode" };
+
+// CTR-2 (testdata/contracts/catalogue)
+export const freshState = {
+  itemId: "epi-synthetic-0002",
+  revision: 0,
+  resume: null,
+  watched: null,
+  playCount: 0,
+  lastPlayedAt: null,
+  hiddenFromContinueWatching: false,
+} satisfies UserItemState;
+
+export const seek = { sequence: 42, kind: "seek", positionMs: 2400000, fromPositionMs: 1830000 } satisfies ProgressEvent;
+
+export const duplicate = { accepted: false, reason: "duplicate", state: freshState } satisfies ProgressResult;
+
+// @ts-expect-error positions are numbers of milliseconds, not strings
+export const badPosition: ProgressEvent = { ...seek, positionMs: "2400000" };
+
+// @ts-expect-error reject reasons are a closed set
+export const badReason: ProgressResult = { ...duplicate, reason: "late" };
+
+export const episode = {
+  id: "epi-synthetic-0002",
+  kind: "episode",
+  libraryId: "lib-synthetic-anime",
+  parentId: "sea-synthetic-0001",
+  title: "Synthetic Episode Two",
+  sortTitle: "Synthetic Episode Two",
+  year: 2025,
+  index: 2,
+  durationMs: null,
+  contentRating: null,
+  primaryImageUrl: null,
+  backdropUrl: null,
+  userState: freshState,
+} satisfies ItemSummary;
+
+// @ts-expect-error item kinds are a closed set
+export const badKind: ItemSummary = { ...episode, kind: "collection" };

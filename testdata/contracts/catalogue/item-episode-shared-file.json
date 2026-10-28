@@ -1,0 +1,43 @@
+{
+  "item": {
+    "id": "epi-synthetic-0002",
+    "kind": "episode",
+    "libraryId": "lib-synthetic-anime",
+    "parentId": "sea-synthetic-0001",
+    "title": "Synthetic Episode Two",
+    "sortTitle": "Synthetic Episode Two",
+    "year": 2025,
+    "index": 2,
+    "durationMs": null,
+    "contentRating": null,
+    "primaryImageUrl": null,
+    "backdropUrl": null,
+    "userState": {
+      "itemId": "epi-synthetic-0002",
+      "revision": 0,
+      "resume": null,
+      "watched": null,
+      "playCount": 0,
+      "lastPlayedAt": null,
+      "hiddenFromContinueWatching": false
+    }
+  },
+  "originalTitle": "Gousei Episode Two",
+  "overview": null,
+  "genres": [],
+  "externalIds": [{ "namespace": "anidb", "id": "800002" }],
+  "versions": [
+    {
+      "id": "ver-synthetic-0003",
+      "fileId": "fil-synthetic-0003",
+      "label": null,
+      "durationMs": null,
+      "sourceRevision": "2fed55f288c2c2f69d958fa92efcb153a77c49b68e638a946c648497e65c055b",
+      "segment": null,
+      "container": "matroska,webm",
+      "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],
+      "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "jpn", "title": null, "default": true, "forced": false }],
+      "subtitles": [{ "index": 2, "codec": "ass", "kind": "ass", "language": "eng", "title": "Full", "default": true, "forced": false, "hearingImpaired": false }]
+    }
+  ]
+}

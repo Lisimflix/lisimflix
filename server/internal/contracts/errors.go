@@ -14,6 +14,7 @@ const (
 	CodeNotFound            = "not_found"
 	CodeSourceChanged       = "source_changed"
 	CodeIdempotencyConflict = "idempotency_conflict"
+	CodeRevisionConflict    = "revision_conflict"
 	CodePlaybackExpired     = "playback_expired"
 	CodeCapacityUnavailable = "capacity_unavailable"
 	CodeRateLimited         = "rate_limited"
@@ -30,6 +31,7 @@ var codeStatus = map[string]int{
 	CodeNotFound:            http.StatusNotFound,
 	CodeSourceChanged:       http.StatusConflict,
 	CodeIdempotencyConflict: http.StatusConflict,
+	CodeRevisionConflict:    http.StatusConflict,
 	CodePlaybackExpired:     http.StatusGone,
 	CodeCapacityUnavailable: http.StatusTooManyRequests,
 	CodeRateLimited:         http.StatusTooManyRequests,
