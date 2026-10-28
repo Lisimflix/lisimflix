@@ -203,3 +203,109 @@ func TestFoldKeepsParentsInTheLibrary(t *testing.T) {
 		t.Fatal("rename flagged")
 	}
 }
+
+func shows(t *testing.T, s *Store, libID string) []string {
+	t.Helper()
+	rows, err := s.db.Query(`SELECT id FROM library_items WHERE library_id = ? AND kind = 'show' ORDER BY id`, libID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		rows.Scan(&id)
+		out = append(out, id)
+	}
+	return out
+}
+
+// Review finding: after "keep separate", renaming the separate folder is a
+// rename of that folder: it folds into its own item, without a new flag or
+// a third show.
+func TestKeptSeparateFolderCanBeRenamed(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Doctor Who/Season 01/Doctor Who - S01E01.mkv", 10)
+	m.write("TV/Doctor.Who/Season 01/Doctor.Who.S01E01.mkv", 20)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+	d := dups(t, s, lib.ID)
+	if len(d) != 1 {
+		t.Fatalf("duplicates %+v", d)
+	}
+	if err := s.Decide(ctx, d[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	before := shows(t, s, lib.ID)
+
+	os.Rename(filepath.Join(m.dir, "TV/Doctor.Who"), filepath.Join(m.dir, "TV/Doctor Who {tvdb-2}"))
+	scan(t, sc, lib.Roots[0].ID)
+	if got := shows(t, s, lib.ID); !slices.Equal(got, before) {
+		t.Fatalf("shows %v, want the same two %v", got, before)
+	}
+	if d := dups(t, s, lib.ID); len(d) != 0 {
+		t.Fatalf("the decision didn't stick: %+v", d)
+	}
+}
+
+// Review finding: after "merge", renaming either merged folder is a rename
+// into the merged item, even though its other folder still has files.
+func TestMergedFolderCanBeRenamed(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Doctor Who/Season 01/Doctor Who - S01E01.mkv", 10)
+	m.write("TV/Doctor.Who/Season 01/Doctor.Who.S01E02.mkv", 20)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+	d := dups(t, s, lib.ID)
+	if err := s.Decide(ctx, d[0].ID, true); err != nil {
+		t.Fatal(err)
+	}
+	before := shows(t, s, lib.ID)
+
+	os.Rename(filepath.Join(m.dir, "TV/Doctor.Who"), filepath.Join(m.dir, "TV/Doctor Who {tvdb-2}"))
+	scan(t, sc, lib.Roots[0].ID)
+	if got := shows(t, s, lib.ID); len(before) != 1 || !slices.Equal(got, before) {
+		t.Fatalf("shows %v, want the merged one %v", got, before)
+	}
+	if d := dups(t, s, lib.ID); len(d) != 0 {
+		t.Fatalf("the merge didn't stick: %+v", d)
+	}
+	// Episode 2 has the renamed file plus its old, now missing, path (kept
+	// until retirement), as for any rename.
+	want := []string{"episode Episode 1 1 v1", "episode Episode 2 2 v2", "season Season 1 1 v0", "show Doctor Who - v0"}
+	if got := s.tree(t, lib.ID); !slices.Equal(got, want) {
+		t.Fatalf("tree %v, want %v", got, want)
+	}
+}
+
+// When more than one gone folder could be the source of a rename, the
+// scanner doesn't guess: the new folder is flagged for the admin.
+func TestAmbiguousRenameIsFlagged(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("TV/Doctor Who/Season 01/Doctor Who - S01E01.mkv", 10)
+	m.write("TV/Doctor.Who/Season 01/Doctor.Who.S01E01.mkv", 20)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "TV", "tv", []string{"TV"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+	if err := s.Decide(ctx, dups(t, s, lib.ID)[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	os.RemoveAll(filepath.Join(m.dir, "TV/Doctor Who"))
+	os.RemoveAll(filepath.Join(m.dir, "TV/Doctor.Who"))
+	m.write("TV/Doctor Who {tvdb-9}/Season 01/Doctor Who - S01E01.mkv", 30)
+	scan(t, sc, lib.Roots[0].ID)
+	if d := dups(t, s, lib.ID); len(d) != 1 {
+		t.Fatalf("ambiguous rename: flags %+v, want one", d)
+	}
+	if n := len(shows(t, s, lib.ID)); n != 3 {
+		t.Fatalf("%d shows, want 3 (nothing folded)", n)
+	}
+}

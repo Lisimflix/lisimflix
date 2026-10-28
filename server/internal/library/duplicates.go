@@ -51,9 +51,9 @@ func (s *Store) groupItem(ctx context.Context, tx *sql.Tx, root Root, e naming.E
 }
 
 // settle resolves the root's pending duplicate pairs after a completed scan,
-// once files that weren't found have been marked missing. If the existing
-// item has no present file left, the new folder replaced it (a rename or
-// move) and is folded in, keeping the item's identity. Otherwise both folders
+// once files that weren't found have been marked missing. If the new folder
+// replaced a folder that is gone (a rename or move), it is folded into that
+// folder's item, keeping its identity; see renamed. Otherwise both folders
 // exist and the pair is flagged for the admin.
 func (s *Store) settle(ctx context.Context, rootID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -77,20 +77,72 @@ func (s *Store) settle(ctx context.Context, rootID string) error {
 	}
 	rows.Close()
 	for _, p := range pairs {
-		alive, err := hasPresentFile(ctx, tx, p.item)
+		into, err := renamed(ctx, tx, p.other)
 		if err != nil {
 			return err
 		}
-		if alive {
-			_, err = tx.ExecContext(ctx, `UPDATE library_duplicates SET state = 'flagged' WHERE id = ?`, p.id)
+		if into != "" {
+			err = fold(ctx, tx, into, p.other)
 		} else {
-			err = fold(ctx, tx, p.item, p.other)
+			_, err = tx.ExecContext(ctx, `UPDATE library_duplicates SET state = 'flagged' WHERE id = ?`, p.id)
 		}
 		if err != nil {
 			return err
 		}
 	}
 	return tx.Commit()
+}
+
+// renamed returns the item whose folder the new folder of item other
+// replaced, or "" if there is none or more than one. The candidates are every
+// item of the library mapped from the same naming key, not only the one
+// whose key it clashed with: after an admin's "keep separate" or "merge",
+// either folder can be renamed later. A candidate qualifies if one of its
+// folders has no present file left (that folder is gone), or, for loose
+// files, if it has no present file at all.
+func renamed(ctx context.Context, tx *sql.Tx, other string) (string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT c.item_id FROM library_folders o
+		JOIN library_roots orr ON orr.id = o.root_id
+		JOIN library_folders c ON c.scan_key = o.scan_key
+		JOIN library_roots cr ON cr.id = c.root_id AND cr.library_id = orr.library_id
+		WHERE o.item_id = ? AND c.item_id != ?
+		ORDER BY c.item_id`, other, other)
+	if err != nil {
+		return "", err
+	}
+	var cands []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return "", err
+		}
+		cands = append(cands, id)
+	}
+	rows.Close()
+	var found []string
+	for _, c := range cands {
+		var gone bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM library_folders f WHERE f.item_id = ? AND f.folder != ''
+			AND NOT EXISTS (SELECT 1 FROM library_files x WHERE x.root_id = f.root_id AND x.state = 'present'
+				AND x.path >= f.folder || '/' AND x.path < f.folder || '0'))`, c).Scan(&gone); err != nil {
+			return "", err
+		}
+		if !gone {
+			alive, err := hasPresentFile(ctx, tx, c)
+			if err != nil {
+				return "", err
+			}
+			gone = !alive
+		}
+		if gone {
+			found = append(found, c)
+		}
+	}
+	if len(found) != 1 {
+		return "", nil // none, or ambiguous: the admin decides
+	}
+	return found[0], nil
 }
 
 // hasPresentFile reports whether any version under the item (or, for a
