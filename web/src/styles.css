@@ -67,7 +67,7 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 .listbox li[aria-selected="true"] { color: var(--accent); }
 
 .vgrid { position: relative; }
-.vgrid-rows { position: absolute; left: 0; right: 0; display: grid; }
+.vgrid .cell { position: absolute; }
 .card { display: block; text-decoration: none; }
 .card .art { position: relative; display: block; aspect-ratio: var(--aspect, 2 / 3); background: #1a1b1f; border-radius: 0.5rem; overflow: hidden; }
 .card.wide .art { aspect-ratio: 16 / 9; }
@@ -86,7 +86,7 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 .card.ph .art { opacity: 0.4; }
 
 .withrail { padding-right: 2rem; } /* gutter for the fixed A–Z rail */
-.azrail { position: fixed; right: 0.25rem; top: 50%; transform: translateY(-50%); z-index: 4; display: flex; flex-direction: column; max-height: calc(100vh - 1rem); overflow-y: auto; }
+.azrail { position: fixed; right: 0.25rem; top: 5rem; bottom: 1rem; z-index: 4; display: flex; flex-direction: column; overflow-y: auto; } /* below the header, scrolls when short */
 .azrail button { background: none; border: 0; color: inherit; font-size: 0.75rem; min-width: 24px; min-height: 24px; padding: 0; line-height: 1; opacity: 0.6; cursor: pointer; flex: none; }
 .azrail button:hover, .azrail button[aria-current="true"] { opacity: 1; color: var(--accent); }
 
@@ -129,6 +129,7 @@ a.button, .upnext button { border-radius: 0.5rem; padding: 0.5rem 1rem; text-dec
 .episodes li { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0; border-bottom: 1px solid var(--thumb); }
 .episodes .num { width: 2rem; opacity: 0.6; }
 .episodes a { flex: 1; }
+.episodes .offline { font-size: 0.8rem; color: #ff9a8a; }
 .episodes .bar { width: 6rem; height: 4px; background: #00000099; }
 .episodes .bar span { display: block; height: 100%; background: var(--accent); }
 .episodes button { border-radius: 0.5rem; padding: 0.35rem 0.8rem; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }

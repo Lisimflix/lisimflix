@@ -3,6 +3,7 @@ import { ApiError, type Client, type ItemQuery, type ItemSummary, type Library a
 import { cached, saveView, view } from "../app/cache";
 import { navigate, useSearch } from "../app/router";
 import { Card } from "../ui/Card";
+import { languageName } from "./format";
 import { Chip, MenuChip, type Option } from "../ui/Chips";
 import { Empty, ErrorState, OfflineBanner, OfflineLibrary, PartialBanner, Skeleton } from "../ui/States";
 import { VirtualGrid } from "../ui/VirtualGrid";
@@ -15,24 +16,6 @@ const SORTS = [
 ] as const;
 const RESOLUTIONS = new Map([["sd", "SD"], ["720p", "720p"], ["1080p", "1080p"], ["4k", "4K"]]);
 const LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
-
-// shortcut: 639-2→1 table covers common codes only; widen when a library shows raw codes
-const ISO639_1: Record<string, string> = {
-  eng: "en", jpn: "ja", deu: "de", ger: "de", fra: "fr", fre: "fr", spa: "es", ita: "it", por: "pt", rus: "ru",
-  zho: "zh", chi: "zh", kor: "ko", nld: "nl", dut: "nl", swe: "sv", nor: "no", dan: "da", fin: "fi", pol: "pl",
-  tur: "tr", ara: "ar", heb: "he", hin: "hi", tha: "th", ces: "cs", cze: "cs", hun: "hu", ell: "el", gre: "el",
-  ukr: "uk", vie: "vi", ind: "id", ron: "ro", rum: "ro", bul: "bg", hrv: "hr", fas: "fa", per: "fa", cat: "ca",
-};
-const languages = new Intl.DisplayNames(["en"], { type: "language" });
-export function languageName(code: string): string {
-  const two = ISO639_1[code];
-  if (!two) return code;
-  try {
-    return languages.of(two) ?? code;
-  } catch {
-    return code;
-  }
-}
 
 // Everything the grid shows lives in one object, so it can be stored and restored whole (decision 12).
 export interface GridState {
@@ -76,6 +59,9 @@ export function Library({ client, library: initial }: { client: Client; library:
   const query = queryFrom(library.id, params, noWatched);
   const key = JSON.stringify(query);
   const [facets, setFacets] = useState<LibraryFacets | null>(null);
+  const [facetsFailed, setFacetsFailed] = useState(false); // a failed facets load: chips say so and retry
+  const [facetTries, setFacetTries] = useState(0);
+  const [refreshing, setRefreshing] = useState(false); // a scan tick refetches the first page; Empty stays up meanwhile
   const entry: string | undefined = history.state?.key;
   const saved = view<GridView>(entry, "grid");
   const [state, setState] = useState<GridState>(() => (saved?.state?.key === key ? saved.state : fresh(key)));
@@ -91,9 +77,14 @@ export function Library({ client, library: initial }: { client: Client; library:
   useEffect(() => {
     let on = true;
     setFacets(null);
-    cached(`facets:${library.id}`, () => client.facets(library.id)).then((f) => on && setFacets(f), () => undefined);
+    setFacetsFailed(false);
+    cached(`facets:${library.id}`, () => client.facets(library.id)).then((f) => on && setFacets(f), () => on && setFacetsFailed(true));
     return () => { on = false; };
-  }, [client, library.id]);
+  }, [client, library.id, facetTries]);
+  // The refetch is over once titles arrive or the first page ends empty.
+  useEffect(() => {
+    if (refreshing && (cur.items.length > 0 || (!cur.hasMore && !cur.loading) || cur.error)) setRefreshing(false);
+  });
 
   // Save while on this entry; `entry` is captured per render, and a route change unmounts before the next entry's key can be read.
   const entryRef = useRef(entry);
@@ -171,7 +162,10 @@ export function Library({ client, library: initial }: { client: Client; library:
   // Progress or the end of the scan means titles may exist now: drop the empty first page so the grid refetches it.
   function onPoll(next: LibraryInfo) {
     setLibrary(next);
-    if (next.scan.filesSeen !== library.scan.filesSeen || next.scan.state !== library.scan.state) setState(fresh(key));
+    if (next.scan.filesSeen !== library.scan.filesSeen || next.scan.state !== library.scan.state) {
+      setRefreshing(true);
+      setState(fresh(key));
+    }
   }
 
   function setParams(patch: Record<string, string | null>) {
@@ -198,7 +192,7 @@ export function Library({ client, library: initial }: { client: Client; library:
       {s.total !== null && <p className="count">{s.total === 1 ? "1 title" : `${s.total} titles`}</p>}
       {library.availability === "partial" && <PartialBanner />}
       {offline && s.items.length > 0 && <OfflineBanner onRetry={() => setState({ ...cur, error: null })} />}
-      <div className="filters" role="group" aria-label="Filters">
+      <div className={sort === "title" ? "filters withrail" : "filters"} role="group" aria-label="Filters">
         <Chip label="All" pressed={!filtered} onClick={() => setParams({ genre: null, yearFrom: null, yearTo: null, resolution: null, hdr: null, audioLanguage: null, watched: null })} />
         {!noWatched && <Chip label="Unwatched" pressed={query.watched === false} onClick={() => setParams({ watched: query.watched === false ? null : "false" })} />}
         {facets && facets.genres.length > 0 && (
@@ -221,10 +215,13 @@ export function Library({ client, library: initial }: { client: Client; library:
           </select>
         </label>
         {query.from && <button type="button" className="chip" onClick={() => setParams({ from: null })}>Back to top</button>}
+        {facetsFailed && (
+          <span role="alert" className="facetfail">Couldn't load filters. <button type="button" className="chip" onClick={() => setFacetTries(facetTries + 1)}>Try again</button></span>
+        )}
       </div>
       {s.error && !(offline && s.items.length > 0) && <ErrorState error={s.error} thing="library" level={2} onRetry={() => setState({ ...cur, error: null })} />}
-      {s.items.length === 0 && !s.error && (s.hasMore || s.loading) && <Skeleton kind="grid" />}
-      {s.items.length === 0 && !s.error && !s.hasMore && !s.loading && (
+      {s.items.length === 0 && !s.error && (s.hasMore || s.loading) && !refreshing && <Skeleton kind="grid" />}
+      {s.items.length === 0 && !s.error && ((!s.hasMore && !s.loading) || refreshing) && (
         library.availability === "offline" ? <OfflineLibrary /> : filtered || query.from ? <p>No titles match these filters.</p> : <Empty library={library} client={client} onPoll={onPoll} />
       )}
       <div className={sort === "title" ? "withrail" : undefined} onFocus={(e) => {

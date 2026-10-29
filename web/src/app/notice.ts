@@ -10,3 +10,5 @@ export function takeNotice(itemId: string): Notice | null {
   pending = null;
   return n;
 }
+
+export const clearNotice = () => { pending = null; };

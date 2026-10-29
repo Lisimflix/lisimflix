@@ -4,8 +4,7 @@ import { ErrorState, SourceUnavailable, Skeleton } from "../ui/States";
 import { invalidate } from "../app/cache";
 import { takeNotice, type Notice } from "../app/notice";
 import { Link, navigate } from "../app/router";
-import { codecName, formatClock, resolutionName, resumeChoice, versionLabel } from "./format";
-import { languageName } from "./Library";
+import { codecName, formatClock, languageName, resolutionName, resumeChoice, versionLabel } from "./format";
 import { Show } from "./Show";
 
 const message = (err: unknown) => (err instanceof ApiError ? err.message : "Something went wrong.");
@@ -57,6 +56,8 @@ function DetailView({ client, detail, notice, refetch }: { client: Client; detai
   const confirm = useRef<HTMLDialogElement>(null);
   const [state, setState] = useState(item.userState);
   const [status, setStatus] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false); // the PUT is pending: one at a time
+  const [noWatched, setNoWatched] = useState(false); // 404 not_found: DATA-1 isn't live, so there is nothing to toggle
   useEffect(() => setState(item.userState), [item]);
   const version = versions.find((v) => v.id === versionId);
   const playable = item.kind === "movie" || item.kind === "episode";
@@ -71,7 +72,9 @@ function DetailView({ client, detail, notice, refetch }: { client: Client; detai
   }
 
   async function toggleWatched() {
+    if (saving) return;
     setStatus(null);
+    setSaving(true);
     try {
       setState(await client.setWatched(item.id, !watched, state?.revision ?? 0));
       invalidate();
@@ -79,7 +82,10 @@ function DetailView({ client, detail, notice, refetch }: { client: Client; detai
       if (err instanceof ApiError && err.code === "revision_conflict") {
         await refetch().catch(() => undefined);
         setStatus("Updated elsewhere, try again");
-      } else setStatus(message(err));
+      } else if (err instanceof ApiError && err.status === 404 && err.code === "not_found") setNoWatched(true);
+      else setStatus(message(err));
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -122,7 +128,7 @@ function DetailView({ client, detail, notice, refetch }: { client: Client; detai
                   <button type="button" onClick={() => navigate(playHref())}>Play from start</button>
                 </>
               )}
-              <button type="button" aria-pressed={watched} onClick={toggleWatched}>Mark watched ✓</button>
+              {!noWatched && <button type="button" aria-pressed={watched} disabled={saving} onClick={toggleWatched}>Mark watched ✓</button>}
             </div>
           )}
           {playable && version && !version.available && <SourceUnavailable kind={item.kind as "movie" | "episode"} />}

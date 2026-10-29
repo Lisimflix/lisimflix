@@ -60,3 +60,21 @@ export function resumeChoice(state: UserItemState | null, version: MediaVersion)
   const same = r.versionId === version.id && r.sourceRevision === version.sourceRevision && r.positionMs < (version.durationMs ?? Infinity);
   return { kind: same ? "resume" : "confirm", positionMs: r.positionMs };
 }
+
+// shortcut: 639-2→1 table covers common codes only; widen when a library shows raw codes
+const ISO639_1: Record<string, string> = {
+  eng: "en", jpn: "ja", deu: "de", ger: "de", fra: "fr", fre: "fr", spa: "es", ita: "it", por: "pt", rus: "ru",
+  zho: "zh", chi: "zh", kor: "ko", nld: "nl", dut: "nl", swe: "sv", nor: "no", dan: "da", fin: "fi", pol: "pl",
+  tur: "tr", ara: "ar", heb: "he", hin: "hi", tha: "th", ces: "cs", cze: "cs", hun: "hu", ell: "el", gre: "el",
+  ukr: "uk", vie: "vi", ind: "id", ron: "ro", rum: "ro", bul: "bg", hrv: "hr", fas: "fa", per: "fa", cat: "ca",
+};
+const languages = new Intl.DisplayNames(["en"], { type: "language" });
+export function languageName(code: string): string {
+  const two = ISO639_1[code];
+  if (!two) return code;
+  try {
+    return languages.of(two) ?? code;
+  } catch {
+    return code;
+  }
+}

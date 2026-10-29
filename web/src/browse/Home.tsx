@@ -54,11 +54,14 @@ function HomeRow({ title, state, retry, seeAllHref, unwatched, mixed }: { title:
 
 function UpNext({ client, first }: { client: Client; first: ItemSummary }) {
   const [detail, setDetail] = useState<ItemDetail | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [tries, setTries] = useState(0);
   useEffect(() => {
     let live = true;
-    cached(`item:${first.id}`, () => client.item(first.id)).then((d) => live && setDetail(d), () => undefined);
+    setError(null);
+    cached(`item:${first.id}`, () => client.item(first.id)).then((d) => live && setDetail(d), (e) => live && setError(e instanceof ApiError ? e : new ApiError(0, "network_error", "Something went wrong.")));
     return () => { live = false; };
-  }, [client, first.id]);
+  }, [client, first.id, tries]);
   const resume = first.userState?.resume ?? null;
   const version = detail?.versions.find((v) => v.id === resume?.versionId) ?? detail?.versions[0];
   // Only a plain resume starts here; another version, a stale revision or an offline file goes to the detail page's choice (decision 9).
@@ -77,11 +80,12 @@ function UpNext({ client, first }: { client: Client; first: ItemSummary }) {
   ].filter((c): c is string => !!c);
   const sub = first.kind === "episode" && first.showTitle ? `${first.showTitle} · S${first.seasonIndex} E${first.index}` : null;
   return (
-    <section className="upnext" aria-label="Up next" style={first.backdropUrl ? { backgroundImage: `linear-gradient(90deg, var(--ground), transparent), url(${first.backdropUrl})` } : undefined}>
+    <section className="upnext" aria-label="Up next" style={first.backdropUrl ? { backgroundImage: `linear-gradient(90deg, var(--ground), transparent), url("${first.backdropUrl}")` } : undefined}>
       <p className="eyebrow">Up next</p>
       <h2>{first.title}</h2>
       {sub && <p>{sub}</p>}
       {chips.length > 0 && <p className="meta">{chips.join(" · ")}</p>}
+      {error && <ErrorState error={error} thing="item" onRetry={() => setTries(tries + 1)} />}
       <div className="actions">
         <button type="button" onClick={resumeHero} disabled={!detail}>
           Resume
@@ -114,7 +118,7 @@ export function Home({ client, libraries }: { client: Client; libraries: Library
         ))}
         <Chip label="Unwatched" pressed={unwatched} onClick={() => setUnwatched(!unwatched)} />
       </div>
-      {libraries.some((l) => l.availability === "partial") && <PartialBanner />}
+      {libraries.some((l) => (type === null || l.type === type) && l.availability === "partial") && <PartialBanner />}
       {type === null && first && <UpNext client={client} first={first} />}
       {type === null && <HomeRow title="Continue Watching" state={cw} retry={retryCw} unwatched={unwatched} mixed />}
       {type === null && <HomeRow title="Next Up" state={nu} retry={retryNu} unwatched={unwatched} mixed />}

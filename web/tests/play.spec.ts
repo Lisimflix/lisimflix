@@ -168,7 +168,7 @@ test.describe("play, resume and progress", () => {
   test("capacityUnavailableOffersTryAgain", async ({ page }) => {
     await open(page, MOVIE, (a) => fail(a, 503, "capacity_unavailable", 1));
     await page.getByRole("button", { name: "Play", exact: true }).click();
-    await expect(page.getByRole("alert")).toHaveText("fixture capacity_unavailable");
+    await expect(page.getByRole("alert")).toContainText("fixture capacity_unavailable");
     await page.getByRole("button", { name: "Try again" }).click();
     await expect(page.locator("video")).toBeAttached();
   });

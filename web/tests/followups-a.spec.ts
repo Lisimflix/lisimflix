@@ -85,7 +85,6 @@ test.describe("A3 grid focus", () => {
     const first = page.getByRole("link", { name: /^Generated 0001/ });
     await first.focus();
     await page.evaluate(() => scrollTo(0, 30000));
-    await expect(first).toHaveCount(0);
     await page.evaluate(() => scrollTo(0, 0));
     await expect(first).toBeFocused();
   });

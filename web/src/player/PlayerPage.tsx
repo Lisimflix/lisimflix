@@ -6,7 +6,7 @@ import { setNotice } from "../app/notice";
 import { useStarter } from "./start";
 import { VideoPlayer } from "./VideoPlayer";
 
-type State = { name: "preparing" } | { name: "playing"; session: PlaybackSession } | { name: "failed"; message: string };
+type State = { name: "preparing" } | { name: "playing"; session: PlaybackSession } | { name: "failed"; error: ApiError };
 
 const CHANGED = "This file changed. Press Play to start again.";
 
@@ -47,7 +47,7 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
         const e = err instanceof ApiError ? err : new ApiError(0, "network_error", "Something went wrong.");
         if (e.code === "source_unavailable") leave("unavailable", e.message);
         else if (e.code === "source_changed") leave("changed", CHANGED);
-        else setState({ name: "failed", message: e.message });
+        else setState({ name: "failed", error: e });
       },
     );
     // A superseded or unmounted start drops its answer (and stops a late session).
@@ -77,7 +77,10 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
       {state.name === "preparing" && <p aria-busy="true">Preparing…</p>}
       {state.name === "failed" && (
         <div className="errorstate">
-          <p role="alert">{state.message}</p>
+          <div role="alert">
+            <p>{state.error.message}</p>
+            {state.error.requestId && <p className="diag">Diagnostic ID {state.error.requestId}</p>}
+          </div>
           <button type="button" onClick={() => setTries(tries + 1)}>Try again</button>
         </div>
       )}
@@ -86,6 +89,7 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
           client={client}
           session={state.session}
           startMs={startMs ?? undefined}
+          mediaError={() => client.item(itemId).then((d) => `This ${d.item.kind === "episode" ? "episode" : "movie"} couldn't be played.`, () => "This item couldn't be played.")}
           onProgress={onProgress}
           onStop={onStop}
           onEnd={(error) => (error ? leave("error", error) : exit())}

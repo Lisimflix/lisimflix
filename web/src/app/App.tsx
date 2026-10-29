@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
 import { ApiError, type Client, type Library } from "../api/client";
 import { Detail } from "../browse/Detail";
@@ -14,12 +14,34 @@ type View =
   | { name: "ready"; username: string; libraries: Library[] }
   | { name: "error"; message: string };
 
+// Catalogue and player calls: a 401 means the session ended, whichever page made the call. The error still reaches the caller.
+const GUARDED = ["libraries", "items", "item", "facets", "continueWatching", "nextUp", "setWatched", "progress", "start", "heartbeat", "stop"] as const;
+
+function guard(client: Client, onExpired: () => void): Client {
+  const api = { ...client };
+  for (const name of GUARDED) {
+    const call = client[name] as (...args: unknown[]) => Promise<unknown>;
+    (api as Record<string, unknown>)[name] = (...args: unknown[]) =>
+      call(...args).catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) onExpired();
+        throw err;
+      });
+  }
+  return api;
+}
+
 const message = (err: unknown) => (err instanceof ApiError ? err.message : "Something went wrong.");
 
 export function App({ client }: { client: Client }) {
   const [view, setView] = useState<View>({ name: "loading" });
   // The player's last stop request; logout waits for it so the stop isn't sent after the session ends.
   const stopping = useRef<Promise<unknown>>(Promise.resolve());
+  const loggingOut = useRef(false);
+  const api = useMemo(() => guard(client, () => {
+    if (loggingOut.current) return; // logout runs its own order
+    clearCache();
+    setView({ name: "login", error: "Your sign-in has ended." });
+  }), [client]);
 
   async function enter(signal?: AbortSignal) {
     try {
@@ -54,12 +76,14 @@ export function App({ client }: { client: Client }) {
 
   async function onLogout() {
     // Same order as M1App: unmount now (a player stops here), then logout, then the new CSRF token.
+    loggingOut.current = true;
     flushSync(() => setView({ name: "loading" }));
     clearCache();
     // Don't hang on Loading if the stop never answers; logout revokes playback anyway (#43).
     await Promise.race([stopping.current, new Promise((r) => setTimeout(r, 2000))]);
     await client.logout().catch(() => undefined);
     await client.session().catch(() => undefined);
+    loggingOut.current = false;
     setView({ name: "login" });
   }
 
@@ -84,7 +108,7 @@ export function App({ client }: { client: Client }) {
       </main>
     );
   }
-  return <Shell client={client} libraries={view.libraries} onLogout={onLogout} onStop={(request) => { stopping.current = request; }} />;
+  return <Shell client={api} libraries={view.libraries} onLogout={onLogout} onStop={(request) => { stopping.current = request; }} />;
 }
 
 function Shell({ client, libraries, onLogout, onStop }: { client: Client; libraries: Library[]; onLogout: () => void; onStop: (request: Promise<unknown>) => void }) {
@@ -95,21 +119,33 @@ function Shell({ client, libraries, onLogout, onStop }: { client: Client; librar
   const search = location.search;
   useEffect(() => setMenu(false), [pathname, search]);
   // After a route change focus would be lost with the old page, so move it to the new h1 (not on first load).
+  // Bounded: gives up after 2 s or on the viewer's first key or click, and never takes an h1 the previous route had.
   const first = useRef(true);
+  const seen = useRef<Element | null>(null); // the h1 on screen when the route last settled
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
     const main = document.querySelector("main")!;
+    if (first.current) { first.current = false; seen.current = main.querySelector("h1"); return; }
+    const mo = new MutationObserver(() => focusH1() && stop()); // pages that fetch show the h1 later
+    const stop = () => {
+      mo.disconnect();
+      clearTimeout(timer);
+      removeEventListener("keydown", stop, true);
+      removeEventListener("pointerdown", stop, true);
+    };
     const focusH1 = () => {
       const h1 = main.querySelector("h1");
-      if (!h1) return false;
+      if (!h1 || h1 === seen.current) return false;
+      seen.current = h1;
       // A page may already have restored focus (Back to a grid card).
       if (!main.contains(document.activeElement)) { h1.tabIndex = -1; h1.focus(); }
       return true;
     };
-    if (focusH1()) return;
-    const mo = new MutationObserver(() => focusH1() && mo.disconnect()); // pages that fetch show the h1 later
+    const timer = setTimeout(stop, 2000);
+    addEventListener("keydown", stop, true);
+    addEventListener("pointerdown", stop, true);
+    if (focusH1()) { stop(); return; }
     mo.observe(main, { childList: true, subtree: true });
-    return () => mo.disconnect();
+    return stop;
   }, [pathname]);
   useEffect(() => {
     if (!menu) return;

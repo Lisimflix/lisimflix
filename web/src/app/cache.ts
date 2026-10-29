@@ -1,3 +1,5 @@
+import { clearNotice } from "./notice";
+
 // In-memory, per page load, scoped per history entry (decision 12): a fresh navigation refetches, Back reuses. Cleared on sign-out so one profile's rows never reach the next.
 const store = new Map<string, Promise<unknown>>();
 
@@ -32,4 +34,5 @@ export function invalidate() {
 export function clearCache() {
   store.clear();
   views.clear();
+  clearNotice();
 }

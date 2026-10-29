@@ -10,11 +10,13 @@ interface Props {
   onStop: (request: Promise<unknown>) => void;
   // Where to begin, set once when the metadata is known.
   startMs?: number;
+  // The text for a file the browser can't play; the page words it by what the item is.
+  mediaError?: () => Promise<string> | string;
   // Progress reports: every 10 s while playing, on pause and seek, and at stop. The stop request waits for the last one.
   onProgress?: (e: ProgressEvent) => Promise<unknown> | void;
 }
 
-export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgress }: Props) {
+export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgress, mediaError = () => "This movie couldn't be played." }: Props) {
   const video = useRef<HTMLVideoElement>(null);
   const [blocked, setBlocked] = useState(false);
   const finish = useRef<(error?: string) => void>(() => undefined);
@@ -44,8 +46,8 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
       clearInterval(timer);
       clearInterval(progressTimer);
       abort.abort();
-      // The stop waits (briefly) for the last report, which a finished session would refuse.
-      const wait = last && !leaving ? Promise.race([last, new Promise((r) => setTimeout(r, 1500))]) : undefined;
+      // The stop waits (up to 1 s, so the DELETE still goes out inside logout's 2 s cap) for the last report, which a finished session would refuse.
+      const wait = last && !leaving ? Promise.race([last, new Promise((r) => setTimeout(r, 1000))]) : undefined;
       onStop(Promise.resolve(wait).then(() => client.stop(session.id)).catch(() => undefined));
     };
     report.current = (kind) => {
@@ -113,7 +115,7 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
         onSeeking={() => report.current("seek")}
         onPlaying={() => setBlocked(false)}
         onEnded={() => finish.current()}
-        onError={() => finish.current("This movie couldn't be played.")}
+        onError={() => void Promise.resolve(mediaError()).then((text) => finish.current(text))}
       />
       {blocked && (
         <button type="button" onClick={() => void video.current?.play().then(() => setBlocked(false), () => undefined)}>
