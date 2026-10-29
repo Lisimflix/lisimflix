@@ -44,7 +44,7 @@ A pure `library/naming` package turns paths into items from Plex/Radarr/Sonarr a
 - **Read-only media (SAFE-01):** nothing here writes under the media root. Tests write only in `t.TempDir()`.
 - Every file access goes through `os.Root` (the media root, then `OpenRoot` for a library folder), so paths can't escape.
 - Migrations: one file, `YYYYMMDDHHMMSS_library_<what>.sql`, module `library`, `STRICT` tables with explicit `ON DELETE`. Never edit a merged migration.
-- Write transactions stay short: at most 500 files per transaction (spec §10.2).
+- Write transactions stay short: at most 500 files per transaction (spec §10.2). Two writes are exceptions, because each is one indexed statement or a rename's worth of rows (#110): marking a complete scan's unseen files missing (one `UPDATE`), and `settle` folding the root's pending pairs. Measure both in LIB-2c's actual-scale run (SCALE-01, SCALE-04: transaction duration) and batch them if they show up.
 - Code without a production caller yet carries `// Planned: <Feature ID> (<caller>).` (#60).
 - Workflow:
   - Branch `feat/lib-2a-catalogue`. PR title `feat(library): catalogue store and offline-safe scans (LIB-2a)`.
@@ -80,10 +80,11 @@ A pure `library/naming` package turns paths into items from Plex/Radarr/Sonarr a
    - `Retire` re-checks every file it's given. Retired files keep their items and versions, and come back as `present` if they reappear. The admin preview and confirmation screen is LIB-2c.
 5. **Probes.**
    - `ProbeDue` probes present files whose stored probe revision differs from their current size and mtime.
-   - **Results:** saved only if the file still has that revision (compare-and-set). Otherwise they're counted `Stale` and dropped.
+   - **Results:** saved only if the catalogue has that revision, or an older one (compare-and-set). An older one means the file changed since the last scan and is quiet now; the result records the newer revision, so the file isn't probed on every turn until the next scan (#109). A result for an older revision than the catalogue's is counted `Stale` and dropped.
    - **Only forward:** a "still changing" outcome may only move a file's recorded revision forward (`mtime_ns <= new`), so it can't overwrite a newer one a concurrent scan recorded (Pete's note on #90).
    - **Still changing:** `ErrNotStable` or `ErrChanged` records the newer revision and a not-before time of mtime + quiet period, so nothing spins. That fixes #62 without changing LIB-1.
    - **Errors:** kept, up to 500 bytes, for the admin list. They aren't retried until the file changes or `RetryProbe` clears them.
+   - **Timeouts (#109, Zac's decision):** an ffprobe timeout (a disk spinning up, a busy NAS) is retried after 15 min, 1 h, 6 h and 24 h (`probe_after`, counted in `probe_timeouts`, migration `20261029120000_library_probe_timeouts.sql`). The next timeout after that is kept as an error like any other. A stored result or `RetryProbe` resets the count. `ProbeRun.TimedOut` counts the deferrals.
    - `probe_json` holds `probe.Result` as Go encodes it. It's internal; LIB-2c maps it to CTR-2's stream shapes.
 6. **Multi-episode files.** Each episode of `S01E01E02` / `S01E02-E04` gets a version on the same file, matching CTR-2: same `fileId`, unknown segment. Ranges longer than 12 episodes are treated as a mis-tag, and only the first episode is used. The title in such a name labels the file, so the episodes keep placeholder titles until META-1 fetches real ones.
 7. **Scope cuts, with owners:**

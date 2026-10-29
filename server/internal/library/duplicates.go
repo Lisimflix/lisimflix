@@ -54,7 +54,9 @@ func (s *Store) groupItem(ctx context.Context, tx *sql.Tx, root Root, e naming.E
 // once files that weren't found have been marked missing. If the new folder
 // replaced a folder that is gone (a rename or move), it is folded into that
 // folder's item, keeping its identity; see renamed. Otherwise both folders
-// exist and the pair is flagged for the admin.
+// exist and the pair is flagged for the admin. All pairs are settled in one
+// transaction, an exception to the 500-file bound: pairs only come from
+// renames (#110).
 func (s *Store) settle(ctx context.Context, rootID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
