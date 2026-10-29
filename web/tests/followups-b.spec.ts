@@ -43,6 +43,54 @@ test.describe("B1 expired session", () => {
     await expect(page.getByRole("alert")).toHaveText("Your sign-in has ended.");
   });
 
+  test("signInWorksAfterA401", async ({ page }) => {
+    let expired = false;
+    const api = await open(page, MOVIES, (a) => a.overrides.push(async (route, call) => {
+      if (!expired || !call.path.startsWith("/api/v1/items/")) return false;
+      a.signedIn = false; // the server's session is gone
+      expired = false;
+      await route.fulfill(json(401, "unauthenticated"));
+      return true;
+    }));
+    expired = true;
+    await cards(page).first().click();
+    await expect(page.getByRole("button", { name: "Sign in" })).toBeVisible();
+    await signIn(page);
+    await expect(page.getByRole("heading", { level: 1, name: "Synthetic Test Movie" })).toBeVisible();
+    expect(api.of("POST", "/auth/login").at(-1)?.csrf).toMatch(/-2$/);
+  });
+
+  test("late401FromOldSessionIsIgnored", async ({ page }) => {
+    // Home loads two rows at once: continue-watching fails 401 at once (session over), next-up answers 401 only after the viewer has signed in again.
+    let early = false;
+    let late = false;
+    const api = await FakeAPI.attach(page, undefined, { catalogue: true });
+    api.overrides.push(async (route, call) => {
+      if (!early && call.path === "/api/v1/continue-watching") {
+        early = true;
+        api.signedIn = false;
+        await route.fulfill(json(401, "unauthenticated"));
+        return true;
+      }
+      if (!late && call.path === "/api/v1/next-up") {
+        late = true;
+        await new Promise((r) => setTimeout(r, 1500));
+        await route.fulfill(json(401, "unauthenticated"));
+        return true;
+      }
+      return false;
+    });
+    await page.goto("/");
+    await signIn(page);
+    await expect(page.getByRole("alert")).toHaveText("Your sign-in has ended.");
+    await signIn(page);
+    await expect(page.getByRole("heading", { level: 1, name: "Home" })).toBeAttached();
+    await page.waitForTimeout(2000);
+    expect(late).toBe(true);
+    await expect(page.getByRole("heading", { level: 1, name: "Home" })).toBeAttached();
+    expect(api.of("POST", "/auth/login")).toHaveLength(2);
+  });
+
   test("player401ReturnsToLogin", async ({ page }) => {
     await open(page, MOVIE, (api) => api.overrides.push(async (route, call) => {
       if (call.method !== "POST" || call.path !== "/api/v1/playback/sessions") return false;

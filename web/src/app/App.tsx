@@ -17,15 +17,18 @@ type View =
 // Catalogue and player calls: a 401 means the session ended, whichever page made the call. The error still reaches the caller.
 const GUARDED = ["libraries", "items", "item", "facets", "continueWatching", "nextUp", "setWatched", "progress", "start", "heartbeat", "stop"] as const;
 
-function guard(client: Client, onExpired: () => void): Client {
+function guard(client: Client, generation: () => number, onExpired: () => void): Client {
   const api = { ...client };
   for (const name of GUARDED) {
     const call = client[name] as (...args: unknown[]) => Promise<unknown>;
-    (api as Record<string, unknown>)[name] = (...args: unknown[]) =>
-      call(...args).catch((err: unknown) => {
-        if (err instanceof ApiError && err.status === 401) onExpired();
+    (api as Record<string, unknown>)[name] = (...args: unknown[]) => {
+      const started = generation();
+      return call(...args).catch((err: unknown) => {
+        // A late 401 from an earlier sign-in says nothing about the current one.
+        if (err instanceof ApiError && err.status === 401 && started === generation()) onExpired();
         throw err;
       });
+    };
   }
   return api;
 }
@@ -37,10 +40,13 @@ export function App({ client }: { client: Client }) {
   // The player's last stop request; logout waits for it so the stop isn't sent after the session ends.
   const stopping = useRef<Promise<unknown>>(Promise.resolve());
   const loggingOut = useRef(false);
-  const api = useMemo(() => guard(client, () => {
+  const signIns = useRef(0); // bumps whenever the session changes; see guard
+  const api = useMemo(() => guard(client, () => signIns.current, () => {
     if (loggingOut.current) return; // logout runs its own order
+    signIns.current++;
     clearCache();
-    setView({ name: "login", error: "Your sign-in has ended." });
+    // The CSRF cookie can expire with the session, so fetch a fresh token before the next sign-in (as logout does).
+    void client.session().catch(() => undefined).then(() => setView({ name: "login", error: "Your sign-in has ended." }));
   }), [client]);
 
   async function enter(signal?: AbortSignal) {
@@ -67,7 +73,7 @@ export function App({ client }: { client: Client }) {
     const form = new FormData(event.currentTarget);
     try {
       const state = await client.login(String(form.get("username")), String(form.get("password")));
-      if (state.authenticated && state.viewer) await enter();
+      if (state.authenticated && state.viewer) { signIns.current++; await enter(); }
       else setView({ name: "login", error: "Sign-in failed." });
     } catch (err) {
       setView({ name: "login", error: message(err) });
@@ -77,6 +83,7 @@ export function App({ client }: { client: Client }) {
   async function onLogout() {
     // Same order as M1App: unmount now (a player stops here), then logout, then the new CSRF token.
     loggingOut.current = true;
+    signIns.current++;
     flushSync(() => setView({ name: "loading" }));
     clearCache();
     // Don't hang on Loading if the stop never answers; logout revokes playback anyway (#43).

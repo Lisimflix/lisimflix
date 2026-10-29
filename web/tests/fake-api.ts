@@ -42,6 +42,9 @@ export class FakeAPI {
   signedIn = false;
   overrides: Override[] = [];
   private sessionCount = 0;
+  // The anonymous CSRF token rotates on every session fetch, as a fresh cookie would; stale tokens get 403.
+  private anonToken = "";
+  private anonSeq = 0;
   // items requests answered and not yet delivered (the test for overlapping page loads).
   inFlight = 0;
   maxInFlight = 0;
@@ -96,10 +99,14 @@ export class FakeAPI {
     if (isCatalogue && !this.catalogueOn) return error(404, "not_found");
 
     if (call.method !== "GET" && call.method !== "HEAD") {
-      const expected = this.signedIn ? auth.csrfToken : anon.csrfToken;
+      const expected = this.signedIn ? auth.csrfToken : this.anonToken || anon.csrfToken;
       if (call.csrf !== expected) return error(403, "csrf_failed");
     }
-    if (call.path === "/api/v1/auth/session") return json(200, this.signedIn ? auth : anon);
+    if (call.path === "/api/v1/auth/session") {
+      if (this.signedIn) return json(200, auth);
+      this.anonToken = this.anonSeq++ === 0 ? anon.csrfToken : `${anon.csrfToken}-${this.anonSeq}`;
+      return json(200, { ...anon, csrfToken: this.anonToken });
+    }
     if (call.path === "/api/v1/auth/login") {
       const { username, password } = call.body as { username: string; password: string };
       if (username !== auth.viewer.username || password !== PASSWORD) return error(401, "unauthenticated");

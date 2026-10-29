@@ -46,7 +46,7 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
       clearInterval(timer);
       clearInterval(progressTimer);
       abort.abort();
-      // The stop waits (up to 1 s, so the DELETE still goes out inside logout's 2 s cap) for the last report, which a finished session would refuse.
+      // The stop waits (up to 1 s, so the DELETE is sent inside logout's 2 s cap, not necessarily finished) for the last report, which a finished session would refuse.
       const wait = last && !leaving ? Promise.race([last, new Promise((r) => setTimeout(r, 1000))]) : undefined;
       onStop(Promise.resolve(wait).then(() => client.stop(session.id)).catch(() => undefined));
     };
