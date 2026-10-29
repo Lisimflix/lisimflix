@@ -122,7 +122,7 @@ func TestM1RealHTTPRangeAndRevocation(t *testing.T) {
 	if len(list.Items) != 1 {
 		t.Fatalf("movies = %s", b)
 	}
-	resp, b = do("POST", "/api/v1/playback/sessions", `{"movieId":"`+list.Items[0].ID+`"}`, map[string]string{"Idempotency-Key": "itest-1"})
+	resp, b = do("POST", "/api/v1/playback/sessions", `{"itemId":"`+list.Items[0].ID+`","versionId":"`+list.Items[0].ID+`"}`, map[string]string{"Idempotency-Key": "itest-1"})
 	if resp.StatusCode != 201 {
 		t.Fatalf("start = %d %s", resp.StatusCode, b)
 	}

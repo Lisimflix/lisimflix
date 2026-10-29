@@ -63,8 +63,8 @@ func (s *Server) withPrincipal(h func(http.ResponseWriter, *http.Request, contra
 
 func (s *Server) movies(w http.ResponseWriter, r *http.Request, p contracts.Principal) {
 	list := contracts.MovieList{}
-	if s.authorize(p, s.src.Movie.ID) {
-		list.Items = []contracts.Movie{s.src.Movie}
+	if s.listMovies != nil {
+		list.Items = s.listMovies(p)
 	}
 	writeJSON(w, http.StatusOK, list)
 }
@@ -84,22 +84,23 @@ func validKey(k string) bool {
 func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Principal) {
 	key := r.Header.Get("Idempotency-Key")
 	var req contracts.PlaybackSessionRequest
-	if !validKey(key) || !decode(w, r, &req) || req.MovieID == "" {
-		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Send a movieId and an Idempotency-Key.")
+	if !validKey(key) || !decode(w, r, &req) || req.ItemID == "" || req.VersionID == "" {
+		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Send an itemId, a versionId and an Idempotency-Key.")
 		return
 	}
 	// A known key is answered first: a changed payload is 409 whatever it names.
 	scoped := p.AuthSessionID + "\x00" + key
-	if s.replay(w, r, scoped, req.MovieID) {
+	if s.replay(w, r, scoped, req) {
 		return
 	}
-	if req.MovieID != s.src.Movie.ID || !s.authorize(p, req.MovieID) {
-		contracts.WriteError(w, r, contracts.CodeNotFound, "Movie not found.")
-		return
-	}
-	info, err := s.statSource()
+	src, err := s.resolver.Resolve(p, req.ItemID, req.VersionID)
 	if err != nil {
-		s.sourceError(w, r, err, "")
+		s.resolveFailed(w, r, err, req.ItemID, req.VersionID, "Item or version not found.")
+		return
+	}
+	info, err := statSource(s.root, src)
+	if err != nil {
+		s.sourceError(w, r, err, src, "")
 		return
 	}
 	s.mu.Lock()
@@ -107,7 +108,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 	s.sweepLocked(now)
 	if prev, ok := s.byKey[scoped]; ok { // a concurrent start with the same key won
 		s.unlock()
-		s.replayed(w, r, prev, req.MovieID)
+		s.replayed(w, r, prev, req)
 		return
 	}
 	if s.activeLocked() >= s.max {
@@ -116,7 +117,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 		return
 	}
 	sess := &session{
-		id: newID(), key: scoped, owner: p, movieID: req.MovieID, revision: s.src.Movie.SourceRevision,
+		id: newID(), key: scoped, owner: p, src: src,
 		info: info, deadline: now.Add(idleTimeout), lastSeq: -1, deliveries: map[*delivery]struct{}{},
 	}
 	sess.grant = s.sign(sess)
@@ -124,31 +125,31 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request, p contracts.Princ
 	s.byKey[scoped] = sess
 	out := sess.public()
 	s.unlock()
-	obs.Log(r.Context(), s.log).Info("playback.start", "session_id", sess.id, "auth_session", p.AuthSessionID, "movie_id", req.MovieID)
+	obs.Log(r.Context(), s.log).Info("playback.start", "session_id", sess.id, "auth_session", p.AuthSessionID, "item_id", src.ItemID, "version_id", src.VersionID)
 	writeJSON(w, http.StatusCreated, out)
 }
 
 // replay answers a start whose idempotency key is already known, and
 // reports whether it did.
-func (s *Server) replay(w http.ResponseWriter, r *http.Request, scoped, movieID string) bool {
+func (s *Server) replay(w http.ResponseWriter, r *http.Request, scoped string, req contracts.PlaybackSessionRequest) bool {
 	s.mu.Lock()
 	s.sweepLocked(s.now())
 	prev, ok := s.byKey[scoped]
 	s.unlock()
 	if ok {
-		s.replayed(w, r, prev, movieID)
+		s.replayed(w, r, prev, req)
 	}
 	return ok
 }
 
 // replayed: the same payload for a live session returns it (200). A changed
 // payload, or a session that has ended, is 409 (#20 point 1).
-func (s *Server) replayed(w http.ResponseWriter, r *http.Request, prev *session, movieID string) {
+func (s *Server) replayed(w http.ResponseWriter, r *http.Request, prev *session, req contracts.PlaybackSessionRequest) {
 	s.mu.Lock()
 	live := s.liveLocked(prev, s.now())
 	out := prev.public()
 	s.unlock()
-	if prev.movieID != movieID {
+	if prev.src.ItemID != req.ItemID || prev.src.VersionID != req.VersionID {
 		contracts.WriteError(w, r, contracts.CodeIdempotencyConflict, "This Idempotency-Key was already used for another request.")
 		return
 	}
@@ -230,13 +231,13 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 		contracts.WriteError(w, r, contracts.CodePlaybackExpired, "Playback session ended. Start playback again.")
 		return
 	}
-	if !s.authorize(p, sess.movieID) {
-		contracts.WriteError(w, r, contracts.CodeNotFound, "Playback session not found.")
+	if _, err := s.resolver.Resolve(p, sess.src.ItemID, sess.src.VersionID); err != nil {
+		s.resolveFailed(w, r, err, sess.src.ItemID, sess.src.VersionID, "Playback session not found.")
 		return
 	}
 	f, info, err := s.open(sess)
 	if err != nil {
-		s.sourceError(w, r, err, sess.id)
+		s.sourceError(w, r, err, sess.src, sess.id)
 		return
 	}
 	defer f.Close()
@@ -261,7 +262,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 
 	h := w.Header()
 	h.Set("Content-Type", "video/mp4")
-	h.Set("ETag", `"`+sess.revision+`"`)
+	h.Set("ETag", `"`+sess.src.SourceRevision+`"`)
 	h.Set("Cache-Control", "no-store") // #20 point 4
 	h.Set("X-Content-Type-Options", "nosniff")
 	dw := &deliveryWriter{ResponseWriter: w, ctx: ctx, rc: d.rc, written: &s.written, alive: func() bool {
@@ -304,14 +305,25 @@ func (d *deliveryWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
+// resolveFailed answers a failed Resolve: ErrNotFound is a 404 with notFoundMsg,
+// anything else is a logged 500.
+func (s *Server) resolveFailed(w http.ResponseWriter, r *http.Request, err error, itemID, versionID, notFoundMsg string) {
+	if errors.Is(err, ErrNotFound) {
+		contracts.WriteError(w, r, contracts.CodeNotFound, notFoundMsg)
+		return
+	}
+	obs.Log(r.Context(), s.log).Error("playback.resolve_error", "item_id", itemID, "version_id", versionID, "err", err)
+	contracts.WriteError(w, r, contracts.CodeInternalError, "Something went wrong.")
+}
+
 // sourceError answers and logs a missing or changed source. sessionID is ""
 // for a start.
-func (s *Server) sourceError(w http.ResponseWriter, r *http.Request, err error, sessionID string) {
+func (s *Server) sourceError(w http.ResponseWriter, r *http.Request, err error, src Source, sessionID string) {
 	code, msg := contracts.CodeSourceUnavailable, "The movie file is not available."
 	if errors.Is(err, errSourceChanged) {
 		code, msg = contracts.CodeSourceChanged, "The movie file changed. Start playback again."
 	}
-	obs.Log(r.Context(), s.log).Warn("playback.source_error", "code", code, "session_id", sessionID, "movie_id", s.src.Movie.ID)
+	obs.Log(r.Context(), s.log).Warn("playback.source_error", "code", code, "session_id", sessionID, "item_id", src.ItemID, "version_id", src.VersionID)
 	contracts.WriteError(w, r, code, msg)
 }
 

@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -21,7 +26,7 @@ func TestSessionNeedsPrincipalAndPolicy(t *testing.T) {
 	ps := e.mustStart(alice, "k1")
 	for _, rt := range []struct{ method, path, body string }{
 		{"GET", "/api/v1/movies", ""},
-		{"POST", "/api/v1/playback/sessions", `{"movieId":"mov-1"}`},
+		{"POST", "/api/v1/playback/sessions", `{"itemId":"mov-1","versionId":"mov-1"}`},
 		{"POST", "/api/v1/playback/sessions/" + ps.ID + "/heartbeat", `{"sequence":1}`},
 		{"DELETE", "/api/v1/playback/sessions/" + ps.ID, ""},
 		{"GET", ps.ContentURL, ""},
@@ -47,7 +52,7 @@ func TestSessionNeedsPrincipalAndPolicy(t *testing.T) {
 	if code, _, b := e.start(bob, "k1"); code != 404 || errCode(t, b) != contracts.CodeNotFound {
 		t.Fatalf("unpermitted start = %d %s", code, b)
 	}
-	resp, b = e.req(&alice, "POST", "/api/v1/playback/sessions", `{"movieId":"mov-other"}`, map[string]string{"Idempotency-Key": "k3"})
+	resp, b = e.req(&alice, "POST", "/api/v1/playback/sessions", `{"itemId":"mov-other","versionId":"mov-other"}`, map[string]string{"Idempotency-Key": "k3"})
 	if resp.StatusCode != 404 {
 		t.Fatalf("unknown movie = %d %s", resp.StatusCode, b)
 	}
@@ -56,6 +61,22 @@ func TestSessionNeedsPrincipalAndPolicy(t *testing.T) {
 	if resp, _ := e.req(&alice, "GET", ps.ContentURL, "", nil); resp.StatusCode != 404 {
 		t.Fatalf("content after policy revoked = %d", resp.StatusCode)
 	}
+}
+
+// tamperedGrant returns a content URL whose grant differs from the real one.
+// It changes the grant's first character rather than rewriting the last two:
+// that rewrite was a no-op whenever the grant already ended in the replacement,
+// which failed this test and the logging one about once in a thousand runs.
+func tamperedGrant(t *testing.T, contentURL string) string {
+	t.Helper()
+	base, grant, ok := strings.Cut(contentURL, "?grant=")
+	if !ok || grant == "" {
+		t.Fatalf("content URL has no grant: %q", contentURL)
+	}
+	if grant[0] == 'A' {
+		return base + "?grant=B" + grant[1:]
+	}
+	return base + "?grant=A" + grant[1:]
 }
 
 func TestGrantCannotCrossAccountOrSession(t *testing.T) {
@@ -69,7 +90,7 @@ func TestGrantCannotCrossAccountOrSession(t *testing.T) {
 	}{
 		"other account":            {bob, a.ContentURL},
 		"same account, other auth": {alice2, a.ContentURL},
-		"tampered grant":           {alice, a.ContentURL[:len(a.ContentURL)-2] + "AA"},
+		"tampered grant":           {alice, tamperedGrant(t, a.ContentURL)},
 		"no grant":                 {alice, strings.Split(a.ContentURL, "?")[0]},
 		"grant moved to session b": {bob, strings.Split(b.ContentURL, "?")[0] + "?" + strings.Split(a.ContentURL, "?")[1]},
 	} {
@@ -98,12 +119,12 @@ func TestIdempotentStartAndCapacity(t *testing.T) {
 	if code != 200 || again.ID != first.ID || again.ContentURL != first.ContentURL {
 		t.Fatalf("replay = %d %s", code, b)
 	}
-	resp, b := e.req(&alice, "POST", "/api/v1/playback/sessions", `{"movieId":"mov-2"}`, map[string]string{"Idempotency-Key": "k1"})
+	resp, b := e.req(&alice, "POST", "/api/v1/playback/sessions", `{"itemId":"mov-2","versionId":"mov-2"}`, map[string]string{"Idempotency-Key": "k1"})
 	if resp.StatusCode != 409 || errCode(t, b) != contracts.CodeIdempotencyConflict {
 		t.Fatalf("changed payload = %d %s", resp.StatusCode, b)
 	}
 	for name, key := range map[string]string{"missing": "", "too long": strings.Repeat("k", 129), "space": "k 1", "non-ascii": "k\u00e9"} {
-		resp, b := e.req(&alice, "POST", "/api/v1/playback/sessions", `{"movieId":"mov-1"}`, map[string]string{"Idempotency-Key": key})
+		resp, b := e.req(&alice, "POST", "/api/v1/playback/sessions", `{"itemId":"mov-1","versionId":"mov-1"}`, map[string]string{"Idempotency-Key": key})
 		if resp.StatusCode != 400 || errCode(t, b) != contracts.CodeInvalidRequest {
 			t.Errorf("%s key = %d %s", name, resp.StatusCode, b)
 		}
@@ -277,14 +298,12 @@ func TestTombstonesAreBounded(t *testing.T) {
 
 func TestNewValidatesOptions(t *testing.T) {
 	e := newEnv(t, 16)
-	good := Options{Source: Source{Movie: contracts.Movie{ID: movieID, SourceRevision: "r"}, RelativePath: "Movies/movie.mp4"},
-		GrantKey: bytes.Repeat([]byte{1}, 32), MaxSessions: 1, Authorize: func(contracts.Principal, string) bool { return true }}
+	good := Options{Resolver: Single(contracts.Movie{ID: movieID, SourceRevision: "r"}, "Movies/movie.mp4", func(contracts.Principal, string) bool { return true }),
+		GrantKey: bytes.Repeat([]byte{1}, 32), MaxSessions: 1}
 	for name, fn := range map[string]func(*Options){
 		"short grant key": func(o *Options) { o.GrantKey = o.GrantKey[:16] },
 		"no sessions":     func(o *Options) { o.MaxSessions = 0 },
-		"no authorize":    func(o *Options) { o.Authorize = nil },
-		"no movie id":     func(o *Options) { o.Source.Movie.ID = "" },
-		"no revision":     func(o *Options) { o.Source.Movie.SourceRevision = "" },
+		"no resolver":     func(o *Options) { o.Resolver = nil },
 	} {
 		o := good
 		fn(&o)
@@ -371,5 +390,190 @@ func TestRevokeBeatsInFlightWriteDeadline(t *testing.T) {
 	r := <-done
 	if r.err != errRevoked || r.n != 0 || rec.Body.Len() != 0 {
 		t.Fatalf("write after an in-window revoke = %d, %v, %d bytes sent; it must stop without writing", r.n, r.err, rec.Body.Len())
+	}
+}
+
+func (e *env) post(p contracts.Principal, key, body string) (int, []byte) {
+	e.t.Helper()
+	resp, b := e.req(&p, "POST", "/api/v1/playback/sessions", body, map[string]string{"Idempotency-Key": key})
+	return resp.StatusCode, b
+}
+
+func TestStartByItemAndVersion(t *testing.T) {
+	e := newEnv(t, 4096)
+	code, b := e.post(alice, "k1", `{"itemId":"`+movieID+`","versionId":"`+movieID+`"}`)
+	var ps contracts.PlaybackSession
+	json.Unmarshal(b, &ps)
+	if code != 201 || ps.ItemID != movieID || ps.VersionID != movieID || !bytes.Contains(b, []byte(`"itemId"`)) || bytes.Contains(b, []byte("movieId")) {
+		t.Fatalf("start = %d %s", code, b)
+	}
+}
+
+func TestStartUnknownVersionIs404(t *testing.T) {
+	e := newEnv(t, 16)
+	code, b := e.post(alice, "k1", `{"itemId":"`+movieID+`","versionId":"other"}`)
+	if code != 404 || errCode(t, b) != contracts.CodeNotFound {
+		t.Fatalf("unknown version = %d %s", code, b)
+	}
+}
+
+func TestStartForbiddenItemIs404LikeUnknown(t *testing.T) {
+	e := newEnv(t, 16)
+	body := `{"itemId":"` + movieID + `","versionId":"` + movieID + `"}`
+	fc, fb := e.post(bob, "k1", body) // bob fails the policy
+	uc, ub := e.post(alice, "k2", `{"itemId":"nope","versionId":"nope"}`)
+	var f, u contracts.APIError
+	json.Unmarshal(fb, &f)
+	json.Unmarshal(ub, &u)
+	if fc != 404 || uc != 404 || f.Code != u.Code || f.Message != u.Message {
+		t.Fatalf("forbidden = %d %s, unknown = %d %s", fc, fb, uc, ub)
+	}
+}
+
+func TestStartMissingVersionIs400(t *testing.T) {
+	e := newEnv(t, 16)
+	code, b := e.post(alice, "k1", `{"itemId":"x"}`)
+	if code != 400 || errCode(t, b) != contracts.CodeInvalidRequest {
+		t.Fatalf("missing version = %d %s", code, b)
+	}
+}
+
+func TestStartRejectsLegacyMovieID(t *testing.T) {
+	e := newEnv(t, 16)
+	code, b := e.post(alice, "k1", `{"movieId":"x"}`)
+	if code != 400 || errCode(t, b) != contracts.CodeInvalidRequest {
+		t.Fatalf("legacy movieId = %d %s", code, b)
+	}
+}
+
+// multi resolves two items, each its own file.
+type multi map[string]Source
+
+func (m multi) Resolve(_ contracts.Principal, item, version string) (Source, error) {
+	if s, ok := m[item]; ok && s.VersionID == version {
+		return s, nil
+	}
+	return Source{}, ErrNotFound
+}
+
+func TestReplaySameKeyDifferentVersionIs409(t *testing.T) {
+	e := newEnv(t, 4096)
+	e.mustStart(alice, "k1")
+	code, b := e.post(alice, "k1", `{"itemId":"`+movieID+`","versionId":"other"}`)
+	if code != 409 || errCode(t, b) != contracts.CodeIdempotencyConflict {
+		t.Fatalf("same key, other version = %d %s", code, b)
+	}
+}
+
+func TestGrantBindsVersion(t *testing.T) {
+	e := newEnv(t, 4096)
+	ps := e.mustStart(alice, "k1")
+	e.s.mu.Lock()
+	sess := e.s.sessions[ps.ID]
+	other := *sess
+	other.src.VersionID = "other"
+	grant := e.s.sign(&other)
+	e.s.mu.Unlock()
+	if grant == sess.grant {
+		t.Fatal("grant ignores the version")
+	}
+	resp, b := e.req(&alice, "GET", "/api/v1/playback/sessions/"+ps.ID+"/content?grant="+grant, "", nil)
+	if resp.StatusCode != 404 || errCode(t, b) != contracts.CodeNotFound {
+		t.Fatalf("content with another version's grant = %d %s", resp.StatusCode, b)
+	}
+}
+
+func TestSessionsOfTwoSourcesStayApart(t *testing.T) {
+	e := newEnv(t, 16)
+	a, b := bytes.Repeat([]byte("A"), 2048), bytes.Repeat([]byte("B"), 3072)
+	srcs := multi{}
+	for id, data := range map[string][]byte{"a": a, "b": b} {
+		path := filepath.Join(e.dir, "Movies", id+".mp4")
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		info, _ := os.Stat(path)
+		srcs[id] = Source{ItemID: id, VersionID: id + "v", FileID: "file-" + id, RelativePath: "Movies/" + id + ".mp4", SourceRevision: Revision("file-"+id, info)}
+	}
+	s2, err := New(e.root, Options{Resolver: srcs, GrantKey: bytes.Repeat([]byte{7}, 32), MaxSessions: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		r = r.WithContext(contracts.WithPrincipal(r.Context(), alice))
+		s2.Handler().ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+	for _, id := range []string{"a", "b"} {
+		req, _ := http.NewRequest("POST", srv.URL+"/api/v1/playback/sessions", strings.NewReader(`{"itemId":"`+id+`","versionId":"`+id+`v"}`))
+		req.Header.Set("Idempotency-Key", "k-"+id)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var ps contracts.PlaybackSession
+		json.NewDecoder(resp.Body).Decode(&ps)
+		resp.Body.Close()
+		if resp.StatusCode != 201 || ps.ItemID != id || ps.VersionID != id+"v" {
+			t.Fatalf("start %s = %d %+v", id, resp.StatusCode, ps)
+		}
+		got, err := http.Get(srv.URL + ps.ContentURL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(got.Body)
+		got.Body.Close()
+		want := map[string][]byte{"a": a, "b": b}[id]
+		if !bytes.Equal(body, want) || ps.SourceRevision != srcs[id].SourceRevision {
+			t.Fatalf("session %s served %d bytes, want %d", id, len(body), len(want))
+		}
+	}
+}
+
+type failing struct{}
+
+func (failing) Resolve(contracts.Principal, string, string) (Source, error) {
+	return Source{}, errors.New("catalogue down")
+}
+
+func TestStartResolverErrorIs500(t *testing.T) {
+	var buf syncBuffer
+	e := newEnv(t, 16, func(o *Options) { o.Resolver = failing{}; o.Log = slog.New(slog.NewJSONHandler(&buf, nil)) })
+	code, b := e.post(alice, "k1", `{"itemId":"x","versionId":"y"}`)
+	if code != 500 || errCode(t, b) != contracts.CodeInternalError {
+		t.Fatalf("resolver error = %d %s", code, b)
+	}
+	if !buf.has("playback.resolve_error", "item_id", "x", "version_id", "y") {
+		t.Fatalf("no playback.resolve_error: %s", buf.String())
+	}
+}
+
+// failAfterFirst resolves once (so start succeeds), then fails.
+type failAfterFirst struct {
+	inner Resolver
+	n     atomic.Int32
+}
+
+func (f *failAfterFirst) Resolve(p contracts.Principal, item, version string) (Source, error) {
+	if f.n.Add(1) > 1 {
+		return Source{}, errors.New("catalogue down")
+	}
+	return f.inner.Resolve(p, item, version)
+}
+
+func TestContentResolverErrorIs500(t *testing.T) {
+	var buf syncBuffer
+	e := newEnv(t, 4096, func(o *Options) {
+		o.Resolver = &failAfterFirst{inner: o.Resolver}
+		o.Log = slog.New(slog.NewJSONHandler(&buf, nil))
+	})
+	ps := e.mustStart(alice, "k1")
+	resp, b := e.req(&alice, "GET", ps.ContentURL, "", nil)
+	if resp.StatusCode != 500 || errCode(t, b) != contracts.CodeInternalError {
+		t.Fatalf("content with failing resolver = %d %s", resp.StatusCode, b)
+	}
+	if !buf.has("playback.resolve_error", "item_id", movieID, "version_id", movieID) {
+		t.Fatalf("no playback.resolve_error: %s", buf.String())
 	}
 }

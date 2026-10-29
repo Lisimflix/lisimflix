@@ -61,7 +61,7 @@ func TestPlaybackEventsAreLogged(t *testing.T) {
 	e.clock.Advance(idleTimeout + time.Second)
 	waitFor(t, func() bool { return buf.has("playback.end", "session_id", expired.ID, "reason", "expired") })
 
-	if !buf.has("playback.start", "session_id", stopped.ID, "auth_session", alice.AuthSessionID, "movie_id", movieID) {
+	if !buf.has("playback.start", "session_id", stopped.ID, "auth_session", alice.AuthSessionID, "item_id", movieID, "version_id", movieID) {
 		t.Errorf("no playback.start for %s: %s", stopped.ID, buf.String())
 	}
 	for id, reason := range map[string]string{stopped.ID: "stopped", revoked.ID: "revoked"} {

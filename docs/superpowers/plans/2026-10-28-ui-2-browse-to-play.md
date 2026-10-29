@@ -261,7 +261,7 @@ func TestStartForbiddenItemIs404LikeUnknown(t *testing.T) // authorize false →
 func TestStartMissingVersionIs400(t *testing.T)          // {"itemId":"x"} → 400 invalid_request
 func TestStartRejectsLegacyMovieID(t *testing.T)         // {"movieId":"x"} → 400 (unknown field, strict decode)
 func TestReplaySameKeyDifferentVersionIs409(t *testing.T) // idempotency covers the version too
-func TestGrantBindsVersion(t *testing.T)                 // content with a grant signed for another version → 403
+func TestGrantBindsVersion(t *testing.T)                 // content with a grant signed for another version → 404 not_found (a bad grant looks like an unknown session)
 func TestSessionsOfTwoSourcesStayApart(t *testing.T)     // fake Resolver with two files; each session serves its own bytes
 ```
 
