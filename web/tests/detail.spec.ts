@@ -107,6 +107,17 @@ test.describe("detail pages", () => {
     await expect(rows.nth(1).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   });
 
+  // Decision 9 on the show page's row Play: another version's resume point goes to the detail page (the resume case is in play.spec).
+  test("episodePlayConfirmsOtherVersion", async ({ page }) => {
+    const base = catalogue("item-movie.json");
+    const v = base.versions[0];
+    const resume = { positionMs: 5000, durationMs: v.durationMs, versionId: "ver-other", sourceRevision: v.sourceRevision, updatedAt: "2026-10-29T00:00:00Z" };
+    const detail = { ...base, item: { ...base.item, id: "epi-synthetic-0001", kind: "episode", userState: { ...base.item.userState, resume } } };
+    await open(page, "/items/shw-synthetic-0001", (api) => api.set("/api/v1/items/epi-synthetic-0001", detail));
+    await page.getByRole("listitem").filter({ hasText: "Synthetic Episode One" }).getByRole("button", { name: "Play" }).click();
+    await expect(page).toHaveURL(/\/items\/epi-synthetic-0001$/);
+  });
+
   test("seasonLinksToShowWithSeason", async ({ page }) => {
     await open(page, "/items/sea-synthetic-0001");
     await page.getByRole("link", { name: /Synthetic Show/ }).click();

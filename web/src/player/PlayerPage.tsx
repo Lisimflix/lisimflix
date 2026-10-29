@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type Client, type PlaybackSession, type ProgressEvent } from "../api/client";
+import { invalidate } from "../app/cache";
 import { navigate } from "../app/router";
 import { setNotice } from "../app/notice";
 import { useStarter } from "./start";
@@ -50,7 +51,8 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
       },
     );
     // A superseded or unmounted start drops its answer (and stops a late session).
-    return () => { ++generation.current; gone.current = true; };
+    // Playback moves the resume point, so rows fetched before it are stale.
+    return () => { ++generation.current; gone.current = true; invalidate(); };
   }, [client, itemId, versionId, tries]);
 
   // Progress is best effort: 404 (DATA-1 not live) and the rest are ignored, except an ended sign-in or changed file.

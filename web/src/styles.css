@@ -97,11 +97,11 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 .strip::-webkit-scrollbar { display: none; }
 .strip .card { flex: 0 0 9.5rem; }
 .strip .card.wide { flex-basis: 17rem; }
-@media (prefers-reduced-motion: reduce) { .strip { scroll-behavior: auto; } .arrow { transition: none; } }
 .arrow { position: absolute; top: 0; height: 60%; z-index: 2; border: 0; background: #0e0f12cc; color: inherit; font-size: 1.5rem; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
 .arrow.left { left: 0; }
 .arrow.right { right: 0; }
 .rowwrap:hover .arrow, .rowwrap:focus-within .arrow { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .strip { scroll-behavior: auto; } .arrow { transition: none; } }
 .upnext { background-size: cover; background-position: center; border-radius: 0.75rem; padding: 2rem; margin-bottom: 1.5rem; }
 .upnext .eyebrow { margin: 0; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.08em; color: var(--accent); }
 .upnext .actions { display: flex; gap: 0.75rem; }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, type Client, type ItemSummary } from "../api/client";
 import { Link, navigate, useSearch } from "../app/router";
+import { resumeChoice } from "./format";
 
 // A show's children are few enough to read whole (seasons, or one season's episodes).
 async function children(client: Client, parentId: string, signal: AbortSignal): Promise<ItemSummary[]> {
@@ -42,11 +43,14 @@ export function Show({ client, show }: { client: Client; show: ItemSummary }) {
   async function play(id: string) {
     setStatus(null);
     try {
-      const { versions } = await client.item(id);
+      const { item, versions } = await client.item(id);
       const v = versions.find((x) => x.available) ?? versions[0];
       // An offline file gets the detail page's File offline state, never a session.
-      if (v) navigate(v.available ? `/play/${encodeURIComponent(id)}/${encodeURIComponent(v.id)}` : `/items/${encodeURIComponent(id)}`);
-      else setStatus("No file available for this item");
+      if (!v) return setStatus("No file available for this item");
+      const choice = resumeChoice(item.userState, v);
+      // Offline files and resume points from another version go to the detail page's choice (decision 9).
+      if (!v.available || choice.kind === "confirm") navigate(`/items/${encodeURIComponent(id)}`);
+      else navigate(`/play/${encodeURIComponent(id)}/${encodeURIComponent(v.id)}${choice.kind === "resume" ? `?t=${choice.positionMs}` : ""}`);
     } catch (e) {
       setStatus(e instanceof ApiError ? e.message : "Something went wrong.");
     }

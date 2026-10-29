@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type Client, type ItemDetail, type MediaVersion } from "../api/client";
 import { ErrorState, SourceUnavailable, Skeleton } from "../ui/States";
+import { invalidate } from "../app/cache";
 import { takeNotice, type Notice } from "../app/notice";
 import { Link, navigate } from "../app/router";
 import { codecName, formatClock, resolutionName, resumeChoice, versionLabel } from "./format";
@@ -73,6 +74,7 @@ function DetailView({ client, detail, notice, refetch }: { client: Client; detai
     setStatus(null);
     try {
       setState(await client.setWatched(item.id, !watched, state?.revision ?? 0));
+      invalidate();
     } catch (err) {
       if (err instanceof ApiError && err.code === "revision_conflict") {
         await refetch().catch(() => undefined);

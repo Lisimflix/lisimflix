@@ -116,10 +116,8 @@ export function createClient(): Client {
     facets: (libraryId, signal) => call("GET", `/api/v1/libraries/${encodeURIComponent(libraryId)}/facets`, { signal }),
     continueWatching: (cursor, signal) => page("/api/v1/continue-watching", cursor, signal),
     nextUp: (cursor, signal) => page("/api/v1/next-up", cursor, signal),
-    // Planned: DATA-1 (detail page watched toggle, Task 6).
     setWatched: (id, watched, expectedRevision) =>
       call("PUT", `/api/v1/items/${encodeURIComponent(id)}/watched`, { body: { watched, expectedRevision } }),
-    // Planned: DATA-1 (player progress reports, Task 8).
     progress: (sessionId, event) =>
       call("POST", `/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/progress`, { body: event, keepalive: true }),
     start: async (itemId, versionId, key, signal) => {

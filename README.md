@@ -38,7 +38,7 @@ make check
 ```
 
 `make check` runs gofmt, vet and Go tests (with `-race`), regenerates the API types, then runs the web
-contract tests, lint, typecheck and build. GitHub Actions runs the same target on every PR.
+contract tests, unit tests, lint, typecheck and build. GitHub Actions runs the same target on every PR.
 It fails if `web/src/api/schema.d.ts` is stale, so commit the regenerated file after
 changing `docs/contracts/openapi.json`.
 

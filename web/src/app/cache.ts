@@ -24,6 +24,11 @@ export function saveView<T>(entry: string | undefined, slot: string, patch: Part
   views.set(k, { ...views.get(k), ...patch } as Record<string, unknown>);
 }
 
+// Drop fetched data but keep per-entry views, so Back after playback refetches while grid scroll/focus restore still works.
+export function invalidate() {
+  store.clear();
+}
+
 export function clearCache() {
   store.clear();
   views.clear();

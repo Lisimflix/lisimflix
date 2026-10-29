@@ -192,6 +192,26 @@ test.describe("play, resume and progress", () => {
     await expect.poll(() => api.of("DELETE", "/playback/sessions/play-fixture-1").length).toBe(1);
   });
 
+  test("episodeRowPlayResumes", async ({ page }) => {
+    const base = movie({ resumeOn: V1 });
+    const detail = { ...base, item: { ...base.item, id: "epi-synthetic-0001", kind: "episode" } };
+    await open(page, "/items/shw-synthetic-0001", (a) => a.set("/api/v1/items/epi-synthetic-0001", detail));
+    await page.getByRole("listitem").filter({ hasText: "Synthetic Episode One" }).getByRole("button", { name: "Play" }).click();
+    await expect(page).toHaveURL(/\/play\/epi-synthetic-0001\/ver-synthetic-0001\?t=2000$/);
+    await expect.poll(() => time(page), { timeout: 3_000 }).toBeGreaterThanOrEqual(2);
+  });
+
+  test("backToHomeRefetchesResumeData", async ({ page }) => {
+    const api = await open(page, "/");
+    const cw = () => api.of("GET", "/api/v1/continue-watching").length;
+    await expect.poll(cw).toBe(1);
+    await page.getByRole("button", { name: "Resume" }).click();
+    await expect(page.locator("video")).toBeAttached();
+    await page.getByRole("button", { name: "← Back" }).click();
+    await expect(page.locator(".upnext")).toBeVisible();
+    await expect.poll(cw).toBe(2); // not the pre-playback rows
+  });
+
   test("logoutDuringPlaybackStopsFirst", async ({ page }) => {
     const api = await open(page, MOVIE);
     await page.getByRole("button", { name: "Play", exact: true }).click();

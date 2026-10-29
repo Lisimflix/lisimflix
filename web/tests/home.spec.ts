@@ -105,6 +105,7 @@ test.describe("home", () => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await open(page);
     await expect(strip(page)).toHaveCSS("scroll-behavior", "auto");
+    await expect(page.locator(".arrow").first()).toHaveCSS("transition-duration", "0s");
   });
 
   test("cacheIsPerHistoryEntry", async ({ page }) => {

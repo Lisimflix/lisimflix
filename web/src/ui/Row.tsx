@@ -6,15 +6,12 @@ interface Props<T> {
   seeAllHref?: string;
   items: T[];
   renderCard: (item: T) => ReactNode;
-  loadMore?: () => void;
 }
 
 // A horizontal strip: no native scrollbar, arrows that fade in on hover or focus, and a wheel that scrolls sideways until an end.
-export function Row<T>({ title, seeAllHref, items, renderCard, loadMore }: Props<T>) {
+export function Row<T>({ title, seeAllHref, items, renderCard }: Props<T>) {
   const strip = useRef<HTMLDivElement>(null);
   const [ends, setEnds] = useState({ start: true, end: true });
-  const more = useRef(loadMore);
-  more.current = loadMore;
 
   const measure = useCallback(() => {
     const el = strip.current;
@@ -22,7 +19,6 @@ export function Row<T>({ title, seeAllHref, items, renderCard, loadMore }: Props
     const start = el.scrollLeft <= 1;
     const end = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
     setEnds((p) => (p.start === start && p.end === end ? p : { start, end }));
-    if (el.scrollLeft + el.clientWidth >= el.scrollWidth - el.clientWidth) more.current?.();
   }, []);
 
   useEffect(() => {
