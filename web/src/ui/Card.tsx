@@ -4,10 +4,13 @@ import { Link } from "../app/router";
 import { minutesLeft } from "../browse/format";
 
 // Title, then the year or, for an episode, "S1 E4".
-const subtitle = (i: ItemSummary) =>
-  i.kind === "episode" && i.seasonIndex !== null && i.index !== null ? `S${i.seasonIndex} E${i.index}` : i.year === null ? "" : String(i.year);
+// showTitle (mixed rows): an episode reads "[Show] · S1 E4".
+const subtitle = (i: ItemSummary, showTitle: boolean) =>
+  i.kind === "episode" && i.seasonIndex !== null && i.index !== null
+    ? `${showTitle && i.showTitle ? `${i.showTitle} · ` : ""}S${i.seasonIndex} E${i.index}`
+    : i.year === null ? "" : String(i.year);
 
-export function Card({ item, href, size }: { item: ItemSummary; href: string; size: "poster" | "wide" }) {
+export function Card({ item, href, size, showTitle = false }: { item: ItemSummary; href: string; size: "poster" | "wide"; showTitle?: boolean }) {
   const [broken, setBroken] = useState(false);
   const state = item.userState;
   const watched = state?.watched?.value === true;
@@ -42,7 +45,7 @@ export function Card({ item, href, size }: { item: ItemSummary; href: string; si
       </span>
       <span className="cap">
         <span className="t">{item.title}</span>
-        <span className="s">{subtitle(item)}</span>
+        <span className="s">{subtitle(item, showTitle)}</span>
       </span>
     </Link>
   );

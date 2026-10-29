@@ -63,11 +63,11 @@ test.describe("browse shell", () => {
   test("signOutClearsCachedRows", async ({ page }) => {
     const api = await browse(page);
     await expect(nav(page)).toBeVisible();
-    await expect.poll(() => api.of("GET", "/api/v1/items").length).toBe(1);
+    await expect.poll(() => api.of("GET", "/api/v1/items").length).toBe(2);
     await page.getByRole("button", { name: "Profile" }).click();
     await page.getByRole("button", { name: "Sign out" }).click();
     await signIn(page);
-    await expect.poll(() => api.of("GET", "/api/v1/items").length).toBe(2);
+    await expect.poll(() => api.of("GET", "/api/v1/items").length).toBe(4);
   });
 
   test("phoneWidthUsesBottomTabBar", async ({ page }) => {

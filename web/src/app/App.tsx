@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, type Client, type ItemDetail, type ItemPage, type Library } from "../api/client";
+import { ApiError, type Client, type ItemDetail, type Library } from "../api/client";
+import { Home } from "../browse/Home";
 import { Library as LibraryPage } from "../browse/Library";
-import { cached, clearCache } from "./cache";
+import { clearCache } from "./cache";
 import { Link, useRoute, type Route } from "./router";
 
 type View =
@@ -147,26 +148,6 @@ function LibraryRoute({ client, libraries, id }: { client: Client; libraries: Li
   const library = libraries.find((l) => l.id === id);
   // Keyed by library so switching tabs starts a fresh grid.
   return library ? <LibraryPage key={id} client={client} library={library} /> : <h1>Library not found</h1>;
-}
-
-// Placeholder: Task 5 replaces it with the rows. It loads one page through the cache so sign-out has something to clear.
-function Home({ client, libraries }: { client: Client; libraries: Library[] }) {
-  const [page, setPage] = useState<ItemPage | null>(null);
-  const first = libraries[0]?.id;
-  useEffect(() => {
-    if (!first) return;
-    let live = true;
-    cached(`items:${first}:added`, () => client.items({ libraryId: first, sort: "added", limit: 20 }))
-      .then((p) => live && setPage(p))
-      .catch(() => undefined);
-    return () => { live = false; };
-  }, [client, first]);
-  return (
-    <>
-      <h1>Home</h1>
-      <ul>{page?.items.map((i) => <li key={i.id}><Link href={`/items/${encodeURIComponent(i.id)}`}>{i.title}</Link></li>)}</ul>
-    </>
-  );
 }
 
 // Placeholder: Task 6 replaces it with the detail page.

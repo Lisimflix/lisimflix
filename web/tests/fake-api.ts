@@ -108,7 +108,7 @@ export class FakeAPI {
     if (isCatalogue) {
       if (this.fixed.has(call.path)) {
         const body = this.fixed.get(call.path);
-        return typeof body === "number" ? error(body, "internal_error") : json(200, body);
+        return typeof body === "number" ? error(body, body === 404 ? "not_found" : "internal_error") : json(200, body);
       }
       const url = new URL(req.url());
       if (call.path === "/api/v1/libraries") return json(200, catalogue("libraries.json"));

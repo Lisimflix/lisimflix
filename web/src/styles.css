@@ -87,3 +87,22 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 .azrail { position: fixed; right: 0.25rem; top: 50%; transform: translateY(-50%); z-index: 4; display: flex; flex-direction: column; }
 .azrail button { background: none; border: 0; color: inherit; font-size: 0.7rem; padding: 0.1rem 0.4rem; line-height: 1.2; opacity: 0.6; cursor: pointer; }
 .azrail button:hover, .azrail button[aria-current="true"] { opacity: 1; color: var(--accent); }
+
+/* Rows */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+.row header { display: flex; align-items: baseline; justify-content: space-between; }
+.rowwrap { position: relative; }
+.strip { display: flex; gap: 0.75rem; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; }
+.strip::-webkit-scrollbar { display: none; }
+.strip .card { flex: 0 0 9.5rem; }
+.strip .card.wide { flex-basis: 17rem; }
+@media (prefers-reduced-motion: reduce) { .strip { scroll-behavior: auto; } .arrow { transition: none; } }
+.arrow { position: absolute; top: 0; height: 60%; z-index: 2; border: 0; background: #0e0f12cc; color: inherit; font-size: 1.5rem; cursor: pointer; opacity: 0; transition: opacity 0.15s; }
+.arrow.left { left: 0; }
+.arrow.right { right: 0; }
+.rowwrap:hover .arrow, .rowwrap:focus-within .arrow { opacity: 1; }
+.upnext { background-size: cover; background-position: center; border-radius: 0.75rem; padding: 2rem; margin-bottom: 1.5rem; }
+.upnext .eyebrow { margin: 0; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.08em; color: var(--accent); }
+.upnext .actions { display: flex; gap: 0.75rem; }
+a.button, .upnext button { border-radius: 0.5rem; padding: 0.5rem 1rem; text-decoration: none; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }
