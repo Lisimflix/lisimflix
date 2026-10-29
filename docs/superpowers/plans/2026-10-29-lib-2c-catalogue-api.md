@@ -21,8 +21,8 @@
 | Feature ID | **LIB-2** (resilient catalogue, P0 / G1), slice **2c** of 4. 2a: catalogue store and offline-safe scans (#111). 2b: watcher, schedule and serve wiring (#134). **2c (this plan):** the viewer catalogue API and catalogue playback. **2d:** the admin API (scan status, duplicates #104, retirement, probe retry, scan now), with UI-6's contract additions (Decision 1) |
 | Issue | #77 |
 | Owner / reviewers | Lammy (claimant) / CODEOWNERS (Pete, Lammy and one backup) |
-| Acceptance | CTR-2's `listLibraries`, `getLibraryFacets`, `listItems` and `getItem` move from `planned` to `implemented`, with every rule in their contract text: one of `libraryId`/`parentId`, the 400 rules, title collation and the `#` group, the A–Z jump, filters, `total` on the first page only, 404 for libraries and items the caller may not see, and no leaks through counts. **§3.6:** an offline root's items stay listed with `available: false`, and the library reads `partial` or `offline`. **Catalogue playback:** any present file of a permitted item plays through PR B's session API. **SCALE-02 / PERF-05:** module timing in tests (Task 6), then actual scale (Task 8) |
-| File scope | **New:** `server/internal/textfold/{fold.go,fold_test.go}`; `server/internal/library/{derive,browse,detail,access,resolver,api}.go` and their tests; migration `server/internal/library/migrations/20261029120000_library_browse.sql`. **Modified:** `server/internal/metadata/score.go` (calls `textfold`), `server/internal/library/{scan,probes,store}.go` (fill derived columns), `server/internal/app/app.go` (+ test), `server/cmd/lisimflix/serve.go`, `docs/contracts/openapi.json` (statuses, collation text), `README.md` |
+| Acceptance | CTR-2's `listLibraries`, `getLibraryFacets`, `listItems` and `getItem` move from `planned` to `implemented`, with every rule in their contract text: one of `libraryId`/`parentId`, the 400 rules, title collation and the `#` group, the A–Z jump, filters, `total` on the first page only, 404 for libraries and items the caller may not see, and no leaks through counts. **§3.6:** an offline root's items stay listed with `available: false`, and the library reads `partial` or `offline`. **Catalogue playback:** any present file of a permitted item plays through PR B's session API. **SCALE-02 / PERF-05:** a module benchmark (Task 6, not a pass/fail test), then actual scale (Task 8) |
+| File scope | **New:** `server/internal/textfold/{fold.go,fold_test.go}`; `server/internal/library/{derive,browse,detail,access,resolver,api}.go` and their tests; migration `server/internal/library/migrations/20261029140000_library_browse.sql`. **Modified:** `server/internal/metadata/score.go` (calls `textfold`), `server/internal/library/{scan,probes,store}.go` (fill derived columns), `server/internal/app/app.go` (+ test), `server/cmd/lisimflix/serve.go`, `docs/contracts/openapi.json` (statuses, collation text), `README.md` |
 | Consumes | LIB-2a/2b: the catalogue tables, `Store`, `Scheduler.Status`. PR B (#130): `playback.Resolver`, `Source`, `ErrNotFound`, `Single`, `M1`. META-1a (#135): `Normalize`, which Task 1 moves into `textfold`. CTR-2: `contracts.Library`, `LibraryScan`, `LibraryFacets`, `ItemSummary`, `ItemPage`, `ItemDetail`, `MediaVersion` and the stream types, `Page[T]`, `WriteError`, `PrincipalFrom`. OPS-2: `storage.DB`. LIB-1: `probe.Result` |
 | Produces | `textfold.Title`, `textfold.Group`. `library.Grant`, `Access`, `M1Access`. `Store.Libraries`, `Facets`, `Items`, `Item`, `SetDisplay`, `BackfillDerived`. `library.API`, `NewAPI`. `library.Resolver`, `NewResolver`, `playback.Chain` |
 | Start dependency | **#134 (LIB-2b), #135 (META-1a) and #130 (UI-2 PR B) merged.** Task 2 is pure and can start against #134 alone |
@@ -38,7 +38,7 @@
 - **No leaks (§6):** a library or item the caller may not see is `404 not_found`, the same body as an unknown ID. `total`, `childCount` and facets count only what the caller may see. Viewers never see paths; `fileName` is admin-only and never a path.
 - **Short transactions (§10.2):** reads use one read transaction per request; writes (derived columns) stay inside the existing 500-file batches.
 - **Bounded responses:** `limit` 1–200, default 50. A cursor is at most 512 bytes.
-- Migrations: one file, module `library`, `STRICT` tables with explicit `ON DELETE`, timestamp after META-1a's `20261028140000`. Never edit a merged migration.
+- Migrations: one file, module `library`, `STRICT` tables with explicit `ON DELETE`, timestamp after #133's `20261029120000_library_probe_timeouts.sql`, so `20261029140000`. Never edit a merged migration.
 - Code without a production caller yet carries `// Planned: <Feature ID> (<what will call it>).` (#60).
 - Workflow: branch `feat/lib-2c-catalogue-api`, PR title `feat(library): catalogue API and catalogue playback (LIB-2c)`, labels `area:library`, `area:api`, `area:playback`. Don't request reviewers (CODEOWNERS does).
 
@@ -127,7 +127,7 @@
 12. **Serve wiring.**
     - `app.New` takes the catalogue handler next to the playback one and mounts `/api/v1/libraries` and `/api/v1/items` behind `am.Require`.
     - Serve builds `library.NewAPI(store, library.M1Access(cfg.Viewer))` when storage started.
-    - **When storage is down:** the routes answer `503` through the existing readiness path. They are not registered, so the browse app's "404 → M1" fallback (UI-2 decision 10) still works.
+    - **When storage is down:** the catalogue routes aren't registered, so they answer `404 not_found` and the browse app's "404 → M1" fallback (UI-2 decision 10) still works. `/health/ready` already reports the storage failure.
     - `Store.BackfillDerived` runs once before the scheduler starts, in batches of 500.
 
 ## Review Focus
@@ -207,7 +207,7 @@ func TestStreamsMap(t *testing.T)       // HDR10+→hdr10plus, DV→dolbyVision,
 ### Task 3: Derived columns, display values and backfill
 
 **Files:**
-- Create: `server/internal/library/migrations/20261029120000_library_browse.sql`, `server/internal/library/derive.go`, `server/internal/library/derive_test.go`
+- Create: `server/internal/library/migrations/20261029140000_library_browse.sql`, `server/internal/library/derive.go`, `server/internal/library/derive_test.go`
 - Modify: `server/internal/library/scan.go` (`item` writes `sort_group`/`sort_key`), `server/internal/library/probes.go` (`record` writes the file's derived columns in the same `UPDATE`), `server/internal/library/store.go`
 
 **Interfaces:**
@@ -323,7 +323,7 @@ func TestFileNameOnlyForAdmins(t *testing.T)           // Grant{All, Admin} → 
 func TestShowDetailHasNoVersions(t *testing.T)         // show and season → versions [], available null
 func TestAPIShapesMatchContract(t *testing.T)          // httptest GET on each route with a scanned fixture; each body decodes with DisallowUnknownFields into its CTR-2 Go type and re-encodes byte-identically (the contracts package's round-trip rule); Content-Type application/json
 func TestAPIErrors(t *testing.T)                       // no principal → 401; bad params → 400 invalid_request; unknown and hidden item → identical 404 bodies apart from requestId
-func TestAPIFirstPageIsFast(t *testing.T)              // 5,000 movies (2,000 with two files) and 200 shows × 3 seasons × 10 episodes: each route's p95 over 50 calls < 50 ms on the test machine (module bound for PERF-05; the real target is Task 8)
+func BenchmarkAPIRoutes(b *testing.B)                  // 5,000 movies (2,000 with two files) and 200 shows × 3 seasons × 10 episodes; one sub-benchmark per route (first page by title, from=M, last page, each filter, getItem). A benchmark, not a pass/fail timing test, so CI under -race can't flake (#138 review); the PERF-05 target is Task 8
 ```
 
 - [ ] **Step 2:** Run them. Expected: FAIL.
@@ -400,8 +400,8 @@ No new code in this task, apart from fixes the run finds, which go in their own 
 | §3.1 versions per item, shared-file episodes keep one `fileId` | Task 6 (segment null until LIB-3) |
 | Catalogue playback (UI-2 PR B obligation) | Task 7 |
 | M1 keeps working until UI-2 PR C | Decision 11, Task 7 |
-| SCALE-01/02, PERF-05 | Task 6 (module bound), Task 8 (actual scale) |
+| SCALE-01/02, PERF-05 | Task 6 (benchmark), Task 8 (actual scale) |
 | #131 note 1 (Resolve per range request) | Decision 11, Task 8 |
 | #104 (duplicate sides) | LIB-2d (Decision 1) |
 
-**Not verified while writing this plan:** unlike LIB-2a, LIB-2b and META-1a, there's no prototype behind this plan yet. The interfaces were checked against `main`, #134 (LIB-2b), #135 (META-1a) and #130 (PR B) on 2026-10-29, but the SQL and the module timing bound in Task 6 haven't been run. Review the Decisions; the first implementer should expect the timing bound to be tuned once measured.
+**Not verified while writing this plan:** unlike LIB-2a, LIB-2b and META-1a, there's no prototype behind this plan yet. The interfaces were checked against `main`, #134 (LIB-2b), #135 (META-1a) and #130 (PR B) on 2026-10-29, but the SQL and Task 6's benchmark haven't been run. Review the Decisions.
