@@ -8,6 +8,15 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
+# Licence texts of the packages bundled into dist (the production dependency
+# tree, plus vite and rolldown, whose runtime helpers end up in the bundle),
+# shipped in the image (#115). A package without one fails the build.
+RUN set -e; for d in $(npm ls --omit=dev --all --parseable | tail -n +2) "$PWD/node_modules/vite" "$PWD/node_modules/rolldown"; do \
+      f=$(ls "$d"/LICENSE* "$d"/LICENCE* "$d"/COPYING* 2>/dev/null || true); [ -n "$f" ] || { echo "no licence file in $d" >&2; exit 1; }; \
+      n=$(node -p "const p = require('$d/package.json'); p.name + '@' + p.version"); \
+      printf '==== %s ====\n\n' "$n"; \
+      cat $f; echo; \
+    done > /src/web/THIRD_PARTY_LICENSES
 
 FROM golang:1.27.3-trixie@sha256:fbb7ae40b62ff8afe31662df570d39b4f5052ac32b90dae8e60d7657a20a74f4 AS build
 WORKDIR /src/server
@@ -20,6 +29,17 @@ ARG VERSION=dev
 ARG TAGS=
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags "$TAGS" \
       -ldflags="-s -w -X main.version=$VERSION" -o /out/lisimflix ./cmd/lisimflix
+# Licence texts of the Go standard library and every module compiled into the
+# binary (same build tags), then the web ones (#115). A module without one
+# fails the build.
+RUN set -e; { printf '==== Go %s (standard library) ====\n\n' "$(go env GOVERSION)"; cat "$(go env GOROOT)/LICENSE"; echo; \
+      go list -deps -tags "$TAGS" -f '{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}} {{.Dir}}{{end}}{{end}}' ./cmd/lisimflix | sort -u | \
+      while read -r m d; do \
+        f=$(ls "$d"/LICENSE* "$d"/LICENCE* "$d"/COPYING* 2>/dev/null || true); [ -n "$f" ] || { echo "no licence file in $m" >&2; exit 1; }; \
+        printf '==== %s ====\n\n' "$m"; cat $f; echo; \
+      done; } > /out/THIRD_PARTY_LICENSES
+COPY --from=web /src/web/THIRD_PARTY_LICENSES /tmp/web-licenses
+RUN cat /tmp/web-licenses >> /out/THIRD_PARTY_LICENSES
 
 # jellyfin-ffmpeg portable build (GPLv3), used only as a separate process.
 # Not tracked by Dependabot: to update, take the new release's
@@ -40,6 +60,7 @@ COPY --from=build /out/lisimflix /usr/local/bin/lisimflix
 COPY --from=ffmpeg /ffprobe /usr/lib/jellyfin-ffmpeg/ffprobe
 COPY --from=ffmpeg /COPYING.GPLv3 /LICENSE.md /usr/share/doc/jellyfin-ffmpeg/
 COPY NOTICE.md LICENSE /usr/share/doc/lisimflix/
+COPY --from=build /out/THIRD_PARTY_LICENSES /usr/share/doc/lisimflix/
 USER 65532:65532
 EXPOSE 8420
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s CMD ["/usr/local/bin/lisimflix", "healthcheck"]
