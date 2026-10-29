@@ -222,12 +222,12 @@ export function Library({ client, library: initial }: { client: Client; library:
         </label>
         {query.from && <button type="button" className="chip" onClick={() => setParams({ from: null })}>Back to top</button>}
       </div>
-      {s.error && !(offline && s.items.length > 0) && <ErrorState error={s.error} thing="library" onRetry={() => setState({ ...cur, error: null })} />}
+      {s.error && !(offline && s.items.length > 0) && <ErrorState error={s.error} thing="library" level={2} onRetry={() => setState({ ...cur, error: null })} />}
       {s.items.length === 0 && !s.error && (s.hasMore || s.loading) && <Skeleton kind="grid" />}
       {s.items.length === 0 && !s.error && !s.hasMore && !s.loading && (
         library.availability === "offline" ? <OfflineLibrary /> : filtered || query.from ? <p>No titles match these filters.</p> : <Empty library={library} client={client} onPoll={onPoll} />
       )}
-      <div onFocus={(e) => {
+      <div className={sort === "title" ? "withrail" : undefined} onFocus={(e) => {
         const idx = (e.target as HTMLElement).closest<HTMLElement>("[data-index]")?.dataset.index;
         const item = idx === undefined ? undefined : s.items[Number(idx)];
         if (item) saveView<GridView>(entryRef.current, "grid", { focusId: item.id });
@@ -246,7 +246,7 @@ export function Library({ client, library: initial }: { client: Client; library:
           {/* shortcut: jump restarts the list; upgrade to bidirectional paging if Pete finds it awkward at 5k titles */}
           {/* `from` is part of the query key, so setting it resets items and cursor and restarts the grid at that letter */}
           {LETTERS.map((l) => (
-            <button key={l} type="button" aria-current={query.from === l ? "true" : undefined} onClick={() => setParams({ from: l })}>{l}</button>
+            <button key={l} type="button" aria-current={query.from === l ? "true" : undefined} onClick={() => query.from !== l && setParams({ from: l })}>{l}</button>
           ))}
         </nav>
       )}

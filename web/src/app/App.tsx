@@ -90,6 +90,33 @@ export function App({ client }: { client: Client }) {
 function Shell({ client, libraries, onLogout, onStop }: { client: Client; libraries: Library[]; onLogout: () => void; onStop: (request: Promise<unknown>) => void }) {
   const route = useRoute();
   const [menu, setMenu] = useState(false);
+  const profile = useRef<HTMLDivElement>(null);
+  const pathname = location.pathname; // Shell re-renders on every route change
+  const search = location.search;
+  useEffect(() => setMenu(false), [pathname, search]);
+  // After a route change focus would be lost with the old page, so move it to the new h1 (not on first load).
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) { first.current = false; return; }
+    const main = document.querySelector("main")!;
+    const focusH1 = () => {
+      const h1 = main.querySelector("h1");
+      if (!h1) return false;
+      // A page may already have restored focus (Back to a grid card).
+      if (!main.contains(document.activeElement)) { h1.tabIndex = -1; h1.focus(); }
+      return true;
+    };
+    if (focusH1()) return;
+    const mo = new MutationObserver(() => focusH1() && mo.disconnect()); // pages that fetch show the h1 later
+    mo.observe(main, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [pathname]);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (e: PointerEvent) => !profile.current?.contains(e.target as Node) && setMenu(false);
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, [menu]);
   const tabs = [
     { href: "/", label: "Home", current: route.name === "home" },
     ...libraries.map((l) => ({
@@ -111,13 +138,17 @@ function Shell({ client, libraries, onLogout, onStop }: { client: Client; librar
             </Link>
           ))}
         </nav>
-        <div className="profile">
-          <button type="button" aria-expanded={menu} onClick={() => setMenu(!menu)} onKeyDown={(e) => e.key === "Escape" && setMenu(false)}>
+        <div className="profile" ref={profile} onKeyDown={(e) => {
+          if (e.key !== "Escape" || !menu) return;
+          setMenu(false);
+          profile.current?.querySelector("button")?.focus();
+        }}>
+          <button type="button" aria-expanded={menu} onClick={() => setMenu(!menu)}>
             Profile
           </button>
           {menu && (
             <div className="menu">
-              <button type="button" autoFocus onClick={onLogout} onKeyDown={(e) => e.key === "Escape" && setMenu(false)}>
+              <button type="button" autoFocus onClick={onLogout}>
                 Sign out
               </button>
             </div>

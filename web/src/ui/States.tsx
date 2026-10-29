@@ -53,11 +53,12 @@ export function Empty({ library: lib, client, onPoll }: { library: Library; clie
   );
 }
 
-export function ErrorState({ error, onRetry, thing }: { error: ApiError; onRetry: () => void; thing: string }) {
+export function ErrorState({ error, onRetry, thing, level = 3 }: { error: ApiError; onRetry: () => void; thing: string; level?: 2 | 3 }) {
+  const H = `h${level}` as const;
   return (
     <div className="errorstate">
       <div role="alert">
-        <h3>Couldn't load this {thing}</h3>
+        <H>Couldn't load this {thing}</H>
         {error.requestId && <p className="diag">Diagnostic ID {error.requestId}</p>}
       </div>
       <button type="button" onClick={onRetry}>Try again</button>

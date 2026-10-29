@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type FocusEvent, type KeyboardEvent, type ReactNode } from "react";
 
 export interface VirtualGridProps<T extends { id: string }> {
   items: T[];
@@ -23,6 +23,8 @@ export function VirtualGrid<T extends { id: string }>({
 }: VirtualGridProps<T>) {
   const ref = useRef<HTMLDivElement>(null);
   const pending = useRef<number | null>(null);
+  const active = useRef(0); // roving tabindex: the one card in the tab order
+  const focused = useRef<number | null>(null); // index of the card holding focus; kept when it scrolls out of the window
   const [m, setM] = useState<Metrics>({ width: 0, top: 0, scrollY: 0, vh: 0 });
 
   const measure = () => {
@@ -67,6 +69,28 @@ export function VirtualGrid<T extends { id: string }>({
     }
   });
 
+  // One tab stop: the active card, or the first rendered one while the active card is outside the window.
+  // Also puts focus back on a card that was scrolled out of the window and has just been rendered again.
+  useLayoutEffect(() => {
+    const links = Array.from(ref.current?.querySelectorAll<HTMLElement>(".cell:not(:has(.ph)) > a, .cell:not(:has(.ph)) > button") ?? []);
+    const stop = links.find((a) => Number(a.closest<HTMLElement>("[data-index]")!.dataset.index) === active.current) ?? links[0];
+    links.forEach((a) => { a.tabIndex = a === stop ? 0 : -1; });
+    const back = focused.current === null ? undefined : links.find((a) => Number(a.closest<HTMLElement>("[data-index]")!.dataset.index) === focused.current);
+    if (back && document.activeElement === document.body) back.focus({ preventScroll: true });
+  });
+
+  function onFocus(e: FocusEvent<HTMLDivElement>) {
+    const cell = (e.target as HTMLElement).closest<HTMLElement>("[data-index]");
+    if (!cell) return;
+    active.current = focused.current = Number(cell.dataset.index);
+    ref.current?.querySelectorAll<HTMLElement>("[tabindex]").forEach((a) => { a.tabIndex = a === e.target ? 0 : -1; });
+  }
+
+  // A card removed while focused sends no blur, so a blur seen on a connected card means focus really moved on.
+  function onBlur(e: FocusEvent<HTMLDivElement>) {
+    if ((e.target as HTMLElement).isConnected) focused.current = null;
+  }
+
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     const from = (e.target as HTMLElement).closest<HTMLElement>("[data-index]");
     const delta = ({ ArrowRight: 1, ArrowLeft: -1, ArrowDown: cols, ArrowUp: -cols } as Record<string, number>)[e.key];
@@ -87,7 +111,7 @@ export function VirtualGrid<T extends { id: string }>({
   const end = Math.min((last + 1) * cols, count);
   const style = { "--caption": `${captionHeight}px`, "--aspect": `1 / ${cardAspect}` } as CSSProperties;
   return (
-    <div ref={ref} className="vgrid" style={{ ...style, height: Math.max(rows * rowH - gap, 0) }} onKeyDown={onKeyDown}>
+    <div ref={ref} className="vgrid" style={{ ...style, height: Math.max(rows * rowH - gap, 0) }} onKeyDown={onKeyDown} onFocus={onFocus} onBlur={onBlur}>
       {m.width > 0 && (
         <div className="vgrid-rows" style={{ top: first * rowH, gridTemplateColumns: `repeat(${cols}, ${cardW}px)`, gap }}>
           {Array.from({ length: Math.max(end - start, 0) }, (_, k) => {

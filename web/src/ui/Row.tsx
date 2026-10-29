@@ -11,6 +11,8 @@ interface Props<T> {
 // A horizontal strip: no native scrollbar, arrows that fade in on hover or focus, and a wheel that scrolls sideways until an end.
 export function Row<T>({ title, seeAllHref, items, renderCard }: Props<T>) {
   const strip = useRef<HTMLDivElement>(null);
+  const left = useRef<HTMLButtonElement>(null);
+  const right = useRef<HTMLButtonElement>(null);
   const [ends, setEnds] = useState({ start: true, end: true });
 
   const measure = useCallback(() => {
@@ -18,6 +20,14 @@ export function Row<T>({ title, seeAllHref, items, renderCard }: Props<T>) {
     if (!el) return;
     const start = el.scrollLeft <= 1;
     const end = el.scrollLeft + el.clientWidth >= el.scrollWidth - 1;
+    // The focused arrow is about to hide: hand focus to the other arrow (shown now, React agrees next render) or the first card.
+    const at = document.activeElement;
+    if ((at === left.current && start) || (at === right.current && end)) {
+      const fromLeft = at === left.current;
+      const other = fromLeft ? right.current! : left.current!;
+      if (fromLeft ? end : start) el.querySelector<HTMLElement>("a,button")?.focus();
+      else { other.hidden = false; other.focus(); }
+    }
     setEnds((p) => (p.start === start && p.end === end ? p : { start, end }));
   }, []);
 
@@ -55,13 +65,13 @@ export function Row<T>({ title, seeAllHref, items, renderCard }: Props<T>) {
         {seeAllHref && <Link href={seeAllHref}>See all</Link>}
       </header>
       <div className="rowwrap">
-        <button type="button" className="arrow left" aria-label={`Scroll ${title} left`} hidden={ends.start} onClick={() => scroll(-1)}>
+        <button type="button" ref={left} className="arrow left" aria-label={`Scroll ${title} left`} hidden={ends.start} onClick={() => scroll(-1)}>
           ‹
         </button>
         <div className="strip" ref={strip} onScroll={measure}>
           {items.map(renderCard)}
         </div>
-        <button type="button" className="arrow right" aria-label={`Scroll ${title} right`} hidden={ends.end} onClick={() => scroll(1)}>
+        <button type="button" ref={right} className="arrow right" aria-label={`Scroll ${title} right`} hidden={ends.end} onClick={() => scroll(1)}>
           ›
         </button>
       </div>
