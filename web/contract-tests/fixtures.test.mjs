@@ -44,7 +44,7 @@ const invalidFixtures = [
   ["external content URL", "playback.json", (data) => { data.contentUrl = "https://example.invalid/private"; }],
   ["wrong heartbeat interval", "playback.json", (data) => { data.heartbeatIntervalSeconds = 999; }],
   ["wrong idle timeout", "playback.json", (data) => { data.idleTimeoutSeconds = 999; }],
-  ["missing field", "playback.json", (data) => { delete data.movieId; }],
+  ["missing field", "playback.json", (data) => { delete data.itemId; }],
   ["unexpected field", "playback.json", (data) => { data.sourcePath = "/synthetic/movie.mp4"; }],
   ["zero duration", "movies.json", (data) => { data.items[0].durationMs = 0; }],
   ["fractional duration", "movies.json", (data) => { data.items[0].durationMs = 1.5; }],

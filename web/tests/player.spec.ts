@@ -40,6 +40,7 @@ test.describe("viewer shell", () => {
     await expect(page.locator("video")).toBeAttached();
     expect(api.of("POST", "/auth/login")[0].csrf).toBe("csrf-synthetic-anon-0001");
     expect(api.of("POST", "/playback/sessions")[0].csrf).toBe("csrf-synthetic-auth-0002");
+    expect(api.of("POST", "/playback/sessions")[0].body).toEqual({ itemId: "movie-synthetic-0001", versionId: "movie-synthetic-0001" });
   });
 
   test("startUsesOneIdempotencyKeyOnRetry", async ({ page }) => {
@@ -87,7 +88,7 @@ test.describe("viewer shell", () => {
       await route.fulfill({
         status: 201,
         contentType: "application/json",
-        body: JSON.stringify({ id: "p", movieId: "m", sourceRevision: "r", contentUrl: "https://evil.example/a.mp4", route: "direct", heartbeatIntervalSeconds: 10, idleTimeoutSeconds: 60 }),
+        body: JSON.stringify({ id: "p", itemId: "m", versionId: "m", sourceRevision: "r", contentUrl: "https://evil.example/a.mp4", route: "direct", heartbeatIntervalSeconds: 10, idleTimeoutSeconds: 60 }),
       });
       return true;
     });

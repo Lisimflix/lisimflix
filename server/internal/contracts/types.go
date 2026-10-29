@@ -46,7 +46,8 @@ func (l MovieList) MarshalJSON() ([]byte, error) {
 
 type PlaybackSession struct {
 	ID                       string `json:"id"`
-	MovieID                  string `json:"movieId"`
+	ItemID                   string `json:"itemId"`
+	VersionID                string `json:"versionId"`
 	SourceRevision           string `json:"sourceRevision"`
 	ContentURL               string `json:"contentUrl"`
 	Route                    string `json:"route"`
@@ -66,7 +67,8 @@ type LoginRequest struct {
 }
 
 type PlaybackSessionRequest struct {
-	MovieID string `json:"movieId"`
+	ItemID    string `json:"itemId"`
+	VersionID string `json:"versionId"`
 }
 
 // HeartbeatRequest.Sequence must be nonnegative; handlers reject negatives with invalid_request.

@@ -21,7 +21,7 @@ export interface M1Client {
   login(username: string, password: string, signal?: AbortSignal): Promise<AuthState>;
   logout(signal?: AbortSignal): Promise<void>;
   movies(signal?: AbortSignal): Promise<Movie[]>;
-  start(movieId: string, key: string, signal?: AbortSignal): Promise<PlaybackSession>;
+  start(itemId: string, versionId: string, key: string, signal?: AbortSignal): Promise<PlaybackSession>;
   heartbeat(id: string, sequence: number, signal?: AbortSignal): Promise<void>;
   stop(id: string): Promise<void>;
 }
@@ -77,9 +77,9 @@ export function createClient(): M1Client {
       auth(call("POST", "/api/v1/auth/login", { body: { username, password }, signal })),
     logout: (signal) => call("POST", "/api/v1/auth/logout", { signal }),
     movies: async (signal) => (await call<components["schemas"]["MovieList"]>("GET", "/api/v1/movies", { signal })).items,
-    start: async (movieId, key, signal) => {
+    start: async (itemId, versionId, key, signal) => {
       const session = await call<PlaybackSession>("POST", "/api/v1/playback/sessions", {
-        body: { movieId },
+        body: { itemId, versionId },
         headers: { "Idempotency-Key": key },
         signal,
       });

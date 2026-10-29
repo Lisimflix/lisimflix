@@ -56,7 +56,9 @@ func (s *Store) groupItem(ctx context.Context, tx *sql.Tx, root Root, e naming.E
 // folder's item, keeping its identity; see renamed. Otherwise both folders
 // exist and the pair is flagged for the admin. A scoped scan (flag false)
 // only folds: the old folder may simply not have been rescanned yet, so a
-// live pair stays pending until a whole-root scan.
+// live pair stays pending until a whole-root scan. All pairs are settled in
+// one transaction, an exception to the 500-file bound: pairs only come from
+// renames (#110).
 func (s *Store) settle(ctx context.Context, rootID string, flag bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

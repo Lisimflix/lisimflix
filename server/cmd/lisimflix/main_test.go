@@ -157,7 +157,7 @@ func (b *browser) start(key string) contracts.PlaybackSession {
 	if len(list.Items) != 1 {
 		b.f.t.Fatalf("movies = %s", out)
 	}
-	resp, out := b.do("POST", "/api/v1/playback/sessions", `{"movieId":"`+list.Items[0].ID+`"}`, map[string]string{"Idempotency-Key": key})
+	resp, out := b.do("POST", "/api/v1/playback/sessions", `{"itemId":"`+list.Items[0].ID+`","versionId":"`+list.Items[0].ID+`"}`, map[string]string{"Idempotency-Key": key})
 	if resp.StatusCode != 201 {
 		b.f.t.Fatalf("start = %d %s", resp.StatusCode, out)
 	}

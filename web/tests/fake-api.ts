@@ -71,8 +71,11 @@ export class FakeAPI {
     }
     if (call.path === "/api/v1/movies") return json(200, fixture("movies.json"));
     if (call.path === "/api/v1/playback/sessions") {
+      const b = call.body as { itemId?: unknown; versionId?: unknown } | undefined;
+      const keys = b && typeof b === "object" ? Object.keys(b).sort().join() : "";
+      if (keys !== "itemId,versionId" || typeof b!.itemId !== "string" || typeof b!.versionId !== "string") return error(400, "invalid_request");
       const id = `play-fixture-${++this.sessionCount}`;
-      return json(201, { ...fixture("playback.json"), id, contentUrl: `/api/v1/playback/sessions/${id}/content?grant=g-${id}` });
+      return json(201, { ...fixture("playback.json"), id, itemId: b!.itemId, versionId: b!.versionId, contentUrl: `/api/v1/playback/sessions/${id}/content?grant=g-${id}` });
     }
     if (call.path.endsWith("/heartbeat")) return route.fulfill({ status: 204 });
     if (call.path.endsWith("/content")) {

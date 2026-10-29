@@ -36,6 +36,7 @@ type server struct {
 	cfg        m1config.Config
 	handler    http.Handler
 	pb         *playback.Server
+	single     *playback.M1
 	root       *os.Root
 	db         *storage.DB // nil when storage failed to start
 	storageErr error
@@ -64,12 +65,12 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	grantKey := make([]byte, 32) // process-local: grants end with the process
 	rand.Read(grantKey)
 	v := cfg.Viewer
+	single := playback.Single(cfg.Movie(), cfg.RelativePath, func(p contracts.Principal, movieID string) bool {
+		return p.AccountID == v.AccountID && p.ProfileID == v.ProfileID && movieID == cfg.MovieID
+	})
 	pb, err := playback.New(root, playback.Options{
-		Source: playback.Source{Movie: cfg.Movie(), RelativePath: cfg.RelativePath}, GrantKey: grantKey,
+		Resolver: single, Movies: single.Movies, GrantKey: grantKey,
 		MaxSessions: cfg.MaxPlaybackSessions, Log: log,
-		Authorize: func(p contracts.Principal, movieID string) bool {
-			return p.AccountID == v.AccountID && p.ProfileID == v.ProfileID && movieID == cfg.MovieID
-		},
 	})
 	if err != nil {
 		root.Close()
@@ -83,7 +84,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	}
 	am.SetLogger(log)
 
-	s := &server{cfg: cfg, pb: pb, root: root, nightlyDone: make(chan struct{}), libraryDone: make(chan struct{}),
+	s := &server{cfg: cfg, pb: pb, single: single, root: root, nightlyDone: make(chan struct{}), libraryDone: make(chan struct{}),
 		stopLibrary: func() {}}
 	dbPath, backups = storagePaths(cfgPath, dbPath, backups)
 	snap := storage.SnapshotOptions{Dir: backups, AppVersion: version, ExtraFiles: []string{cfgPath}}
@@ -127,7 +128,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		if s.storageErr != nil {
 			return s.storageErr
 		}
-		return pb.Check()
+		return single.Check(root)
 	}
 	s.handler, err = app.New(cfg, am, pb.Handler(), web, ready, log)
 	if err != nil {
@@ -206,7 +207,7 @@ func cmdServe(args []string) error {
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.ListenAndServe() }()
-	if err := s.pb.Check(); err != nil {
+	if err := s.single.Check(s.root); err != nil {
 		log.Warn("not ready: the movie is missing or changed since init", "err", err)
 	}
 	log.Info("listening", "addr", s.cfg.ListenAddr, "origin", s.cfg.PublicOrigin, "version", version)

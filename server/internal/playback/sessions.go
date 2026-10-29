@@ -29,26 +29,26 @@ const (
 	sweepEvery       = time.Second // how soon an idle session's stalled delivery is cut off
 )
 
-// Options configures a Server. Authorize is mandatory: it is asked whether a
-// principal may list, start or watch a movie ID, on every such request.
+// Options configures a Server. Resolver is mandatory: it is asked, on every
+// start and content request, whether a principal may play an item and version.
 type Options struct {
-	Source      Source
+	Resolver    Resolver
+	Movies      func(contracts.Principal) []contracts.Movie // GET /api/v1/movies; nil lists none
 	GrantKey    []byte
 	MaxSessions int
-	Authorize   func(contracts.Principal, string) bool
 	Log         *slog.Logger // session events and source errors; nil discards
 }
 
 type session struct {
-	id, key           string // key: auth session + idempotency key
-	owner             contracts.Principal
-	movieID, revision string
-	info              fs.FileInfo // file identity when the session started
-	grant             string
-	deadline          time.Time // idle expiry
-	lastSeq           int64
-	ended             time.Time // zero while active; then a tombstone
-	deliveries        map[*delivery]struct{}
+	id, key    string // key: auth session + idempotency key
+	owner      contracts.Principal
+	src        Source      // what this session plays
+	info       fs.FileInfo // file identity when the session started
+	grant      string
+	deadline   time.Time // idle expiry
+	lastSeq    int64
+	ended      time.Time // zero while active; then a tombstone
+	deliveries map[*delivery]struct{}
 }
 
 // delivery is one in-flight content response that revocation can cut off.
@@ -60,15 +60,15 @@ type delivery struct {
 // writeDeadliner is the part of http.ResponseController a delivery uses.
 type writeDeadliner interface{ SetWriteDeadline(time.Time) error }
 
-// Server holds the playback sessions for one source.
+// Server holds the playback sessions.
 type Server struct {
-	root      *os.Root
-	src       Source
-	grantKey  []byte
-	max       int
-	authorize func(contracts.Principal, string) bool
-	now       func() time.Time
-	log       *slog.Logger
+	root       *os.Root
+	resolver   Resolver
+	listMovies func(contracts.Principal) []contracts.Movie
+	grantKey   []byte
+	max        int
+	now        func() time.Time
+	log        *slog.Logger
 
 	inflight atomic.Int64 // content handlers still running, revoked or not
 	written  atomic.Int64 // content bytes written, for tests
@@ -83,27 +83,24 @@ type Server struct {
 	closeOnce sync.Once
 }
 
-// New returns a Server for opts.Source inside root. The caller owns root and
+// New returns a Server for opts.Resolver inside root. The caller owns root and
 // closes it after Close. A missing or changed source is reported by Check and
 // by requests, not by New.
 func New(root *os.Root, opts Options) (*Server, error) {
 	switch {
 	case root == nil:
 		return nil, errors.New("playback: root is required")
-	case !validRelative(opts.Source.RelativePath):
-		return nil, errors.New("playback: source path must be relative and inside the root")
-	case opts.Source.Movie.ID == "" || opts.Source.Movie.SourceRevision == "":
-		return nil, errors.New("playback: source movie ID and revision are required")
 	case len(opts.GrantKey) < minGrantKeyBytes:
 		return nil, errors.New("playback: grant key must be at least 32 bytes")
 	case opts.MaxSessions < 1:
 		return nil, errors.New("playback: MaxSessions must be at least 1")
-	case opts.Authorize == nil:
-		return nil, errors.New("playback: Authorize is required")
+	// m1config validates the source at load; Check and statSource re-check at runtime.
+	case opts.Resolver == nil:
+		return nil, errors.New("playback: Resolver is required")
 	}
 	s := &Server{
-		root: root, src: opts.Source, grantKey: append([]byte(nil), opts.GrantKey...), max: opts.MaxSessions,
-		authorize: opts.Authorize, now: time.Now, log: cmp.Or(opts.Log, slog.New(slog.DiscardHandler)),
+		root: root, resolver: opts.Resolver, listMovies: opts.Movies, grantKey: append([]byte(nil), opts.GrantKey...), max: opts.MaxSessions,
+		now: time.Now, log: cmp.Or(opts.Log, slog.New(slog.DiscardHandler)),
 		sessions: map[string]*session{}, byKey: map[string]*session{}, done: make(chan struct{}),
 	}
 	go s.sweeper()
@@ -130,7 +127,7 @@ func (s *Server) sweeper() {
 func (s *Server) sign(sess *session) string {
 	m := hmac.New(sha256.New, s.grantKey)
 	m.Write([]byte(strings.Join([]string{"lisimflix-grant-v1", sess.id, sess.owner.AuthSessionID,
-		sess.owner.AccountID, sess.owner.ProfileID, sess.movieID, sess.revision}, "\x00")))
+		sess.owner.AccountID, sess.owner.ProfileID, sess.src.ItemID, sess.src.VersionID, sess.src.SourceRevision}, "\x00")))
 	return base64.RawURLEncoding.EncodeToString(m.Sum(nil))
 }
 
@@ -140,7 +137,7 @@ func (sess *session) ownedBy(p contracts.Principal) bool {
 
 func (sess *session) public() contracts.PlaybackSession {
 	return contracts.PlaybackSession{
-		ID: sess.id, MovieID: sess.movieID, SourceRevision: sess.revision,
+		ID: sess.id, ItemID: sess.src.ItemID, VersionID: sess.src.VersionID, SourceRevision: sess.src.SourceRevision,
 		ContentURL: "/api/v1/playback/sessions/" + sess.id + "/content?grant=" + sess.grant,
 		Route:      "direct", HeartbeatIntervalSeconds: heartbeatSeconds, IdleTimeoutSeconds: int(idleTimeout / time.Second),
 	}

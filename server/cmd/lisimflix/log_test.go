@@ -38,6 +38,22 @@ func (b *syncBuffer) events() []map[string]any {
 	return out
 }
 
+// tamperedGrant returns a content URL whose grant differs from the real one.
+// It changes the grant's first character rather than rewriting the last two:
+// that rewrite was a no-op whenever the grant already ended in the replacement,
+// which failed this test and the playback one about once in a thousand runs.
+func tamperedGrant(t *testing.T, contentURL string) string {
+	t.Helper()
+	base, grant, ok := strings.Cut(contentURL, "?grant=")
+	if !ok || grant == "" {
+		t.Fatalf("content URL has no grant: %q", contentURL)
+	}
+	if grant[0] == 'A' {
+		return base + "?grant=B" + grant[1:]
+	}
+	return base + "?grant=A" + grant[1:]
+}
+
 // #37: one sign-in → play → logout run leaves a server-side story with
 // correlation IDs, and none of its secrets.
 func TestLogsTellTheStoryWithoutSecrets(t *testing.T) {
@@ -52,7 +68,7 @@ func TestLogsTellTheStoryWithoutSecrets(t *testing.T) {
 	if resp, _ := b.do("GET", ps.ContentURL, "", map[string]string{"Range": "bytes=0-99"}); resp.StatusCode != 206 {
 		t.Fatalf("content = %d", resp.StatusCode)
 	}
-	b.do("GET", ps.ContentURL[:len(ps.ContentURL)-2]+"AA", "", nil) // tampered grant: 404
+	b.do("GET", tamperedGrant(t, ps.ContentURL), "", nil) // tampered grant: 404
 	cookie := ""
 	for _, c := range b.c.Jar.Cookies(mustParse(f.ts.URL).URL) {
 		if c.Name == "lisimflix_session" {

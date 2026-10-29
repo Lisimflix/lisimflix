@@ -361,3 +361,88 @@ func TestUnplacedFilesArePlacedAgain(t *testing.T) {
 		t.Fatalf("items %v, unplaced %v", got, unplaced)
 	}
 }
+
+// fakeFiles is a Discover that reports n made-up files, enough to fill
+// batches without writing them to disk.
+func fakeFiles(n int) func(context.Context, *os.Root, func(File) error) error {
+	return func(_ context.Context, _ *os.Root, found func(File) error) error {
+		for i := range n {
+			if err := found(File{Path: "F " + itoa(i) + " (2001)/F (2001).mkv", Rev: Revision{Size: 10, ModTime: 1}}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
+func scanRunRow(t *testing.T, s *Store, id string) (status, reason string, seen int) {
+	t.Helper()
+	var r *string
+	if err := s.db.QueryRow(`SELECT status, reason, seen FROM library_scan_runs WHERE id = ?`, id).Scan(&status, &r, &seen); err != nil {
+		t.Fatal(err)
+	}
+	if r != nil {
+		reason = *r
+	}
+	return
+}
+
+// #108 points 1 and 3: a database error while the walk is running fails the
+// run as a database error (not enumeration_failed), returns the error, and
+// counts nothing from the rolled-back batch.
+func TestDatabaseErrorDuringWalkFailsTheRun(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "Movies", "movies", []string{"Movies"})
+	os.MkdirAll(filepath.Join(m.dir, "Movies"), 0o755)
+	root := lib.Roots[0].ID
+	sc := m.scanner(s)
+	sc.Discover = fakeFiles(batchSize + 1) // the first flush happens inside the walk
+	if _, err := s.db.Exec(`CREATE TRIGGER boom BEFORE INSERT ON library_files BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	run, err := sc.ScanRoot(ctx, root)
+	if err == nil {
+		t.Fatalf("no error returned; run %+v", run)
+	}
+	if run.Status != RunFailed || run.Reason != ReasonDatabaseError || run.Seen != 0 || run.Added != 0 {
+		t.Fatalf("run %+v", run)
+	}
+	if status, reason, seen := scanRunRow(t, s, run.ID); status != RunFailed || reason != ReasonDatabaseError || seen != 0 {
+		t.Fatalf("stored run %s %s seen=%d", status, reason, seen)
+	}
+	if st, why := rootState(t, s, root); st != RootDegraded || why != ReasonDatabaseError {
+		t.Fatalf("root %s %s", st, why)
+	}
+}
+
+// #108 point 2: a database error after the walk (here, marking files
+// missing) ends the run as failed instead of leaving it running and the
+// root scanning until the next restart.
+func TestDatabaseErrorAfterWalkFailsTheRun(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("Movies/A (2001)/A (2001).mkv", 10)
+	m.write("Movies/B (2002)/B (2002).mkv", 10)
+	ctx := context.Background()
+	lib, _ := s.CreateLibrary(ctx, "Movies", "movies", []string{"Movies"})
+	root := lib.Roots[0].ID
+	sc := m.scanner(s)
+	scan(t, sc, root)
+	os.Remove(filepath.Join(m.dir, "Movies/B (2002)/B (2002).mkv"))
+	if _, err := s.db.Exec(`CREATE TRIGGER boom BEFORE UPDATE OF state ON library_files WHEN NEW.state = 'missing'
+		BEGIN SELECT RAISE(ABORT, 'boom'); END`); err != nil {
+		t.Fatal(err)
+	}
+	run, err := sc.ScanRoot(ctx, root)
+	if err == nil || run.Status != RunFailed || run.Reason != ReasonDatabaseError {
+		t.Fatalf("run %+v, err %v", run, err)
+	}
+	if status, _, _ := scanRunRow(t, s, run.ID); status != RunFailed {
+		t.Fatalf("stored run %s", status)
+	}
+	if st, _ := rootState(t, s, root); st != RootDegraded {
+		t.Fatalf("root %s", st)
+	}
+}
