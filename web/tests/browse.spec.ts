@@ -48,16 +48,21 @@ test.describe("browse shell", () => {
   test("unknownPathShowsNotFound", async ({ page }) => {
     await browse(page, "/nope");
     await expect(page.getByRole("heading", { name: "Page not found" })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Home" }).first()).toBeVisible();
+    await expect(page.getByRole("main").getByRole("link", { name: "Home" })).toBeVisible();
   });
 
   test("fontsAreSameOrigin", async ({ page }) => {
     const origins = new Set<string>();
-    page.on("request", (r) => origins.add(new URL(r.url()).origin));
+    const fonts: string[] = [];
+    page.on("request", (r) => {
+      origins.add(new URL(r.url()).origin);
+      if (r.resourceType() === "font") fonts.push(r.url());
+    });
     await browse(page);
     await expect(nav(page)).toBeVisible();
     await page.evaluate(() => document.fonts.ready);
-    expect([...origins]).toEqual(["http://127.0.0.1:5173"]);
+    expect(fonts.length).toBeGreaterThan(0);
+    expect([...origins]).toEqual([new URL(page.url()).origin]);
   });
 
   test("signOutClearsCachedRows", async ({ page }) => {

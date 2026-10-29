@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
 import { FakeAPI, PASSWORD } from "./fake-api";
 
@@ -72,7 +73,8 @@ test.describe("library page", () => {
     await open(page, MOVIES, (api) => api.generate(5000));
     await expect(page.getByText("5000 titles")).toBeVisible();
     let max = 0;
-    const sample = async () => { max = Math.max(max, await cards(page).count()); };
+    // every rendered cell: real cards and placeholders
+    const sample = async () => { max = Math.max(max, await page.locator(".vgrid .cell").count()); };
     await expect(cards(page).first()).toBeVisible();
     await expect(async () => {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
@@ -128,15 +130,39 @@ test.describe("library page", () => {
   });
 
   test("azJumpRequestsFrom", async ({ page }) => {
-    const api = await open(page);
+    const api = await open(page, MOVIES, (a) => {
+      // the `from` page starts at a different item, so a grid that appended instead of restarting would show the old items first
+      a.overrides.push(async (route, call) => {
+        if (call.path !== "/api/v1/items" || !call.query?.includes("from=M")) return false;
+        const base = JSON.parse(readFileSync(new URL("../../testdata/contracts/catalogue/items-movies.json", import.meta.url), "utf8"));
+        const item = { ...base.items[0], id: "mov-m-first", title: "Mmm First Movie", sortTitle: "mmm first movie" };
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [item], nextCursor: null, total: null }) });
+        return true;
+      });
+    });
     await expect(cards(page).first()).toBeVisible();
     await page.getByRole("navigation", { name: "A–Z" }).getByRole("button", { name: "M" }).click();
     await expect.poll(() => lastQuery(api).get("from")).toBe("M");
     expect(lastQuery(api).get("sort")).toBe("title");
-    await expect(page.getByRole("link", { name: /^Synthetic Test Movie/ })).toBeVisible();
+    await expect(cards(page).first()).toHaveAccessibleName(/^Mmm First Movie/);
+    await expect(cards(page)).toHaveCount(1);
     await page.getByRole("button", { name: "Back to top" }).click();
     await expect.poll(() => lastQuery(api).get("from")).toBeNull();
     await expect(page.getByRole("button", { name: "Back to top" })).toHaveCount(0);
+  });
+
+  test("unwatchedChipHidesOnItemsInvalidRequest", async ({ page }) => {
+    const api = await open(page, `${MOVIES}?watched=false`, (a) => {
+      a.overrides.push(async (route, call) => {
+        if (call.path !== "/api/v1/items" || !call.query?.includes("watched=false")) return false;
+        await route.fulfill({ status: 400, contentType: "application/json", body: JSON.stringify({ code: "invalid_request", message: "watched is not available yet", requestId: "req-fixture" }) });
+        return true;
+      });
+    });
+    await expect(page.getByRole("button", { name: "Genre", exact: false })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Unwatched" })).toHaveCount(0);
+    expect(api.calls.some((c) => c.path === "/api/v1/items" && c.query?.includes("watched=false"))).toBe(true);
+    await expect(cards(page).first()).toBeVisible(); // retried without the filter
   });
 
   test("azHiddenWhenNotTitleSort", async ({ page }) => {
