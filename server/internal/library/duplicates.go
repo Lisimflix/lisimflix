@@ -54,10 +54,12 @@ func (s *Store) groupItem(ctx context.Context, tx *sql.Tx, root Root, e naming.E
 // once files that weren't found have been marked missing. If the new folder
 // replaced a folder that is gone (a rename or move), it is folded into that
 // folder's item, keeping its identity; see renamed. Otherwise both folders
-// exist and the pair is flagged for the admin. All pairs are settled in one
-// transaction, an exception to the 500-file bound: pairs only come from
+// exist and the pair is flagged for the admin. A scoped scan (flag false)
+// only folds: the old folder may simply not have been rescanned yet, so a
+// live pair stays pending until a whole-root scan. All pairs are settled in
+// one transaction, an exception to the 500-file bound: pairs only come from
 // renames (#110).
-func (s *Store) settle(ctx context.Context, rootID string) error {
+func (s *Store) settle(ctx context.Context, rootID string, flag bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -83,12 +85,13 @@ func (s *Store) settle(ctx context.Context, rootID string) error {
 		if err != nil {
 			return err
 		}
-		if into != "" {
+		switch {
+		case into != "":
 			err = dropGoneFolders(ctx, tx, into)
 			if err == nil {
 				err = fold(ctx, tx, into, p.other)
 			}
-		} else {
+		case flag:
 			_, err = tx.ExecContext(ctx, `UPDATE library_duplicates SET state = 'flagged' WHERE id = ?`, p.id)
 		}
 		if err != nil {

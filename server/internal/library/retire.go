@@ -19,7 +19,7 @@ type Candidate struct {
 }
 
 const candidateCond = `f.state = 'missing' AND EXISTS (SELECT 1 FROM library_scan_runs r
-	WHERE r.root_id = f.root_id AND r.status = 'completed' AND r.started_at >= f.missing_since + ?)`
+	WHERE r.root_id = f.root_id AND r.status = 'completed' AND r.scope IS NULL AND r.started_at >= f.missing_since + ?)`
 
 // RetirementCandidates lists the root's files that meet the retirement rule,
 // for the admin preview. Nothing is retired automatically.

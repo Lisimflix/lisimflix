@@ -1,5 +1,6 @@
 // Command lisimflix is the M1 executable: init provisions the config, serve
-// runs the app, healthcheck probes readiness, backup-now takes a snapshot.
+// runs the app, healthcheck probes readiness, backup-now takes a snapshot,
+// library adds and lists libraries.
 package main
 
 import (
@@ -23,7 +24,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprintln(stderr, "usage: lisimflix init|serve|healthcheck|backup-now [flags]")
+		fmt.Fprintln(stderr, "usage: lisimflix init|serve|healthcheck|backup-now|library [flags]")
 		return 2
 	}
 	var err error
@@ -36,6 +37,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		err = cmdHealthcheck(args[1:])
 	case "backup-now":
 		err = cmdBackupNow(args[1:])
+	case "library":
+		err = cmdLibrary(args[1:], stdout)
 	default:
 		err = fmt.Errorf("unknown command %q", args[0])
 	}
