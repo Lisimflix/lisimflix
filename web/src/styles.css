@@ -49,3 +49,41 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
   }
   main { padding-bottom: 5rem; }
 }
+
+/* Library */
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.count { margin: 0 0 0.5rem; opacity: 0.7; }
+.banner { background: #2a2418; color: #ffd98a; padding: 0.5rem 0.75rem; border-radius: 0.5rem; }
+.filters { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 1rem; }
+.chip { background: #1a1b1f; color: inherit; border: 1px solid var(--thumb); border-radius: 999px; padding: 0.35rem 0.8rem; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.sort { margin-left: auto; }
+.sort select { font: inherit; padding: 0.35rem 0.5rem; background: #1a1b1f; color: inherit; border: 1px solid var(--thumb); border-radius: 0.5rem; }
+.menuchip { position: relative; }
+.listbox { position: absolute; z-index: 5; top: 100%; left: 0; margin: 0.25rem 0 0; padding: 0.25rem; list-style: none; min-width: 10rem; max-height: 16rem; overflow-y: auto; background: #1a1b1f; border: 1px solid var(--thumb); border-radius: 0.5rem; }
+.listbox li { padding: 0.35rem 0.6rem; border-radius: 0.35rem; cursor: pointer; }
+.listbox li[data-active="true"] { background: #ffffff1a; }
+.listbox li[aria-selected="true"] { color: var(--accent); }
+
+.vgrid { position: relative; }
+.vgrid-rows { position: absolute; left: 0; right: 0; display: grid; }
+.card { display: block; text-decoration: none; }
+.card .art { position: relative; display: block; aspect-ratio: var(--aspect, 2 / 3); background: #1a1b1f; border-radius: 0.5rem; overflow: hidden; }
+.card.wide .art { aspect-ratio: 16 / 9; }
+.card .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.card .noart { position: absolute; inset: 0; display: grid; place-items: center; opacity: 0.5; font-size: 0.85rem; }
+.card .cap { display: block; height: var(--caption, 52px); padding-top: 0.4rem; overflow: hidden; }
+.card .t { display: block; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card .s { display: block; font-size: 0.8rem; opacity: 0.6; }
+.card .badge { position: absolute; top: 0.4rem; left: 0.4rem; padding: 0.1rem 0.45rem; border-radius: 0.35rem; font-size: 0.72rem; background: #000000b3; }
+.card .badge.tick { left: auto; right: 0.4rem; color: var(--accent); }
+.card .badge.warn { color: #ffd98a; }
+.card .badge.off { top: auto; bottom: 0.6rem; color: #ff9a8a; }
+.card .bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: #00000099; }
+.card .bar span { display: block; height: 100%; background: var(--accent); }
+.card:hover .t, .card:focus-visible .t { color: var(--accent); }
+.card.ph .art { opacity: 0.4; }
+
+.azrail { position: fixed; right: 0.25rem; top: 50%; transform: translateY(-50%); z-index: 4; display: flex; flex-direction: column; }
+.azrail button { background: none; border: 0; color: inherit; font-size: 0.7rem; padding: 0.1rem 0.4rem; line-height: 1.2; opacity: 0.6; cursor: pointer; }
+.azrail button:hover, .azrail button[aria-current="true"] { opacity: 1; color: var(--accent); }

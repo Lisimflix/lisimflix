@@ -10,6 +10,8 @@ export type ItemSummary = ItemPage["items"][number];
 export type ItemDetail = components["schemas"]["ItemDetail"];
 export type LibraryFacets = components["schemas"]["LibraryFacets"];
 export type UserItemState = components["schemas"]["UserItemState"];
+export type Resume = components["schemas"]["Resume"];
+export type MediaVersion = components["schemas"]["MediaVersion"];
 export type ProgressEvent = components["schemas"]["ProgressEvent"];
 export type ProgressResult = components["schemas"]["ProgressResult"];
 // libraryId or parentId, plus paging, sort and filters (CTR-2 listItems).

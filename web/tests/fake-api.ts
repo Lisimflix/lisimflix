@@ -10,9 +10,20 @@ const catalogue = (name: string) =>
 
 export const PASSWORD = "fixture-only-password";
 
+// Item n (1-based) of the generated big library: "Generated 0300" is card #300.
+export function generatedItem(n: number) {
+  const base = catalogue("items-movies.json").items[0];
+  const id = `gen-${String(n).padStart(4, "0")}`;
+  return { ...base, id, title: `Generated ${String(n).padStart(4, "0")}`, sortTitle: `Generated ${String(n).padStart(4, "0")}`, primaryImageUrl: null, userState: null, available: true, matched: null };
+}
+
+// 1x1 transparent PNG for artwork requests.
+const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
+
 export interface Call {
   method: string;
   path: string;
+  query: string;
   csrf: string | undefined;
   key: string | undefined;
   body: unknown;
@@ -25,6 +36,11 @@ export class FakeAPI {
   signedIn = false;
   overrides: Override[] = [];
   private sessionCount = 0;
+  // items requests answered and not yet delivered (the test for overlapping page loads).
+  inFlight = 0;
+  maxInFlight = 0;
+  // generate(): a big library of generated items, 50 per page, total on the first page only.
+  private generated: { libraryId: string; total: number; delayMs: number } | null = null;
 
   // Replaced bodies (or bare statuses) by pathname; see set().
   private fixed = new Map<string, unknown>();
@@ -43,6 +59,10 @@ export class FakeAPI {
     this.fixed.set(path, body);
   }
 
+  generate(total: number, libraryId = "lib-synthetic-movies", delayMs = 0) {
+    this.generated = { libraryId, total, delayMs };
+  }
+
   of(method: string, suffix: string): Call[] {
     return this.calls.filter((c) => c.method === method && c.path.endsWith(suffix));
   }
@@ -53,6 +73,7 @@ export class FakeAPI {
     const call: Call = {
       method: req.method(),
       path: url.pathname,
+      query: url.search,
       csrf: req.headers()["x-csrf-token"],
       key: req.headers()["idempotency-key"],
       body: req.postData() ? JSON.parse(req.postData()!) : undefined,
@@ -94,7 +115,28 @@ export class FakeAPI {
       if (call.path === "/api/v1/continue-watching") return json(200, catalogue("continue-watching.json"));
       if (call.path === "/api/v1/next-up") return json(200, catalogue("next-up.json"));
       if (call.path.endsWith("/facets")) return json(200, catalogue("facets.json"));
-      if (call.path === "/api/v1/items") return json(200, catalogue(url.searchParams.has("parentId") ? "items-episodes.json" : "items-movies.json"));
+      if (call.path.endsWith("/images/primary")) return route.fulfill({ status: 200, contentType: "image/png", body: PIXEL });
+      if (call.path === "/api/v1/items") {
+        const q = url.searchParams;
+        const g = this.generated;
+        if (g && q.get("libraryId") === g.libraryId) {
+          this.maxInFlight = Math.max(this.maxInFlight, ++this.inFlight);
+          try {
+            await new Promise((r) => setTimeout(r, g.delayMs));
+            const cursor = q.get("cursor");
+            const start = cursor ? Number(cursor.slice(1)) : 0;
+            const count = Math.min(50, g.total - start);
+            const items = Array.from({ length: count }, (_, i) => generatedItem(start + i + 1));
+            return await json(200, { items, nextCursor: start + count < g.total ? `c${start + count}` : null, total: cursor ? null : g.total });
+          } finally {
+            this.inFlight--;
+          }
+        }
+        if (q.has("parentId")) return json(200, catalogue("items-episodes.json"));
+        // Later pages of the fixture listing are empty, with total null as the contract says.
+        if (q.has("cursor")) return json(200, { items: [], nextCursor: null, total: null });
+        return json(200, catalogue("items-movies.json"));
+      }
       const id = call.path.slice("/api/v1/items/".length);
       for (const f of ["item-movie", "item-show", "item-episode-shared-file"]) {
         const detail = catalogue(`${f}.json`);

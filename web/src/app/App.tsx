@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, type Client, type ItemDetail, type ItemPage, type Library } from "../api/client";
+import { Library as LibraryPage } from "../browse/Library";
 import { cached, clearCache } from "./cache";
 import { Link, useRoute, type Route } from "./router";
 
@@ -127,7 +128,7 @@ function Page({ client, libraries, route }: { client: Client; libraries: Library
     case "home":
       return <Home client={client} libraries={libraries} />;
     case "library":
-      return <h1>{libraries.find((l) => l.id === route.id)?.name ?? "Library"}</h1>;
+      return <LibraryRoute client={client} libraries={libraries} id={route.id} />;
     case "item":
       return <ItemStub client={client} id={route.id} />;
     case "play":
@@ -140,6 +141,12 @@ function Page({ client, libraries, route }: { client: Client; libraries: Library
         </>
       );
   }
+}
+
+function LibraryRoute({ client, libraries, id }: { client: Client; libraries: Library[]; id: string }) {
+  const library = libraries.find((l) => l.id === id);
+  // Keyed by library so switching tabs starts a fresh grid.
+  return library ? <LibraryPage key={id} client={client} library={library} /> : <h1>Library not found</h1>;
 }
 
 // Placeholder: Task 5 replaces it with the rows. It loads one page through the cache so sign-out has something to clear.

@@ -42,6 +42,11 @@ export function useRoute(): Route {
   return parseRoute(q < 0 ? url : url.slice(0, q), q < 0 ? "" : url.slice(q));
 }
 
+// The query string, for pages whose state lives in the URL (library filters and sort).
+export function useSearch(): string {
+  return useSyncExternalStore(subscribe, () => location.search);
+}
+
 // Each entry gets a random key, which the page cache (decision 12) uses to restore Back.
 export function navigate(path: string, opts: { replace?: boolean } = {}) {
   const state = { key: Math.random().toString(36).slice(2) };

@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit",
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
+    "test:unit": "node --test --experimental-strip-types tests/*.test.ts",
     "test:browser": "playwright test"
   },
   "dependencies": {
