@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { flushSync } from "react-dom";
-import { ApiError, newIdempotencyKey, type M1Client, type Movie, type PlaybackSession } from "../api/client";
+import { ApiError, type M1Client, type Movie, type PlaybackSession } from "../api/client";
+import { useStarter } from "./start";
 import { VideoPlayer } from "./VideoPlayer";
 
 type View =
@@ -16,10 +17,7 @@ function message(err: unknown): string {
 
 export function M1App({ client }: { client: M1Client }) {
   const [view, setView] = useState<View>({ name: "loading" });
-  // Each load/start takes a new generation; a late response from an older one is dropped.
-  const generation = useRef(0);
-  // Kept for a retry of the same start; replaced after any answer that settles it.
-  const startKey = useRef<string | null>(null);
+  const { generation, start } = useStarter(client);
   // The player's last stop request; logout waits for it so the stop isn't sent after the session ends.
   const stopping = useRef<Promise<unknown>>(Promise.resolve());
 
@@ -62,22 +60,11 @@ export function M1App({ client }: { client: M1Client }) {
   }
 
   async function onPlay(username: string, movie: Movie) {
-    const gen = ++generation.current;
-    startKey.current ??= newIdempotencyKey();
     setView({ name: "preparing", username, movie });
     try {
-      const session = await client.start(movie.id, movie.id, startKey.current);
-      if (gen !== generation.current) {
-        void client.stop(session.id).catch(() => undefined);
-        return;
-      }
-      startKey.current = null;
-      setView({ name: "playing", username, movie, session });
+      const session = await start(movie.id, movie.id);
+      if (session) setView({ name: "playing", username, movie, session });
     } catch (err) {
-      if (gen !== generation.current) return;
-      // Only an unanswered or server-side failure may repeat the same request.
-      const retrySame = err instanceof ApiError && (err.status === 0 || err.status >= 500);
-      if (!retrySame) startKey.current = null;
       if (err instanceof ApiError && err.status === 401) setView({ name: "login" });
       else setView({ name: "ready", username, movie, error: message(err) });
     }

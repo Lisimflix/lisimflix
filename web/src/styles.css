@@ -149,3 +149,7 @@ a.button, .upnext button { border-radius: 0.5rem; padding: 0.5rem 1rem; text-dec
 .banner button, .errorstate button, .unavailable button { margin-left: 0.5rem; border-radius: 0.5rem; padding: 0.35rem 0.9rem; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }
 .unavailable button:disabled { opacity: 0.5; cursor: not-allowed; margin-left: 0; }
 .empty progress { width: min(24rem, 100%); }
+
+.detail dialog { background: #1a1b1f; color: inherit; border: 1px solid var(--thumb); border-radius: 0.75rem; padding: 1.25rem; max-width: 26rem; }
+.detail dialog::backdrop { background: #000a; }
+.detail dialog button { margin-right: 0.5rem; border-radius: 0.5rem; padding: 0.5rem 1rem; border: 1px solid var(--thumb); background: #26272c; color: inherit; cursor: pointer; }

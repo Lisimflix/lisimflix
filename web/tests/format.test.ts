@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import type { Resume } from "../src/api/client.ts";
-import { formatBytes, formatClock, minutesLeft, resolutionName, versionLabel } from "../src/browse/format.ts";
+import type { MediaVersion, Resume, UserItemState } from "../src/api/client.ts";
+import { formatBytes, formatClock, minutesLeft, resolutionName, resumeChoice, versionLabel } from "../src/browse/format.ts";
 
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`../../testdata/contracts/catalogue/${name}`, import.meta.url), "utf8"));
@@ -42,4 +42,16 @@ test("resolutionName", () => {
   assert.equal(resolutionName(v(1280, 720)), "720p");
   assert.equal(resolutionName(v(720, 480)), "SD");
   assert.equal(resolutionName({ video: [] } as never), null);
+});
+
+test("resumeChoice", () => {
+  const [v1, v2] = fixture("item-movie.json").versions as MediaVersion[];
+  const stateAt = (positionMs: number, versionId: string, sourceRevision: string) =>
+    ({ resume: { positionMs, durationMs: 1, versionId, sourceRevision, updatedAt: "" } }) as UserItemState;
+  assert.deepEqual(resumeChoice(null, v1), { kind: "none" });
+  assert.deepEqual(resumeChoice({ resume: null } as UserItemState, v1), { kind: "none" });
+  assert.deepEqual(resumeChoice(stateAt(462000, v1.id, v1.sourceRevision), v1), { kind: "resume", positionMs: 462000 });
+  assert.deepEqual(resumeChoice(stateAt(462000, v2.id, v2.sourceRevision), v1), { kind: "confirm", positionMs: 462000 });
+  assert.deepEqual(resumeChoice(stateAt(462000, v1.id, "f".repeat(64)), v1), { kind: "confirm", positionMs: 462000 });
+  assert.deepEqual(resumeChoice(stateAt(v1.durationMs! + 1, v1.id, v1.sourceRevision), v1), { kind: "confirm", positionMs: v1.durationMs! + 1 });
 });

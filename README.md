@@ -7,6 +7,8 @@ replacement that anyone can run on their own Linux/Docker host.
 movie at its original quality, with no re-encoding, in Chrome and Firefox on Linux and macOS
 (Windows follows in a later milestone). The M1 server, web player and container are on `main`,
 and playback passes on all four targets ([results](docs/testing/m1-results.md), #19).
+The browse app (home, libraries, detail, play, resume and progress) is built and runs against
+fixtures until LIB-2c serves the catalogue; until then the web app falls back to M1.
 
 To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
 only: plain HTTP, one viewer and one movie.
@@ -22,7 +24,7 @@ only: plain HTTP, one viewer and one movie.
 | `docs/design/` | Approved visual references (UI-2 mockups and logo) |
 | `deploy/` | Container compose file and run guide |
 | `server/` | Go server |
-| `web/` | React + Vite web app |
+| `web/` | React + Vite web app (`web/src/{app,browse,ui,player}`) |
 | `testdata/` | Synthetic fixtures (no real media) |
 
 ## Checks

@@ -1,8 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { flushSync } from "react-dom";
 import { ApiError, type Client, type Library } from "../api/client";
 import { Detail } from "../browse/Detail";
 import { Home } from "../browse/Home";
 import { Library as LibraryPage } from "../browse/Library";
+import { PlayerPage } from "../player/PlayerPage";
 import { clearCache } from "./cache";
 import { Link, useRoute, type Route } from "./router";
 
@@ -16,6 +18,8 @@ const message = (err: unknown) => (err instanceof ApiError ? err.message : "Some
 
 export function App({ client }: { client: Client }) {
   const [view, setView] = useState<View>({ name: "loading" });
+  // The player's last stop request; logout waits for it so the stop isn't sent after the session ends.
+  const stopping = useRef<Promise<unknown>>(Promise.resolve());
 
   async function enter(signal?: AbortSignal) {
     try {
@@ -49,9 +53,11 @@ export function App({ client }: { client: Client }) {
   }
 
   async function onLogout() {
-    // Same order as M1App: leave the page (a player would stop here), then logout, then the new CSRF token.
-    setView({ name: "loading" });
+    // Same order as M1App: unmount now (a player stops here), then logout, then the new CSRF token.
+    flushSync(() => setView({ name: "loading" }));
     clearCache();
+    // Don't hang on Loading if the stop never answers; logout revokes playback anyway (#43).
+    await Promise.race([stopping.current, new Promise((r) => setTimeout(r, 2000))]);
     await client.logout().catch(() => undefined);
     await client.session().catch(() => undefined);
     setView({ name: "login" });
@@ -78,10 +84,10 @@ export function App({ client }: { client: Client }) {
       </main>
     );
   }
-  return <Shell client={client} libraries={view.libraries} onLogout={onLogout} />;
+  return <Shell client={client} libraries={view.libraries} onLogout={onLogout} onStop={(request) => { stopping.current = request; }} />;
 }
 
-function Shell({ client, libraries, onLogout }: { client: Client; libraries: Library[]; onLogout: () => void }) {
+function Shell({ client, libraries, onLogout, onStop }: { client: Client; libraries: Library[]; onLogout: () => void; onStop: (request: Promise<unknown>) => void }) {
   const route = useRoute();
   const [menu, setMenu] = useState(false);
   const tabs = [
@@ -119,13 +125,13 @@ function Shell({ client, libraries, onLogout }: { client: Client; libraries: Lib
         </div>
       </header>
       <main>
-        <Page client={client} libraries={libraries} route={route} />
+        <Page client={client} libraries={libraries} route={route} onStop={onStop} />
       </main>
     </>
   );
 }
 
-function Page({ client, libraries, route }: { client: Client; libraries: Library[]; route: Route }) {
+function Page({ client, libraries, route, onStop }: { client: Client; libraries: Library[]; route: Route; onStop: (request: Promise<unknown>) => void }) {
   switch (route.name) {
     case "home":
       return <Home client={client} libraries={libraries} />;
@@ -134,7 +140,7 @@ function Page({ client, libraries, route }: { client: Client; libraries: Library
     case "item":
       return <Detail key={route.id} client={client} id={route.id} />;
     case "play":
-      return <h1>Play</h1>; // Planned: UI-2 PlayerPage (Task 8).
+      return <PlayerPage key={`${route.itemId}/${route.versionId}`} client={client} itemId={route.itemId} versionId={route.versionId} startMs={route.startMs} onStop={onStop} />;
     default:
       return (
         <>

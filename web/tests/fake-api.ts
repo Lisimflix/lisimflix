@@ -166,6 +166,9 @@ export class FakeAPI {
       return json(201, { ...fixture("playback.json"), id, itemId: b!.itemId, versionId: b!.versionId, contentUrl: `/api/v1/playback/sessions/${id}/content?grant=g-${id}` });
     }
     if (call.path.endsWith("/heartbeat")) return route.fulfill({ status: 204 });
+    if (call.path.endsWith("/progress")) {
+      return json(200, { accepted: true, reason: null, state: { itemId: "x", revision: 1, resume: null, watched: null, playCount: 0, lastPlayedAt: null, hiddenFromContinueWatching: false } });
+    }
     if (call.path.endsWith("/content")) {
       if (!this.clip) return error(503, "source_unavailable");
       // Byte ranges as the real server sends them; browsers need them to seek.

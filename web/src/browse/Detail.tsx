@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, type Client, type ItemDetail, type MediaVersion } from "../api/client";
 import { ErrorState, SourceUnavailable, Skeleton } from "../ui/States";
+import { takeNotice, type Notice } from "../app/notice";
 import { Link, navigate } from "../app/router";
-import { codecName, resolutionName, versionLabel } from "./format";
+import { codecName, formatClock, resolutionName, resumeChoice, versionLabel } from "./format";
 import { languageName } from "./Library";
 import { Show } from "./Show";
 
@@ -31,6 +32,8 @@ const unique = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string
 
 export function Detail({ client, id }: { client: Client; id: string }) {
   const [detail, setDetail] = useState<ItemDetail | null>(null);
+  // From the player page we just left (File offline, changed file); read once.
+  const [notice] = useState(() => takeNotice(id));
   const [error, setError] = useState<ApiError | null>(null);
   const [tries, setTries] = useState(0);
   useEffect(() => {
@@ -42,18 +45,23 @@ export function Detail({ client, id }: { client: Client; id: string }) {
   }, [client, id, tries]);
   if (error) return <ErrorState error={error} thing="item" onRetry={() => setTries(tries + 1)} />;
   if (!detail) return <Skeleton kind="detail" />;
-  return <DetailView key={id} client={client} detail={detail} refetch={() => client.item(id).then(setDetail)} />;
+  return <DetailView key={id} client={client} detail={detail} notice={notice} refetch={() => client.item(id).then(setDetail)} />;
 }
 
-function DetailView({ client, detail, refetch }: { client: Client; detail: ItemDetail; refetch: () => Promise<void> }) {
-  const { item, versions } = detail;
-  const [versionId, setVersionId] = useState(defaultVersion(versions)?.id);
+function DetailView({ client, detail, notice, refetch }: { client: Client; detail: ItemDetail; notice: Notice | null; refetch: () => Promise<void> }) {
+  const { item } = detail;
+  // Start said the file is offline although the detail we loaded said otherwise: show it offline.
+  const versions = detail.versions.map((v) => (notice?.kind === "unavailable" && v.id === notice.versionId ? { ...v, available: false } : v));
+  const [versionId, setVersionId] = useState((notice && versions.find((v) => v.id === notice.versionId)) ? notice.versionId : defaultVersion(versions)?.id);
+  const confirm = useRef<HTMLDialogElement>(null);
   const [state, setState] = useState(item.userState);
   const [status, setStatus] = useState<string | null>(null);
   useEffect(() => setState(item.userState), [item]);
   const version = versions.find((v) => v.id === versionId);
   const playable = item.kind === "movie" || item.kind === "episode";
   const watched = state?.watched?.value === true;
+  const choice = version ? resumeChoice(state, version) : { kind: "none" as const };
+  const playHref = (t?: number) => `/play/${encodeURIComponent(item.id)}/${encodeURIComponent(version?.id ?? "")}${t === undefined ? "" : `?t=${t}`}`;
 
   function back() {
     // depth > 0: the previous entry is in-app. A deep link or reload has none, so go to the item's library.
@@ -103,15 +111,29 @@ function DetailView({ client, detail, refetch }: { client: Client; detail: ItemD
           )}
           {playable && (
             <div className="actions">
-              {version?.available && (
-                // Planned: UI-2 Task 8 (resume/play buttons replace this placeholder).
-                <button type="button" onClick={() => navigate(`/play/${encodeURIComponent(item.id)}/${encodeURIComponent(version.id)}`)}>Play</button>
+              {version?.available && choice.kind === "none" && <button type="button" onClick={() => navigate(playHref())}>Play</button>}
+              {version?.available && choice.kind !== "none" && (
+                <>
+                  <button type="button" onClick={() => (choice.kind === "resume" ? navigate(playHref(choice.positionMs)) : confirm.current?.showModal())}>
+                    Resume from {formatClock(choice.positionMs)}
+                  </button>
+                  <button type="button" onClick={() => navigate(playHref())}>Play from start</button>
+                </>
               )}
               <button type="button" aria-pressed={watched} onClick={toggleWatched}>Mark watched ✓</button>
             </div>
           )}
           {playable && version && !version.available && <SourceUnavailable kind={item.kind as "movie" | "episode"} />}
           {status && <p role="status">{status}</p>}
+          {notice && notice.kind !== "unavailable" && <p role="alert">{notice.message}</p>}
+          {choice.kind === "confirm" && (
+            // Escape closes a modal dialog and returns focus to the button that opened it.
+            <dialog ref={confirm} aria-label="Resume from another version">
+              <p>Your resume point is from another version. Resume at {formatClock(choice.positionMs)} anyway?</p>
+              <button type="button" onClick={() => navigate(playHref(choice.positionMs))}>Resume anyway</button>
+              <button type="button" onClick={() => navigate(playHref())}>Play from start</button>
+            </dialog>
+          )}
           {playable && versions.length === 0 && <p>No file available for this item</p>}
         </div>
       </div>

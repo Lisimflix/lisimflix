@@ -6,7 +6,7 @@ import { Card } from "../ui/Card";
 import { Chip } from "../ui/Chips";
 import { ErrorState, PartialBanner, Skeleton } from "../ui/States";
 import { Row } from "../ui/Row";
-import { codecName, resolutionName } from "./format";
+import { codecName, resolutionName, resumeChoice } from "./format";
 
 type Load = { status: "loading" } | { status: "ok"; items: ItemSummary[] } | { status: "missing" } | { status: "error"; error: ApiError };
 
@@ -61,6 +61,13 @@ function UpNext({ client, first }: { client: Client; first: ItemSummary }) {
   }, [client, first.id]);
   const resume = first.userState?.resume ?? null;
   const version = detail?.versions.find((v) => v.id === resume?.versionId) ?? detail?.versions[0];
+  // Only a plain resume starts here; another version, a stale revision or an offline file goes to the detail page's choice (decision 9).
+  function resumeHero() {
+    if (!version) return;
+    const choice = resumeChoice(first.userState, version);
+    if (!version.available || choice.kind === "confirm") return navigate(itemHref(first));
+    navigate(`/play/${encodeURIComponent(first.id)}/${encodeURIComponent(version.id)}${choice.kind === "resume" ? `?t=${choice.positionMs}` : ""}`);
+  }
   const chips = [
     first.year === null ? null : String(first.year),
     first.contentRating?.value,
@@ -76,8 +83,7 @@ function UpNext({ client, first }: { client: Client; first: ItemSummary }) {
       {sub && <p>{sub}</p>}
       {chips.length > 0 && <p className="meta">{chips.join(" · ")}</p>}
       <div className="actions">
-        {/* Planned: UI-2 (Task 8) wires real resume; until then it opens the play route at the resume point. */}
-        <button type="button" onClick={() => detail && version && navigate(`/play/${encodeURIComponent(first.id)}/${encodeURIComponent(version.id)}${resume ? `?t=${resume.positionMs}` : ""}`)} disabled={!detail}>
+        <button type="button" onClick={resumeHero} disabled={!detail}>
           Resume
         </button>
         <Link href={itemHref(first)} className="button">Details</Link>

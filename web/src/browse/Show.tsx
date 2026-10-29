@@ -44,7 +44,8 @@ export function Show({ client, show }: { client: Client; show: ItemSummary }) {
     try {
       const { versions } = await client.item(id);
       const v = versions.find((x) => x.available) ?? versions[0];
-      if (v) navigate(`/play/${encodeURIComponent(id)}/${encodeURIComponent(v.id)}`);
+      // An offline file gets the detail page's File offline state, never a session.
+      if (v) navigate(v.available ? `/play/${encodeURIComponent(id)}/${encodeURIComponent(v.id)}` : `/items/${encodeURIComponent(id)}`);
       else setStatus("No file available for this item");
     } catch (e) {
       setStatus(e instanceof ApiError ? e.message : "Something went wrong.");

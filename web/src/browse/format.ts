@@ -1,4 +1,4 @@
-import type { MediaVersion, Resume } from "../api/client";
+import type { MediaVersion, Resume, UserItemState } from "../api/client";
 
 // Minutes remaining, rounded up; null when there's no resume point or no known duration (shared-file episodes).
 export function minutesLeft(resume: Resume | null, durationMs: number | null): number | null {
@@ -49,4 +49,14 @@ export function versionLabel(v: MediaVersion): string {
     v.sizeBytes === null ? null : formatBytes(v.sizeBytes),
   ].filter((p): p is string => p !== null);
   return parts.join(" · ") + (v.fileName ? ` (${v.fileName})` : "");
+}
+
+// Decision 9: a resume point is reused silently only on the same version and source revision, and inside the file.
+export type ResumeChoice = { kind: "none" } | { kind: "resume"; positionMs: number } | { kind: "confirm"; positionMs: number };
+
+export function resumeChoice(state: UserItemState | null, version: MediaVersion): ResumeChoice {
+  const r = state?.resume;
+  if (!r) return { kind: "none" };
+  const same = r.versionId === version.id && r.sourceRevision === version.sourceRevision && r.positionMs < (version.durationMs ?? Infinity);
+  return { kind: same ? "resume" : "confirm", positionMs: r.positionMs };
 }
