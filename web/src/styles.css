@@ -130,3 +130,22 @@ a.button, .upnext button { border-radius: 0.5rem; padding: 0.5rem 1rem; text-dec
 .episodes .bar { width: 6rem; height: 4px; background: #00000099; }
 .episodes .bar span { display: block; height: 100%; background: var(--accent); }
 .episodes button { border-radius: 0.5rem; padding: 0.35rem 0.8rem; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }
+
+/* States (§5.7) */
+.skeleton { opacity: 0.6; }
+.skeleton .art, .skeleton .poster, .skeleton .line { background: #1a1b1f; }
+.grid-skel { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; }
+.grid-skel .art { aspect-ratio: 1 / 1.5; }
+.row-skel { display: flex; gap: 0.75rem; overflow: hidden; }
+.row-skel .card { flex: 0 0 9.5rem; }
+.detail-skel { display: flex; gap: 1.5rem; }
+.detail-skel .poster { display: block; width: 12rem; aspect-ratio: 2 / 3; border-radius: 0.5rem; }
+.detail-skel .line { display: block; height: 1rem; width: 14rem; margin: 0.75rem 0; border-radius: 0.25rem; }
+.detail-skel .line.wide { width: 22rem; height: 2rem; }
+@media (prefers-reduced-motion: no-preference) { .skeleton { animation: pulse 1.4s ease-in-out infinite; } }
+@keyframes pulse { 50% { opacity: 0.35; } }
+.empty, .errorstate, .unavailable { padding: 1.5rem 0; }
+.errorstate .diag { opacity: 0.7; font-size: 0.85rem; }
+.banner button, .errorstate button, .unavailable button { margin-left: 0.5rem; border-radius: 0.5rem; padding: 0.35rem 0.9rem; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }
+.unavailable button:disabled { opacity: 0.5; cursor: not-allowed; margin-left: 0; }
+.empty progress { width: min(24rem, 100%); }

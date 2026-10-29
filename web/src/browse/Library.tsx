@@ -4,6 +4,7 @@ import { cached, saveView, view } from "../app/cache";
 import { navigate, useSearch } from "../app/router";
 import { Card } from "../ui/Card";
 import { Chip, MenuChip, type Option } from "../ui/Chips";
+import { Empty, ErrorState, OfflineBanner, OfflineLibrary, PartialBanner, Skeleton } from "../ui/States";
 import { VirtualGrid } from "../ui/VirtualGrid";
 
 const PAGE = 50;
@@ -41,7 +42,7 @@ export interface GridState {
   total: number | null;
   hasMore: boolean;
   loading: boolean;
-  error: string | null;
+  error: ApiError | null;
 }
 const fresh = (key: string): GridState => ({ key, items: [], cursor: null, total: null, hasMore: true, loading: false, error: null });
 
@@ -77,7 +78,12 @@ export function Library({ client, library }: { client: Client; library: LibraryI
   const entry: string | undefined = history.state?.key;
   const saved = view<GridView>(entry, "grid");
   const [state, setState] = useState<GridState>(() => (saved?.state?.key === key ? saved.state : fresh(key)));
-  const s = state.key === key ? state : saved?.state?.key === key ? saved.state : fresh(key);
+  const cur = state.key === key ? state : saved?.state?.key === key ? saved.state : fresh(key);
+  // A refetch for a new query that can't connect keeps the last good page on screen, under the offline banner.
+  const lastGood = useRef<GridState | null>(null);
+  if (cur.items.length > 0) lastGood.current = cur;
+  const offline = cur.error?.status === 0;
+  const s = cur.items.length === 0 && offline && lastGood.current ? { ...lastGood.current, error: cur.error } : cur;
   const live = useRef({ key, busy: false });
   live.current.key = key;
 
@@ -92,7 +98,7 @@ export function Library({ client, library }: { client: Client; library: LibraryI
   const entryRef = useRef(entry);
   entryRef.current = entry;
   useEffect(() => {
-    if (state.key === key && state.items.length > 0) saveView<GridView>(entry, "grid", { state: { ...state, loading: false } });
+    if (state.key === key && state.items.length > 0) saveView<GridView>(entry, "grid", { state: { ...state, loading: false, error: null } });
   }, [state, key, entry]);
   useEffect(() => {
     // After a push the page shrinks and fires a scroll that belongs to the next entry; only record our own.
@@ -127,8 +133,8 @@ export function Library({ client, library }: { client: Client; library: LibraryI
   }, [key, entry]);
 
   function loadMore() {
-    if (live.current.busy || s.loading || !s.hasMore || s.error) return;
-    const base = s;
+    if (live.current.busy || cur.loading || !cur.hasMore || cur.error) return;
+    const base = cur;
     live.current.busy = true;
     setState({ ...base, loading: true });
     client
@@ -152,7 +158,7 @@ export function Library({ client, library }: { client: Client; library: LibraryI
             setNoWatched(true);
             return;
           }
-          setState({ ...base, loading: false, error: err instanceof ApiError ? err.message : "Something went wrong." });
+          setState({ ...base, loading: false, error: err instanceof ApiError ? err : new ApiError(0, "network_error", "Something went wrong.") });
         },
       )
       .finally(() => {
@@ -183,7 +189,8 @@ export function Library({ client, library }: { client: Client; library: LibraryI
     <>
       <h1>{library.name}</h1>
       {s.total !== null && <p className="count">{s.total === 1 ? "1 title" : `${s.total} titles`}</p>}
-      {library.availability === "partial" && <p role="status" className="banner">Some titles are offline</p>}
+      {library.availability === "partial" && <PartialBanner />}
+      {offline && s.items.length > 0 && <OfflineBanner onRetry={() => setState({ ...cur, error: null })} />}
       <div className="filters" role="group" aria-label="Filters">
         <Chip label="All" pressed={!filtered} onClick={() => setParams({ genre: null, yearFrom: null, yearTo: null, resolution: null, hdr: null, audioLanguage: null, watched: null })} />
         {!noWatched && <Chip label="Unwatched" pressed={query.watched === false} onClick={() => setParams({ watched: query.watched === false ? null : "false" })} />}
@@ -208,10 +215,10 @@ export function Library({ client, library }: { client: Client; library: LibraryI
         </label>
         {query.from && <button type="button" className="chip" onClick={() => setParams({ from: null })}>Back to top</button>}
       </div>
-      {s.error && (
-        <p role="alert">
-          {s.error} <button type="button" onClick={() => setState({ ...s, error: null })}>Retry</button>
-        </p>
+      {s.error && !(offline && s.items.length > 0) && <ErrorState error={s.error} thing="library" onRetry={() => setState({ ...cur, error: null })} />}
+      {s.items.length === 0 && !s.error && (s.hasMore || s.loading) && <Skeleton kind="grid" />}
+      {s.items.length === 0 && !s.error && !s.hasMore && !s.loading && (
+        library.availability === "offline" ? <OfflineLibrary /> : filtered || query.from ? <p>No titles match these filters.</p> : <Empty library={library} client={client} />
       )}
       <div onFocus={(e) => {
         const idx = (e.target as HTMLElement).closest<HTMLElement>("[data-index]")?.dataset.index;
@@ -221,8 +228,8 @@ export function Library({ client, library }: { client: Client; library: LibraryI
       <VirtualGrid
         items={s.items}
         total={s.total}
-        hasMore={s.hasMore && !s.error}
-        loading={s.loading}
+        hasMore={cur.hasMore && !cur.error}
+        loading={cur.loading}
         loadMore={loadMore}
         renderCard={(item) => <Card item={item} href={`/items/${encodeURIComponent(item.id)}`} size="poster" />}
       />

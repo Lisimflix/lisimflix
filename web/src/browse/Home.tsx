@@ -4,10 +4,11 @@ import { cached } from "../app/cache";
 import { Link, navigate } from "../app/router";
 import { Card } from "../ui/Card";
 import { Chip } from "../ui/Chips";
+import { ErrorState, PartialBanner, Skeleton } from "../ui/States";
 import { Row } from "../ui/Row";
 import { codecName, resolutionName } from "./format";
 
-type Load = { status: "loading" } | { status: "ok"; items: ItemSummary[] } | { status: "missing" } | { status: "error" };
+type Load = { status: "loading" } | { status: "ok"; items: ItemSummary[] } | { status: "missing" } | { status: "error"; error: ApiError };
 
 // One home row's data, through the cache so sign-out can clear it. A 404 not_found means the operation isn't live yet.
 function useRow(key: string, load: () => Promise<ItemPage>): [Load, () => void] {
@@ -18,7 +19,7 @@ function useRow(key: string, load: () => Promise<ItemPage>): [Load, () => void] 
     setState({ status: "loading" });
     cached(key, load).then(
       (p) => live && setState({ status: "ok", items: p.items }),
-      (e) => live && setState(e instanceof ApiError && e.status === 404 && e.code === "not_found" ? { status: "missing" } : { status: "error" }),
+      (e) => live && setState(e instanceof ApiError && e.status === 404 && e.code === "not_found" ? { status: "missing" } : { status: "error", error: e instanceof ApiError ? e : new ApiError(0, "network_error", "Something went wrong.") }),
     );
     return () => { live = false; };
   }, [key, tries]);
@@ -30,13 +31,12 @@ const itemHref = (i: ItemSummary) => `/items/${encodeURIComponent(i.id)}`;
 
 function HomeRow({ title, state, retry, seeAllHref, unwatched, mixed }: { title: string; state: Load; retry: () => void; seeAllHref?: string; unwatched: boolean; mixed: boolean }) {
   if (state.status === "missing") return null;
-  if (state.status === "loading") return <section className="row" aria-label={title}><h2>{title}</h2><p>Loading…</p></section>;
+  if (state.status === "loading") return <section className="row" aria-label={title}><h2>{title}</h2><Skeleton kind="row" /></section>;
   if (state.status === "error") {
     return (
       <section className="row" aria-label={title}>
         <h2>{title}</h2>
-        <p role="alert">Couldn't load this row.</p>
-        <button type="button" onClick={retry}>Try again</button>
+        <ErrorState error={state.error} thing="row" onRetry={retry} />
       </section>
     );
   }
@@ -108,6 +108,7 @@ export function Home({ client, libraries }: { client: Client; libraries: Library
         ))}
         <Chip label="Unwatched" pressed={unwatched} onClick={() => setUnwatched(!unwatched)} />
       </div>
+      {libraries.some((l) => l.availability === "partial") && <PartialBanner />}
       {type === null && first && <UpNext client={client} first={first} />}
       {type === null && <HomeRow title="Continue Watching" state={cw} retry={retryCw} unwatched={unwatched} mixed />}
       {type === null && <HomeRow title="Next Up" state={nu} retry={retryNu} unwatched={unwatched} mixed />}

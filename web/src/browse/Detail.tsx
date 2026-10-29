@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, type Client, type ItemDetail, type MediaVersion } from "../api/client";
+import { ErrorState, SourceUnavailable, Skeleton } from "../ui/States";
 import { Link, navigate } from "../app/router";
 import { codecName, resolutionName, versionLabel } from "./format";
 import { languageName } from "./Library";
@@ -30,16 +31,17 @@ const unique = (xs: (string | null)[]) => [...new Set(xs.filter((x): x is string
 
 export function Detail({ client, id }: { client: Client; id: string }) {
   const [detail, setDetail] = useState<ItemDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ApiError | null>(null);
+  const [tries, setTries] = useState(0);
   useEffect(() => {
     setDetail(null);
     setError(null);
     const abort = new AbortController();
-    client.item(id, abort.signal).then(setDetail, (e) => !abort.signal.aborted && setError(message(e)));
+    client.item(id, abort.signal).then(setDetail, (e) => !abort.signal.aborted && setError(e instanceof ApiError ? e : new ApiError(0, "network_error", "Something went wrong.")));
     return () => abort.abort();
-  }, [client, id]);
-  if (error) return <p role="alert">{error}</p>;
-  if (!detail) return <p aria-busy="true">Loading…</p>;
+  }, [client, id, tries]);
+  if (error) return <ErrorState error={error} thing="item" onRetry={() => setTries(tries + 1)} />;
+  if (!detail) return <Skeleton kind="detail" />;
   return <DetailView key={id} client={client} detail={detail} refetch={() => client.item(id).then(setDetail)} />;
 }
 
@@ -101,13 +103,14 @@ function DetailView({ client, detail, refetch }: { client: Client; detail: ItemD
           )}
           {playable && (
             <div className="actions">
-              {version && (
+              {version?.available && (
                 // Planned: UI-2 Task 8 (resume/play buttons replace this placeholder).
                 <button type="button" onClick={() => navigate(`/play/${encodeURIComponent(item.id)}/${encodeURIComponent(version.id)}`)}>Play</button>
               )}
               <button type="button" aria-pressed={watched} onClick={toggleWatched}>Mark watched ✓</button>
             </div>
           )}
+          {playable && version && !version.available && <SourceUnavailable kind={item.kind as "movie" | "episode"} />}
           {status && <p role="status">{status}</p>}
           {playable && versions.length === 0 && <p>No file available for this item</p>}
         </div>

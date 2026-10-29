@@ -48,7 +48,8 @@ test.describe("home", () => {
     await page.setViewportSize({ width: 1000, height: 400 });
     await open(page, (api) => api.set("/api/v1/continue-watching", many(30)));
     const s = strip(page);
-    await expect(page.getByText("Loading…")).toHaveCount(0); // layout settled before measuring
+    await expect(s).toBeVisible(); // sign-in done, rows mounted; skeletons gone means layout settled before measuring
+    await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
     await page.evaluate(() => document.fonts.ready);
     await s.scrollIntoViewIfNeeded();
     const box = (await s.boundingBox())!;
