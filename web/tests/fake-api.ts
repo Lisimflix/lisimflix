@@ -5,6 +5,9 @@ import type { Page, Route } from "@playwright/test";
 const fixture = (name: string) =>
   JSON.parse(readFileSync(new URL(`../../testdata/contracts/m1/${name}`, import.meta.url), "utf8"));
 
+const catalogue = (name: string) =>
+  JSON.parse(readFileSync(new URL(`../../testdata/contracts/catalogue/${name}`, import.meta.url), "utf8"));
+
 export const PASSWORD = "fixture-only-password";
 
 export interface Call {
@@ -23,12 +26,21 @@ export class FakeAPI {
   overrides: Override[] = [];
   private sessionCount = 0;
 
-  constructor(private readonly clip?: Buffer) {}
+  // Replaced bodies (or bare statuses) by pathname; see set().
+  private fixed = new Map<string, unknown>();
 
-  static async attach(page: Page, clip?: Buffer): Promise<FakeAPI> {
-    const api = new FakeAPI(clip);
+  // catalogue: serve the CTR-2 catalogue; off, those routes are unregistered (404), as before LIB-2c.
+  constructor(private readonly clip?: Buffer, private readonly catalogueOn = false) {}
+
+  static async attach(page: Page, clip?: Buffer, opts: { catalogue?: boolean } = {}): Promise<FakeAPI> {
+    const api = new FakeAPI(clip, opts.catalogue ?? false);
     await page.route("**/api/v1/**", (route) => api.handle(route));
     return api;
+  }
+
+  // A number answers that status with an error body; anything else is a 200 body.
+  set(path: string, body: unknown) {
+    this.fixed.set(path, body);
   }
 
   of(method: string, suffix: string): Call[] {
@@ -53,6 +65,9 @@ export class FakeAPI {
     const anon = fixture("anonymous.json");
     const error = (status: number, code: string) => json(status, { code, message: `fixture ${code}`, requestId: "req-fixture" });
 
+    const isCatalogue = /^\/api\/v1\/(libraries|items|continue-watching|next-up)(\/|$)/.test(call.path);
+    if (isCatalogue && !this.catalogueOn) return error(404, "not_found");
+
     if (call.method !== "GET" && call.method !== "HEAD") {
       const expected = this.signedIn ? auth.csrfToken : anon.csrfToken;
       if (call.csrf !== expected) return error(403, "csrf_failed");
@@ -68,6 +83,24 @@ export class FakeAPI {
     if (call.path === "/api/v1/auth/logout") {
       this.signedIn = false;
       return route.fulfill({ status: 204 });
+    }
+    if (isCatalogue) {
+      if (this.fixed.has(call.path)) {
+        const body = this.fixed.get(call.path);
+        return typeof body === "number" ? error(body, "internal_error") : json(200, body);
+      }
+      const url = new URL(req.url());
+      if (call.path === "/api/v1/libraries") return json(200, catalogue("libraries.json"));
+      if (call.path === "/api/v1/continue-watching") return json(200, catalogue("continue-watching.json"));
+      if (call.path === "/api/v1/next-up") return json(200, catalogue("next-up.json"));
+      if (call.path.endsWith("/facets")) return json(200, catalogue("facets.json"));
+      if (call.path === "/api/v1/items") return json(200, catalogue(url.searchParams.has("parentId") ? "items-episodes.json" : "items-movies.json"));
+      const id = call.path.slice("/api/v1/items/".length);
+      for (const f of ["item-movie", "item-show", "item-episode-shared-file"]) {
+        const detail = catalogue(`${f}.json`);
+        if (detail.item.id === id) return json(200, detail);
+      }
+      return error(404, "not_found");
     }
     if (call.path === "/api/v1/movies") return json(200, fixture("movies.json"));
     if (call.path === "/api/v1/playback/sessions") {
