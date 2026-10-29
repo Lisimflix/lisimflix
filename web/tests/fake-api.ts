@@ -17,6 +17,12 @@ export function generatedItem(n: number) {
   return { ...base, id, title: `Generated ${String(n).padStart(4, "0")}`, sortTitle: `Generated ${String(n).padStart(4, "0")}`, primaryImageUrl: null, userState: null, available: true, matched: null };
 }
 
+// Season 1 of the fixture show, derived from its first episode (the catalogue fixtures have no season item).
+export function season() {
+  const ep = catalogue("items-episodes.json").items[0];
+  return { ...ep, id: "sea-synthetic-0001", kind: "season", parentId: "shw-synthetic-0001", title: "Season 1", sortTitle: "Season 1", index: 1, childCount: 2, durationMs: null, seasonIndex: null, available: null, userState: null };
+}
+
 // 1x1 transparent PNG for artwork requests.
 const PIXEL = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", "base64");
 
@@ -132,12 +138,19 @@ export class FakeAPI {
             this.inFlight--;
           }
         }
+        if (q.get("parentId") === "shw-synthetic-0001") return json(200, { items: [season()], nextCursor: null, total: null });
         if (q.has("parentId")) return json(200, catalogue("items-episodes.json"));
         // Later pages of the fixture listing are empty, with total null as the contract says.
         if (q.has("cursor")) return json(200, { items: [], nextCursor: null, total: null });
         return json(200, catalogue("items-movies.json"));
       }
+      if (call.method === "PUT" && call.path.endsWith("/watched")) {
+        const b = call.body as { watched: boolean; expectedRevision: number };
+        const at = "2026-10-29T00:00:00Z";
+        return json(200, { itemId: "x", revision: b.expectedRevision + 1, resume: null, watched: b.watched ? { value: true, origin: "manual", at } : null, playCount: 0, lastPlayedAt: null, hiddenFromContinueWatching: false });
+      }
       const id = call.path.slice("/api/v1/items/".length);
+      if (id === "sea-synthetic-0001") return json(200, { item: season(), originalTitle: null, overview: null, genres: [], communityRating: null, directors: [], studios: [], externalIds: [], versions: [] });
       for (const f of ["item-movie", "item-show", "item-episode-shared-file"]) {
         const detail = catalogue(`${f}.json`);
         if (detail.item.id === id) return json(200, detail);

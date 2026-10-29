@@ -106,3 +106,27 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 .upnext .eyebrow { margin: 0; text-transform: uppercase; font-size: 0.75rem; letter-spacing: 0.08em; color: var(--accent); }
 .upnext .actions { display: flex; gap: 0.75rem; }
 a.button, .upnext button { border-radius: 0.5rem; padding: 0.5rem 1rem; text-decoration: none; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }
+
+/* Detail */
+.detail { position: relative; }
+.backdrop { position: absolute; inset: 0 0 auto 0; height: 24rem; z-index: -1; background-size: cover; background-position: center; opacity: 0.25; mask-image: linear-gradient(#000, transparent); }
+.detail .back { background: none; border: 0; color: inherit; cursor: pointer; padding: 0.25rem 0; margin-bottom: 1rem; }
+.detail .hero { display: flex; gap: 1.5rem; align-items: flex-start; flex-wrap: wrap; }
+.detail .poster { width: 12rem; border-radius: 0.5rem; }
+.detail .orig, .detail .meta { opacity: 0.7; margin: 0.25rem 0; }
+.qchips { display: flex; flex-wrap: wrap; gap: 0.5rem; list-style: none; padding: 0; }
+.detail .actions { display: flex; gap: 0.75rem; margin: 1rem 0; }
+.detail .actions button { border-radius: 0.5rem; padding: 0.5rem 1rem; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }
+.detail .actions button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.detail .overview { max-width: 60ch; }
+.detail select { font: inherit; padding: 0.35rem 0.5rem; background: #1a1b1f; color: inherit; border: 1px solid var(--thumb); border-radius: 0.5rem; }
+.side { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.75rem; margin: 1rem 0; }
+.side dt { opacity: 0.6; font-size: 0.8rem; }
+.side dd { margin: 0; }
+.episodes { list-style: none; padding: 0; }
+.episodes li { display: flex; align-items: center; gap: 1rem; padding: 0.5rem 0; border-bottom: 1px solid var(--thumb); }
+.episodes .num { width: 2rem; opacity: 0.6; }
+.episodes a { flex: 1; }
+.episodes .bar { width: 6rem; height: 4px; background: #00000099; }
+.episodes .bar span { display: block; height: 100%; background: var(--accent); }
+.episodes button { border-radius: 0.5rem; padding: 0.35rem 0.8rem; border: 1px solid var(--thumb); background: #1a1b1f; color: inherit; cursor: pointer; }

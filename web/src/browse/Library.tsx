@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type Client, type ItemQuery, type ItemSummary, type Library as LibraryInfo, type LibraryFacets } from "../api/client";
-import { cached } from "../app/cache";
+import { cached, saveView, view } from "../app/cache";
 import { navigate, useSearch } from "../app/router";
 import { Card } from "../ui/Card";
 import { Chip, MenuChip, type Option } from "../ui/Chips";
@@ -64,6 +64,9 @@ function queryFrom(libraryId: string, p: URLSearchParams, noWatched: boolean): I
   return q;
 }
 
+// What a refetch can't rebuild (decision 12): the loaded pages, where the page was scrolled and which card had focus.
+interface GridView { state: GridState; scrollY: number; focusId: string }
+
 export function Library({ client, library }: { client: Client; library: LibraryInfo }) {
   const search = useSearch();
   const params = new URLSearchParams(search);
@@ -71,8 +74,10 @@ export function Library({ client, library }: { client: Client; library: LibraryI
   const query = queryFrom(library.id, params, noWatched);
   const key = JSON.stringify(query);
   const [facets, setFacets] = useState<LibraryFacets | null>(null);
-  const [state, setState] = useState<GridState>(() => fresh(key));
-  const s = state.key === key ? state : fresh(key);
+  const entry: string | undefined = history.state?.key;
+  const saved = view<GridView>(entry, "grid");
+  const [state, setState] = useState<GridState>(() => (saved?.state?.key === key ? saved.state : fresh(key)));
+  const s = state.key === key ? state : saved?.state?.key === key ? saved.state : fresh(key);
   const live = useRef({ key, busy: false });
   live.current.key = key;
 
@@ -83,11 +88,43 @@ export function Library({ client, library }: { client: Client; library: LibraryI
     return () => { on = false; };
   }, [client, library.id]);
 
-  const firstKey = useRef(key);
+  // Save while on this entry; `entry` is captured per render, and a route change unmounts before the next entry's key can be read.
+  const entryRef = useRef(entry);
+  entryRef.current = entry;
   useEffect(() => {
-    if (firstKey.current !== key) window.scrollTo(0, 0);
+    if (state.key === key && state.items.length > 0) saveView<GridView>(entry, "grid", { state: { ...state, loading: false } });
+  }, [state, key, entry]);
+  useEffect(() => {
+    // After a push the page shrinks and fires a scroll that belongs to the next entry; only record our own.
+    const onScroll = () => history.state?.key === entryRef.current && saveView<GridView>(entryRef.current, "grid", { scrollY: window.scrollY });
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
+  // A new query starts at the top; Back to an entry (same mount or fresh) puts the saved offset and focus back.
+  // The target card may be outside the virtual window, so scroll first and focus once it renders.
+  const firstKey = useRef<string | null>(null);
+  useEffect(() => {
+    const rec = view<GridView>(entry, "grid");
+    const mounting = firstKey.current === null;
     firstKey.current = key;
-  }, [key]);
+    if (!rec?.state || rec.state.key !== key) {
+      if (!mounting) window.scrollTo(0, 0);
+      return;
+    }
+    const y = rec.scrollY ?? 0;
+    const at = rec.state.items.findIndex((i) => i.id === rec.focusId);
+    let frames = 0;
+    let raf = 0;
+    const tick = () => {
+      window.scrollTo(0, y);
+      const card = at >= 0 ? document.querySelector<HTMLElement>(`.vgrid [data-index="${at}"] a`) : null;
+      if (Math.abs(window.scrollY - y) < 2 && (at < 0 || card)) return card?.focus({ preventScroll: true });
+      if (frames++ < 120) raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [key, entry]);
 
   function loadMore() {
     if (live.current.busy || s.loading || !s.hasMore || s.error) return;
@@ -176,6 +213,11 @@ export function Library({ client, library }: { client: Client; library: LibraryI
           {s.error} <button type="button" onClick={() => setState({ ...s, error: null })}>Retry</button>
         </p>
       )}
+      <div onFocus={(e) => {
+        const idx = (e.target as HTMLElement).closest<HTMLElement>("[data-index]")?.dataset.index;
+        const item = idx === undefined ? undefined : s.items[Number(idx)];
+        if (item) saveView<GridView>(entryRef.current, "grid", { focusId: item.id });
+      }}>
       <VirtualGrid
         items={s.items}
         total={s.total}
@@ -184,6 +226,7 @@ export function Library({ client, library }: { client: Client; library: LibraryI
         loadMore={loadMore}
         renderCard={(item) => <Card item={item} href={`/items/${encodeURIComponent(item.id)}`} size="poster" />}
       />
+      </div>
       {sort === "title" && (
         <nav className="azrail" aria-label="A–Z">
           {/* shortcut: jump restarts the list; upgrade to bidirectional paging if Pete finds it awkward at 5k titles */}

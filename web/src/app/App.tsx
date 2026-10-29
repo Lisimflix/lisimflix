@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
-import { ApiError, type Client, type ItemDetail, type Library } from "../api/client";
+import { useEffect, useState, type FormEvent } from "react";
+import { ApiError, type Client, type Library } from "../api/client";
+import { Detail } from "../browse/Detail";
 import { Home } from "../browse/Home";
 import { Library as LibraryPage } from "../browse/Library";
 import { clearCache } from "./cache";
@@ -131,7 +132,7 @@ function Page({ client, libraries, route }: { client: Client; libraries: Library
     case "library":
       return <LibraryRoute client={client} libraries={libraries} id={route.id} />;
     case "item":
-      return <ItemStub client={client} id={route.id} />;
+      return <Detail key={route.id} client={client} id={route.id} />;
     case "play":
       return <h1>Play</h1>; // Planned: UI-2 PlayerPage (Task 8).
     default:
@@ -148,21 +149,4 @@ function LibraryRoute({ client, libraries, id }: { client: Client; libraries: Li
   const library = libraries.find((l) => l.id === id);
   // Keyed by library so switching tabs starts a fresh grid.
   return library ? <LibraryPage key={id} client={client} library={library} /> : <h1>Library not found</h1>;
-}
-
-// Placeholder: Task 6 replaces it with the detail page.
-function ItemStub({ client, id }: { client: Client; id: string }) {
-  const [item, setItem] = useState<ItemDetail | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const ref = useRef(id);
-  useEffect(() => {
-    ref.current = id;
-    setItem(null);
-    setError(null);
-    const abort = new AbortController();
-    client.item(id, abort.signal).then(setItem, (e) => !abort.signal.aborted && setError(message(e)));
-    return () => abort.abort();
-  }, [client, id]);
-  if (error) return <p role="alert">{error}</p>;
-  return <h1>{item ? item.item.title : "Loading…"}</h1>;
 }

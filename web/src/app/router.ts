@@ -25,7 +25,8 @@ export function parseRoute(pathname: string, search: string): Route {
 }
 
 // The first entry needs a key too (decision 12: caches are scoped per history entry).
-if (!history.state?.key) history.replaceState({ ...history.state, key: Math.random().toString(36).slice(2) }, "");
+// `depth` counts in-app entries, so Back knows whether history.back() stays in the app.
+if (!history.state?.key) history.replaceState({ ...history.state, key: Math.random().toString(36).slice(2), depth: 0 }, "");
 
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
@@ -52,7 +53,8 @@ export function useSearch(): string {
 
 // Each entry gets a random key, which the page cache (decision 12) uses to restore Back.
 export function navigate(path: string, opts: { replace?: boolean } = {}) {
-  const state = { key: Math.random().toString(36).slice(2) };
+  const depth: number = history.state?.depth ?? 0;
+  const state = { key: Math.random().toString(36).slice(2), depth: opts.replace ? depth : depth + 1 };
   if (opts.replace) history.replaceState(state, "", path);
   else history.pushState(state, "", path);
   notify();
