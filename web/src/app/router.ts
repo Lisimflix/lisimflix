@@ -54,7 +54,9 @@ export function useSearch(): string {
 // Each entry gets a random key, which the page cache (decision 12) uses to restore Back.
 export function navigate(path: string, opts: { replace?: boolean } = {}) {
   const depth: number = history.state?.depth ?? 0;
-  const state = { key: Math.random().toString(36).slice(2), depth: opts.replace ? depth : depth + 1 };
+  // `from` is the entry we left, so a page can tell whether Back lands where it came from.
+  const from = opts.replace ? history.state?.from : location.pathname;
+  const state = { key: Math.random().toString(36).slice(2), depth: opts.replace ? depth : depth + 1, from };
   if (opts.replace) history.replaceState(state, "", path);
   else history.pushState(state, "", path);
   notify();

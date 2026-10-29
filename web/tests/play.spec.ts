@@ -207,4 +207,28 @@ test.describe("play, resume and progress", () => {
     expect(order.indexOf("GET /api/v1/auth/session", logout)).toBeGreaterThan(logout);
     expect(api.of("DELETE", "/playback/sessions/play-fixture-1")).toHaveLength(1);
   });
+
+  test("pageCloseSendsStopWithoutWaitingForProgress", async ({ page }) => {
+    // Progress never answers, as when the tab is closing.
+    const api = await open(page, MOVIE, (a) => a.overrides.push(async (_route, call) => call.path.endsWith("/progress")));
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect.poll(() => time(page)).toBeGreaterThan(0.3);
+    await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+    // Well under the 1.5 s the in-app stop waits for a report.
+    await expect.poll(() => api.of("DELETE", "/playback/sessions/play-fixture-1").length, { timeout: 700 }).toBe(1);
+    expect(api.of("POST", "/progress").map((c) => (c.body as { kind: string }).kind)).toEqual(["stop"]);
+  });
+
+  test("leavingPlayerDoesNotDuplicateDetailInHistory", async ({ page }) => {
+    const api = await open(page, "/libraries/lib-synthetic-movies", () => undefined);
+    await page.getByRole("link", { name: /Synthetic Test Movie/ }).first().click();
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect(page.locator("video")).toBeAttached();
+    await page.locator("video").evaluate((v: HTMLVideoElement) => { v.currentTime = v.duration - 0.3; });
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Synthetic Test Movie", { timeout: 5_000 });
+    expect(new URL(page.url()).pathname).toBe(MOVIE);
+    await page.getByRole("button", { name: "← Back" }).click();
+    expect(new URL(page.url()).pathname).toBe("/libraries/lib-synthetic-movies");
+    expect(api.of("DELETE", "/playback/sessions/play-fixture-1")).toHaveLength(1);
+  });
 });

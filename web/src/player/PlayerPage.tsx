@@ -23,12 +23,18 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
   const gone = useRef(false);
   const detail = `/items/${encodeURIComponent(itemId)}`;
 
+  // Leave for the detail page. When the entry before this one is that page, go Back so history doesn't hold it twice.
+  const exit = () => {
+    if (history.state?.from === new URL(detail, location.origin).pathname) history.back();
+    else navigate(detail, { replace: true });
+  };
+
   // Back to the detail page, which refetches the item; kind picks what it shows.
   const leave = (kind: "unavailable" | "changed" | "error", message: string) => {
     if (gone.current) return;
     gone.current = true;
     setNotice({ itemId, versionId, kind, message });
-    navigate(detail, { replace: true });
+    exit();
   };
 
   useEffect(() => {
@@ -53,7 +59,7 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
     return client.progress(state.session.id, event).catch((err: unknown) => {
       if (!(err instanceof ApiError)) return;
       if (err.status === 401) leave("error", "Your sign-in has ended.");
-      else if (err.status === 409) leave("changed", CHANGED);
+      else if (err.status === 409 && err.code === "source_changed") leave("changed", CHANGED);
     });
   }
 
@@ -80,7 +86,7 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
           startMs={startMs ?? undefined}
           onProgress={onProgress}
           onStop={onStop}
-          onEnd={(error) => (error ? leave("error", error) : navigate(detail, { replace: true }))}
+          onEnd={(error) => (error ? leave("error", error) : exit())}
         />
       )}
     </section>

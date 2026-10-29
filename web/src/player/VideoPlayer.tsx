@@ -36,7 +36,8 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
       lastMs = positionMs;
       return request;
     };
-    const stop = () => {
+    // leaving: the page is going away, so the report and the DELETE go out together (both keepalive); no waiting for a reply that can't come.
+    const stop = (leaving = false) => {
       if (done) return;
       const last = ready ? send("stop") : undefined;
       done = true;
@@ -44,7 +45,7 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
       clearInterval(progressTimer);
       abort.abort();
       // The stop waits (briefly) for the last report, which a finished session would refuse.
-      const wait = last ? Promise.race([last, new Promise((r) => setTimeout(r, 1500))]) : undefined;
+      const wait = last && !leaving ? Promise.race([last, new Promise((r) => setTimeout(r, 1500))]) : undefined;
       onStop(Promise.resolve(wait).then(() => client.stop(session.id)).catch(() => undefined));
     };
     report.current = (kind) => {
@@ -82,7 +83,7 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
       });
     }, session.heartbeatIntervalSeconds * 1000);
 
-    const onPageHide = () => stop();
+    const onPageHide = () => stop(true);
     // A bfcache restore brings back this player after pagehide ended its session (#41).
     const onPageShow = (e: PageTransitionEvent) => {
       if (e.persisted) onEnd();
