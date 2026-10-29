@@ -111,7 +111,8 @@ test.describe("home", () => {
     const nav = page.getByRole("navigation");
     const cw = () => api.of("GET", "/api/v1/continue-watching").length;
     await expect(rowHeadings(page).first()).toBeVisible();
-    expect(cw()).toBe(1);
+    // The heading can render before Node has seen the request, so poll rather than read once.
+    await expect.poll(cw).toBe(1);
     await nav.getByRole("link", { name: "Movies" }).click();
     await expect(page).toHaveURL(/libraries/);
     await nav.getByRole("link", { name: "Home" }).click();

@@ -85,10 +85,26 @@ test.describe("detail pages", () => {
     await expect(page.getByRole("heading", { level: 1 })).toHaveText("Synthetic Episode Two");
     await expect(page.getByText("min", { exact: false })).toHaveCount(0);
     await expect(page.getByRole("progressbar")).toHaveCount(0);
-    // the show's episode list has the same shape: no bar for a null duration
-    await page.goto("/items/shw-synthetic-0001");
-    await expect(page.getByRole("listitem").filter({ hasText: "Synthetic Episode Two" })).toBeVisible();
-    await expect(page.getByRole("progressbar")).toHaveCount(0);
+  });
+
+  test("episodeBarNeedsDurationAndResume", async ({ page }) => {
+    const [one, two] = catalogue("items-episodes.json").items;
+    const resume = { versionId: "ver-synthetic-0003", sourceRevision: "r", positionMs: 600000, durationMs: 1200000, updatedAt: "2026-10-29T00:00:00Z" };
+    const episodes = [
+      { ...one, durationMs: null, userState: { ...one.userState, resume } }, // shared file: resume but no duration
+      { ...two, durationMs: 1200000, userState: { ...two.userState, resume } },
+    ];
+    await open(page, "/items/shw-synthetic-0001", (api) => {
+      api.overrides.push(async (route, call) => {
+        if (call.path !== "/api/v1/items" || !call.query.includes("parentId=sea-synthetic-0001")) return false;
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: episodes, nextCursor: null, total: null }) });
+        return true;
+      });
+    });
+    const rows = page.getByRole("listitem").filter({ hasText: "Synthetic Episode" });
+    await expect(rows).toHaveCount(2);
+    await expect(rows.first().getByRole("progressbar")).toHaveCount(0);
+    await expect(rows.nth(1).getByRole("progressbar")).toHaveAttribute("aria-valuenow", "50");
   });
 
   test("seasonLinksToShowWithSeason", async ({ page }) => {
