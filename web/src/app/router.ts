@@ -24,6 +24,9 @@ export function parseRoute(pathname: string, search: string): Route {
   return { name: "notFound" };
 }
 
+// The first entry needs a key too (decision 12: caches are scoped per history entry).
+if (!history.state?.key) history.replaceState({ ...history.state, key: Math.random().toString(36).slice(2) }, "");
+
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((l) => l());
 window.addEventListener("popstate", notify);

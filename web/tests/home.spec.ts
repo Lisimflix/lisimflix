@@ -105,4 +105,23 @@ test.describe("home", () => {
     await open(page);
     await expect(strip(page)).toHaveCSS("scroll-behavior", "auto");
   });
+
+  test("cacheIsPerHistoryEntry", async ({ page }) => {
+    const api = await open(page);
+    const nav = page.getByRole("navigation");
+    const cw = () => api.of("GET", "/api/v1/continue-watching").length;
+    await expect(rowHeadings(page).first()).toBeVisible();
+    expect(cw()).toBe(1);
+    await nav.getByRole("link", { name: "Movies" }).click();
+    await expect(page).toHaveURL(/libraries/);
+    await nav.getByRole("link", { name: "Home" }).click();
+    await expect.poll(cw).toBe(2); // new entry refetches
+    await expect(rowHeadings(page).first()).toBeVisible();
+    await page.goBack();
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await expect(rowHeadings(page).first()).toBeVisible();
+    await page.waitForTimeout(300);
+    expect(cw()).toBe(2); // first entry reuses its data
+  });
 });
