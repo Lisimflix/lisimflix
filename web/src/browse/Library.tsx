@@ -124,6 +124,8 @@ export function Library({ client, library }: { client: Client; library: LibraryI
       });
   }
 
+  // shortcut: jump restarts the list; upgrade to bidirectional paging if Pete finds it awkward at 5k titles
+  // (`from` is part of the query key, so setting it resets items and cursor and restarts the grid at that letter)
   function setParams(patch: Record<string, string | null>) {
     const p = new URLSearchParams(location.search);
     for (const [k, v] of Object.entries(patch)) {
