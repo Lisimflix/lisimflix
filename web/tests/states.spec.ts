@@ -66,6 +66,27 @@ test.describe("states", () => {
     await expect(page.getByText("being scanned")).toHaveCount(0);
   });
 
+  test("scanProgressRefetchesItems", async ({ page }) => {
+    await page.clock.install();
+    const api = await open(page, ANIME, (a) => a.generate(0, "lib-synthetic-anime"));
+    await expect(page.getByText("No anime yet")).toBeVisible();
+    api.set("/api/v1/libraries", libraries(lib("lib-synthetic-anime", "Anime", "anime", { state: "scanning", filesSeen: 1300, filesTotal: 3410 }, "available")));
+    api.set("/api/v1/items", { items: [generatedItem(1)], nextCursor: null, total: 1 });
+    await page.clock.runFor(5100);
+    await expect(page.getByRole("link", { name: /^Generated 0001/ })).toBeVisible();
+    await expect(page.getByText("No anime yet")).toHaveCount(0);
+  });
+
+  test("scanEndsStillEmpty", async ({ page }) => {
+    await page.clock.install();
+    const api = await open(page, ANIME, (a) => a.generate(0, "lib-synthetic-anime"));
+    await expect(page.getByText("No anime yet")).toBeVisible();
+    api.set("/api/v1/libraries", libraries(lib("lib-synthetic-anime", "Anime", "anime", { state: "idle", filesSeen: 0, filesTotal: null }, "available")));
+    await page.clock.runFor(5100);
+    await expect(page.getByText("No anime yet")).toBeVisible();
+    await expect(page.locator("progress")).toHaveCount(0);
+  });
+
   test("emptyShowsLibraryUsesShows", async ({ page }) => {
     await open(page, "/libraries/lib-tv", (api) => {
       api.generate(0, "lib-tv");

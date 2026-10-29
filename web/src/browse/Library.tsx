@@ -68,7 +68,8 @@ function queryFrom(libraryId: string, p: URLSearchParams, noWatched: boolean): I
 // What a refetch can't rebuild (decision 12): the loaded pages, where the page was scrolled and which card had focus.
 interface GridView { state: GridState; scrollY: number; focusId: string }
 
-export function Library({ client, library }: { client: Client; library: LibraryInfo }) {
+export function Library({ client, library: initial }: { client: Client; library: LibraryInfo }) {
+  const [library, setLibrary] = useState(initial); // Empty's scan polls update it
   const search = useSearch();
   const params = new URLSearchParams(search);
   const [noWatched, setNoWatched] = useState(false); // LIB-2c answers `watched` with 400 until DATA-1 is live
@@ -167,6 +168,12 @@ export function Library({ client, library }: { client: Client; library: LibraryI
       });
   }
 
+  // Progress or the end of the scan means titles may exist now: drop the empty first page so the grid refetches it.
+  function onPoll(next: LibraryInfo) {
+    setLibrary(next);
+    if (next.scan.filesSeen !== library.scan.filesSeen || next.scan.state !== library.scan.state) setState(fresh(key));
+  }
+
   function setParams(patch: Record<string, string | null>) {
     const p = new URLSearchParams(location.search);
     for (const [k, v] of Object.entries(patch)) {
@@ -218,7 +225,7 @@ export function Library({ client, library }: { client: Client; library: LibraryI
       {s.error && !(offline && s.items.length > 0) && <ErrorState error={s.error} thing="library" onRetry={() => setState({ ...cur, error: null })} />}
       {s.items.length === 0 && !s.error && (s.hasMore || s.loading) && <Skeleton kind="grid" />}
       {s.items.length === 0 && !s.error && !s.hasMore && !s.loading && (
-        library.availability === "offline" ? <OfflineLibrary /> : filtered || query.from ? <p>No titles match these filters.</p> : <Empty library={library} client={client} />
+        library.availability === "offline" ? <OfflineLibrary /> : filtered || query.from ? <p>No titles match these filters.</p> : <Empty library={library} client={client} onPoll={onPoll} />
       )}
       <div onFocus={(e) => {
         const idx = (e.target as HTMLElement).closest<HTMLElement>("[data-index]")?.dataset.index;

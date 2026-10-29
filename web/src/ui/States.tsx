@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect } from "react";
 import type { ApiError, Client, Library } from "../api/client";
 
 const SHAPES = { row: 8, grid: 18, detail: 0 } as const;
@@ -7,14 +7,14 @@ const SHAPES = { row: 8, grid: 18, detail: 0 } as const;
 export function Skeleton({ kind }: { kind: "row" | "grid" | "detail" }) {
   if (kind === "detail") {
     return (
-      <div className="skeleton detail-skel" role="region" aria-busy="true" aria-label="Loading">
+      <div className="skeleton detail-skel" aria-busy="true">
         <span className="poster" />
         <div><span className="line wide" /><span className="line" /><span className="line" /></div>
       </div>
     );
   }
   return (
-    <div className={`skeleton ${kind}-skel`} role="region" aria-busy="true" aria-label="Loading">
+    <div className={`skeleton ${kind}-skel`} aria-busy="true">
       {Array.from({ length: SHAPES[kind] }, (_, i) => (
         <div key={i} className="card ph" aria-hidden="true"><span className="art" /><span className="cap" /></div>
       ))}
@@ -25,20 +25,19 @@ export function Skeleton({ kind }: { kind: "row" | "grid" | "detail" }) {
 const TYPE_NOUN: Record<string, string> = { movies: "movies", tv: "shows", anime: "anime" };
 
 // Empty library. While its first scan runs it shows progress and re-polls libraries() every 5 s (stops on unmount).
-export function Empty({ library, client }: { library: Library; client: Client }) {
-  const [lib, setLib] = useState(library);
+export function Empty({ library: lib, client, onPoll }: { library: Library; client: Client; onPoll: (next: Library) => void }) {
   const scanning = lib.scan.state === "scanning";
   useEffect(() => {
     if (!scanning) return;
     const abort = new AbortController();
     const id = setInterval(() => {
       client.libraries(abort.signal).then(
-        (l) => { const next = l.items.find((x) => x.id === library.id); if (next) setLib(next); },
+        (l) => { const next = l.items.find((x) => x.id === lib.id); if (next) onPoll(next); },
         () => undefined, // next tick tries again
       );
     }, 5000);
     return () => { clearInterval(id); abort.abort(); };
-  }, [client, library.id, scanning]);
+  }, [client, lib.id, scanning, onPoll]);
   const { filesSeen, filesTotal } = lib.scan;
   return (
     <section className="empty" aria-label="Empty library">
