@@ -2,9 +2,13 @@ name: check
 
 on:
   pull_request:
+  # Re-check main after each merge: PR runs use the base from when they ran.
+  push:
+    branches: [main]
 
 concurrency:
-  group: check-${{ github.event.pull_request.number }}
+  # Pushes to main get their own group, so a later merge never cancels an earlier run.
+  group: check-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 permissions:
