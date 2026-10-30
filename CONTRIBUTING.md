@@ -10,9 +10,8 @@ cd lisimflix
 git config core.hooksPath .githooks
 ```
 
-The pre-push hook refuses pushes to `main`. Our GitHub plan can't protect
-`main` on a private repo, so this hook plus the rules below is the protection.
-Never bypass it with `--no-verify`.
+The pre-push hook refuses pushes to `main`, as a local check before the GitHub
+ruleset (below) rejects them. Never bypass it with `--no-verify`.
 
 ## Workflow
 
@@ -30,10 +29,13 @@ Never bypass it with `--no-verify`.
    first pass, then read it yourself and approve or request changes.
    Check that `README.md` still matches the branch before approving.
 6. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
+   Any push after approval (fixups, rebases) needs a fresh approval before it can merge.
 
 `main` is protected by a GitHub ruleset with no bypass, so GitHub enforces the steps
-above: no direct or force pushes, and a PR merges only by squash, with one approval
-and a passing `check`. This applies to every PR, including docs, config and Dependabot.
+above: no direct or force pushes, and a PR merges only by squash, with a passing `check`
+and one approval of its latest push from someone other than whoever pushed it.
+This applies to every PR, including docs, config and Dependabot. `check` also runs on
+`main` after every merge.
 An admin can disable the ruleset (Settings → Rules) for an emergency; say why on the
 PR and turn it back on straight after.
 
