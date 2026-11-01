@@ -91,3 +91,34 @@ func TestRankAutoMatchesOnlyWhenConfident(t *testing.T) {
 		}
 	}
 }
+
+// #136: Rank's edge cases.
+func TestRankEdgeCases(t *testing.T) {
+	q := Query{"movie", "Heat", 1995}
+	// A lead of exactly AutoMargin (1 vs 0.9) is enough, despite float rounding.
+	if _, auto := Rank(q, []Candidate{{ID: "a", Kind: "movie", Title: "Heat", Year: 1995}, {ID: "b", Kind: "movie", Title: "Heat", Year: 1996}}); !auto {
+		t.Error("a lead of exactly 0.10 didn't auto-match")
+	}
+	// An alternative title counts inside Rank too.
+	if ranked, auto := Rank(q, []Candidate{{ID: "a", Kind: "movie", Title: "Heat Wave", Year: 1995},
+		{ID: "b", Kind: "movie", Title: "Hitze", AltTitles: []string{"Heat"}, Year: 1995}}); !auto || ranked[0].ID != "b" {
+		t.Errorf("alternative title: auto=%v ranked %+v", auto, ranked)
+	}
+	// Empty or punctuation-only titles never match, not even each other.
+	for _, p := range [][2]string{{"", ""}, {"...", "!!!"}, {"Heat", "?"}, {"-", "Heat"}} {
+		if ranked, auto := Rank(Query{"movie", p[0], 1995}, []Candidate{{Kind: "movie", Title: p[1], Year: 1995}}); auto || ranked[0].Score != 0 {
+			t.Errorf("%q vs %q: score %.3f auto=%v", p[0], p[1], ranked[0].Score, auto)
+		}
+	}
+	// Ties keep the provider's order.
+	var cands []Candidate
+	for _, id := range []string{"5", "3", "9", "1", "7", "2", "8", "4", "6"} {
+		cands = append(cands, Candidate{ID: id, Kind: "movie", Title: "Heat", Year: 1995})
+	}
+	ranked, _ := Rank(q, cands)
+	for i, c := range ranked {
+		if c.ID != cands[i].ID {
+			t.Fatalf("tie order %v, want the provider's", ranked)
+		}
+	}
+}

@@ -359,8 +359,8 @@ func TestAuthErrorPausesProvider(t *testing.T) {
 	if b, err := e.m.RunDue(ctx, 10); !errors.Is(err, ErrPaused) || b.Matched != 0 {
 		t.Fatalf("RunDue = %+v, %v", b, err)
 	}
-	if paused, _, _ := e.st.Paused(ctx, "tmdb"); !paused {
-		t.Fatal("not paused")
+	if paused, _, err := e.st.Paused(ctx, "tmdb"); !paused || err != nil {
+		t.Fatalf("paused %v, %v", paused, err)
 	}
 	if len(e.fake.calls) != 1 {
 		t.Fatalf("%d calls: a paused provider must not be called again", len(e.fake.calls))
@@ -369,7 +369,9 @@ func TestAuthErrorPausesProvider(t *testing.T) {
 	if _, err := e.m.RunDue(ctx, 10); !errors.Is(err, ErrPaused) {
 		t.Fatalf("still paused: %v", err)
 	}
-	e.st.Resume(ctx, "tmdb")
+	if err := e.st.Resume(ctx, "tmdb"); err != nil {
+		t.Fatal(err)
+	}
 	if b, err := e.m.RunDue(ctx, 10); err != nil || b.Matched != 1 || b.Review != 1 {
 		t.Fatalf("after resume %+v %v", b, err)
 	}
@@ -798,5 +800,160 @@ func TestSharedFolderMovieNFOIsIgnored(t *testing.T) {
 	e.fake.calls = nil
 	if out := e.match(e.item("The Matrix")); out != OutcomeMatched || !slices.Equal(e.fake.calls, []string{"lookup imdb:tt0133093"}) {
 		t.Fatalf("The Matrix: outcome %s calls %v", out, e.fake.calls)
+	}
+}
+
+// #141: a locked ID outside the provider's namespaces (an AniDB or TVDB
+// fix-match) never leads to a search: any locked ID is final, so the item is
+// a conflict for the admin.
+func TestLockedIDOutsideNamespacesNeverSearches(t *testing.T) {
+	for _, c := range [][2]string{{"anidb", "12345"}, {"tvdb", "81189"}} {
+		e := newMatchEnv(t)
+		e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+		e.library("movies", "Movies")
+		id := e.item("Heat")
+		if _, err := e.st.FixMatch(context.Background(), id, 1, c[0], c[1]); err != nil {
+			t.Fatal(err)
+		}
+		if out := e.match(id); out != OutcomeConflict || len(e.fake.calls) != 0 {
+			t.Fatalf("locked %s: outcome %s calls %v", c[0], out, e.fake.calls)
+		}
+		md := e.get(id)
+		if x, _ := extID(md, c[0]); md.MatchStatus != contracts.MatchConflict || len(md.ExternalIDs) != 1 || x.ID != c[1] || !x.Locked ||
+			md.Fields.Overview.Value != nil || e.lastError(id) == "" {
+			t.Fatalf("locked %s: %+v, reason %q", c[0], md, e.lastError(id))
+		}
+	}
+}
+
+// #136: an edit landing during the provider call also wins on the review
+// and conflict paths: the stale result is dropped and the item retried.
+func TestEditDuringCallWinsOnReviewAndConflict(t *testing.T) {
+	for _, c := range []struct{ folder, title, locked string }{
+		{"Movies/Dune/Dune.mkv", "Dune", ""},                     // search → review
+		{"Movies/Heat (1995)/Heat (1995).mkv", "Heat", "404404"}, // unknown locked ID → conflict
+	} {
+		e := newMatchEnv(t)
+		e.write(c.folder, "x")
+		e.library("movies", "Movies")
+		ctx := context.Background()
+		id := e.item(c.title)
+		if c.locked != "" {
+			if _, err := e.st.FixMatch(ctx, id, 1, "tmdb", c.locked); err != nil {
+				t.Fatal(err)
+			}
+		}
+		e.fake.during = func() {
+			e.fake.during = nil
+			if _, err := e.st.Edit(ctx, id, e.get(id).Revision, []Edit{{Field: FieldOverview, Value: raw("Mine.")}}); err != nil {
+				t.Error(err)
+			}
+		}
+		if out := e.match(id); out != OutcomeRetry {
+			t.Fatalf("%s: outcome %s, want retry", c.title, out)
+		}
+		var cands int
+		e.db.QueryRow(`SELECT COUNT(*) FROM metadata_candidates WHERE item_id = ?`, id).Scan(&cands)
+		if md := e.get(id); md.MatchStatus != contracts.MatchUnmatched || cands != 0 || *md.Fields.Overview.Value != "Mine." {
+			t.Fatalf("%s: status %s, %d candidates: the stale result was applied", c.title, md.MatchStatus, cands)
+		}
+	}
+}
+
+// #136: one NFO whose IDs name different films (TMDB says Heat, IMDb says
+// The Matrix) is a conflict, like two files disagreeing.
+func TestOneNFODisagreeingAcrossNamespaces(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995)/Heat (1995).mkv", "x")
+	e.write("Movies/Heat (1995)/movie.nfo", `<movie><uniqueid type="tmdb">949</uniqueid><uniqueid type="imdb">tt0133093</uniqueid></movie>`)
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	if out := e.match(id); out != OutcomeConflict || len(e.get(id).ExternalIDs) != 0 {
+		t.Fatalf("outcome %s, IDs %+v", out, e.get(id).ExternalIDs)
+	}
+}
+
+// #136: locking a matched field without changing it keeps the provider's
+// provenance, and the next match leaves it alone.
+func TestLockOnlyEditKeepsProviderProvenance(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	e.match(id)
+	md, err := e.st.Edit(context.Background(), id, e.get(id).Revision, []Edit{{Field: FieldOverview, Lock: ptr(true)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if o := md.Fields.Overview; !o.Locked || o.Source == nil || o.Source.Provider != "tmdb" || *o.Source.ProviderID != "949" {
+		t.Fatalf("overview after locking %+v", o)
+	}
+	str := func(s string) *string { return &s }
+	r := e.fake.records["tmdb:949"]
+	r.Overview = str("Updated overview.")
+	e.fake.add(r)
+	if out := e.match(id); out != OutcomeMatched || *e.get(id).Fields.Overview.Value != "A group of high-end professional thieves." {
+		t.Fatalf("outcome %s, overview %q", out, *e.get(id).Fields.Overview.Value)
+	}
+}
+
+// #136: a provider record that breaks the ID patterns or Decision 8's limits
+// is never stored: it's a provider failure, retried with backoff.
+func TestInvalidRecordIsNotStored(t *testing.T) {
+	str := func(s string) *string { return &s }
+	for name, r := range map[string]Record{
+		"long title":        {Title: str(strings.Repeat("x", maxTitle+1))},
+		"too many genres":   {Genres: strings.Split("a b c d e f g h i j k l m n o p q r s t u", " ")},
+		"bad imdb ID":       {ExternalIDs: map[string]string{"imdb": "nope"}},
+		"unknown namespace": {ExternalIDs: map[string]string{"facebook": "heat"}},
+	} {
+		e := newMatchEnv(t)
+		r.ID, r.Kind = "777", "movie"
+		e.fake.add(r)
+		e.write("Movies/Heat (1995) {tmdb-777}/Heat (1995).mkv", "x")
+		e.library("movies", "Movies")
+		id := e.item("Heat")
+		if out := e.match(id); out != OutcomeRetry {
+			t.Fatalf("%s: outcome %s, want retry", name, out)
+		}
+		md := e.get(id)
+		if at, attempts := e.due(id); md.MatchStatus != contracts.MatchUnmatched || len(md.ExternalIDs) != 0 || md.Fields.Title.Source != nil ||
+			attempts != 1 || at != e.clock.Add(retryBase).UnixMilli() || !strings.Contains(e.lastError(id), "777") {
+			t.Fatalf("%s: %+v, due %d after %d attempts, reason %q", name, md, at, attempts, e.lastError(id))
+		}
+	}
+}
+
+// #136: the backoff after a database error is compare-and-set: an edit that
+// lands before it keeps the item due instead of waiting a minute.
+func TestDatabaseErrorBackoffYieldsToAnEdit(t *testing.T) {
+	e := newMatchEnv(t)
+	e.write("Movies/Heat (1995) {tmdb-949}/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	ctx := context.Background()
+	e.st.Enqueue(ctx, 10)
+	id := e.item("Heat")
+	// Only the provider's writes fail, so the admin's edit goes through.
+	if _, err := e.db.Exec(`CREATE TRIGGER fields_broken BEFORE INSERT ON metadata_fields WHEN NEW.provider <> 'user'
+		BEGIN SELECT RAISE(ABORT, 'fields broken'); END`); err != nil {
+		t.Fatal(err)
+	}
+	// The edit lands on the second clock read after the provider call:
+	// after applyRecord's (which fails), before RunDue's backoff.
+	reads := -1
+	e.st.now = func() time.Time {
+		if reads--; reads == 0 {
+			if _, err := e.st.Edit(ctx, id, 1, []Edit{{Field: FieldOverview, Value: raw("Mine.")}}); err != nil {
+				t.Error(err)
+			}
+		}
+		return e.clock
+	}
+	e.fake.during = func() { e.fake.during, reads = nil, 2 }
+	if b, err := e.m.RunDue(ctx, 10); err != nil || len(b.Failed) != 1 {
+		t.Fatalf("RunDue %+v %v", b, err)
+	}
+	if at, attempts := e.due(id); at != e.clock.UnixMilli() || attempts != 0 || *e.get(id).Fields.Overview.Value != "Mine." {
+		t.Fatalf("due at %d (now %d) after %d attempts: the edited item was backed off", at, e.clock.UnixMilli(), attempts)
 	}
 }

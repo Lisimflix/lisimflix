@@ -41,6 +41,18 @@ func (s *Store) applyRecord(ctx context.Context, itemID string, rev int64, prov 
 		}
 	}
 	ids[prov] = rec.ID
+	// Provider data is untrusted (§6.6): IDs and fields meet the same rules
+	// as fix-match and edits (Decision 8), or nothing is stored.
+	for ns, v := range ids {
+		if re, ok := idPatterns[ns]; v == "" || (ns != prov && !ok) || (ok && !re.MatchString(v)) {
+			return "", invalid("%s record %q: bad %s ID %q", prov, rec.ID, ns, v)
+		}
+	}
+	for _, f := range fields {
+		if _, _, err := validate(Edit{Field: f.name, Value: json.RawMessage(f.value)}); err != nil {
+			return "", fmt.Errorf("%s record %s: %w", prov, rec.ID, err)
+		}
+	}
 
 	now := ms(s.now())
 	tx, err := s.db.BeginTx(ctx, nil)

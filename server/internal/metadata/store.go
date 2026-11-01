@@ -147,7 +147,8 @@ func bump(ctx context.Context, tx *sql.Tx, itemID string, expected, now int64) e
 // Get returns the item's metadata: its parsed name until matching or an edit
 // supplies values, overlaid with stored fields and provider IDs.
 // Planned: META-1c (the metadata HTTP API).
-func (s *Store) Get(ctx context.Context, itemID string) (contracts.ItemMetadata, error) {
+func (s *Store) Get(ctx context.Context, itemID string) (_ contracts.ItemMetadata, err error) {
+	defer func() { err = dbErr(err, "get", itemID) }()
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return contracts.ItemMetadata{}, err
@@ -356,7 +357,8 @@ func validate(e Edit) (stored any, hasValue bool, err error) {
 // Edit applies manual changes if expectedRevision is still current. A value
 // is recorded with "user" provenance and locked unless Lock is false.
 // Planned: META-1c (the metadata HTTP API edit operation).
-func (s *Store) Edit(ctx context.Context, itemID string, expectedRevision int64, edits []Edit) (contracts.ItemMetadata, error) {
+func (s *Store) Edit(ctx context.Context, itemID string, expectedRevision int64, edits []Edit) (_ contracts.ItemMetadata, err error) {
+	defer func() { err = dbErr(err, "edit", itemID) }()
 	type change struct {
 		field    string
 		json     any
@@ -421,7 +423,8 @@ func (s *Store) Edit(ctx context.Context, itemID string, expectedRevision int64,
 // ID and replaces the previous match: other provider IDs and unlocked fields
 // go, review candidates are cleared, and the item is queued now (Decision 9).
 // Planned: META-1c (the metadata HTTP API fix-match operation).
-func (s *Store) FixMatch(ctx context.Context, itemID string, expectedRevision int64, namespace, id string) (contracts.ItemMetadata, error) {
+func (s *Store) FixMatch(ctx context.Context, itemID string, expectedRevision int64, namespace, id string) (_ contracts.ItemMetadata, err error) {
+	defer func() { err = dbErr(err, "fix-match", itemID) }()
 	// Only provider namespaces with a known ID format: "user" and "nfo" are
 	// provenance, not namespaces.
 	re, ok := idPatterns[namespace]
@@ -476,10 +479,10 @@ func (s *Store) Enqueue(ctx context.Context, limit int) (int, error) {
 		WHERE kind IN ('movie', 'show') AND NOT EXISTS (SELECT 1 FROM metadata_items m WHERE m.item_id = li.id)
 		ORDER BY created_at, id LIMIT ?`, now, now, limit)
 	if err != nil {
-		return 0, err
+		return 0, dbErr(err, "enqueue", "")
 	}
 	n, err := res.RowsAffected()
-	return int(n), err
+	return int(n), dbErr(err, "enqueue", "")
 }
 
 // Pause stops calls to provider until Resume, recording why.
@@ -488,14 +491,14 @@ func (s *Store) Pause(ctx context.Context, provider, reason string) error {
 	_, err := s.db.ExecContext(ctx, `INSERT INTO metadata_providers(name, paused_reason, paused_at) VALUES(?, ?, ?)
 		ON CONFLICT(name) DO UPDATE SET paused_reason = excluded.paused_reason, paused_at = excluded.paused_at`,
 		provider, bounded(reason), ms(s.now()))
-	return err
+	return dbErr(err, "pause", provider)
 }
 
 // Resume clears a provider's pause.
 // Planned: META-1b (the settings screen resumes TMDB when the key changes).
 func (s *Store) Resume(ctx context.Context, provider string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM metadata_providers WHERE name = ?`, provider)
-	return err
+	return dbErr(err, "resume", provider)
 }
 
 // Paused reports whether provider is paused, and why.
@@ -506,5 +509,14 @@ func (s *Store) Paused(ctx context.Context, provider string) (bool, string, erro
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, "", nil
 	}
-	return err == nil, reason.String, err
+	return err == nil, reason.String, dbErr(err, "paused", provider)
+}
+
+// dbErr adds the operation and item (or provider) to a database error. The
+// package's own errors already say what's wrong and are returned as they are.
+func dbErr(err error, op, id string) error {
+	if err == nil || errors.Is(err, ErrItemNotFound) || errors.Is(err, ErrRevisionConflict) || errors.Is(err, ErrInvalid) {
+		return err
+	}
+	return fmt.Errorf("metadata: %s: %w", strings.TrimSpace(op+" "+id), err)
 }

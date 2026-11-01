@@ -3,6 +3,7 @@ package metadata
 import (
 	"bytes"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"os"
 	"regexp"
@@ -48,15 +49,19 @@ func parseNFO(b []byte) map[string]string {
 	ids := map[string]string{}
 	add := func(ns, v string) {
 		v = strings.TrimSpace(v)
+		if strings.Trim(v, "0123456789") == "" { // 0949 is 949, as in name hints
+			v = strings.TrimLeft(v, "0")
+		}
 		re, ok := idPatterns[ns]
 		if _, have := ids[ns]; ok && !have && re.MatchString(v) {
 			ids[ns] = v
 		}
 	}
-	if trimmed := bytes.TrimSpace(b); bytes.HasPrefix(trimmed, []byte("<")) {
+	if trimmed := bytes.TrimSpace(bytes.TrimPrefix(b, []byte("\uFEFF"))); bytes.HasPrefix(trimmed, []byte("<")) {
 		var doc nfoDoc
 		dec := xml.NewDecoder(bytes.NewReader(trimmed))
 		dec.Strict = false // Entity stays nil, so custom entities are never expanded.
+		dec.CharsetReader = latin1Reader
 		if err := dec.Decode(&doc); err == nil {
 			for _, u := range doc.UniqueIDs {
 				add(strings.ToLower(strings.TrimSpace(u.Type)), u.Value)
@@ -75,6 +80,25 @@ func parseNFO(b []byte) map[string]string {
 		}
 	}
 	return ids
+}
+
+// latin1Reader decodes an NFO declared as ISO-8859-1 (or US-ASCII, a subset).
+// Other declared encodings fail, so the file gives no XML IDs.
+func latin1Reader(label string, r io.Reader) (io.Reader, error) {
+	switch strings.ToLower(label) {
+	case "iso-8859-1", "latin1", "us-ascii":
+	default:
+		return nil, fmt.Errorf("metadata: NFO encoding %q isn't supported", label)
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	runes := make([]rune, len(b))
+	for i, c := range b {
+		runes[i] = rune(c) // Latin-1 bytes are the first 256 code points
+	}
+	return strings.NewReader(string(runes)), nil
 }
 
 // readNFOs reads the NFO files at paths (relative to root) and merges their
