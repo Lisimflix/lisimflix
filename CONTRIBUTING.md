@@ -104,8 +104,15 @@ PR and turn it back on straight after.
   update the contract and affected consumers together rather than editing in parallel.
 - Don't edit a spec or plan someone else is writing. Open an issue for them instead.
 - Hand-offs and decisions go in issue or PR comments, not only in chat.
-- Non-blocking review notes, and issues noticed in passing, get their own issue
-  (area labels, linking the PR or review) before the PR merges. A comment alone gets lost.
+- Review notes are blocking or non-blocking:
+  - **Blocking:** anything that must change before merge, however small. Request
+    changes; don't approve with fixes still to make.
+  - **Non-blocking:** can wait until after merge. File one issue per review, with a
+    checkbox per note (area labels, linking the PR or review), before the PR merges. A
+    comment alone gets lost. Only file notes you've checked; leave out nits not worth
+    a follow-up. Issues noticed in passing get an issue the same way.
+  - A PR that fixes some of the notes says `Refs #N` and ticks their boxes. The issue
+    closes once every box is ticked or dropped with a reason.
 - Code added for a later feature, with no production caller yet, gets a one-line comment
   naming its future user: `// Planned: <Feature ID> (<what will call it>).` Remove it when
   the caller lands. Reviews and audits treat untagged code with no caller as dead.

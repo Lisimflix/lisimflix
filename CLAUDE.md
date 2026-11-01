@@ -11,6 +11,6 @@
 - At the start of every session, run `git config core.hooksPath`. If it is not `.githooks`, tell the user and ask before setting it (see `CONTRIBUTING.md` one-time setup).
 - At the start of every session, run `gh issue list` and `gh pr list` to see what others are working on.
 - Don't edit another member's spec or plan in `docs/superpowers/` unless asked; open an issue instead.
-- Non-blocking review notes, and issues noticed in passing, get their own issue (area labels, linking the PR/review) before the PR merges.
+- Review notes are blocking (anything that must change before merge, however small: request changes, never approve with fixes pending) or non-blocking (one issue per review, a checkbox per checked note, area labels, linking the PR/review, filed before the PR merges; no nits). Issues noticed in passing get an issue the same way. Fix PRs say `Refs #N` and tick boxes; the issue closes when every box is ticked or dropped with a reason (CONTRIBUTING, Working together).
 - Code with no production caller yet gets `// Planned: <Feature ID> (<what will call it>).`; before calling code unused, also grep `docs/` (spec, plans).
 - Never commit secrets, `.env` files or media.
