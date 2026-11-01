@@ -159,14 +159,40 @@ export function Library({ client, library: initial }: { client: Client; library:
       });
   }
 
-  // Progress or the end of the scan means titles may exist now: drop the empty first page so the grid refetches it.
+  // Progress or the end of the scan means titles may have been added.
   function onPoll(next: LibraryInfo) {
     setLibrary(next);
-    if (next.scan.filesSeen !== library.scan.filesSeen || next.scan.state !== library.scan.state) {
+    if (next.scan.filesSeen === library.scan.filesSeen && next.scan.state === library.scan.state) return;
+    if (cur.items.length === 0) {
+      // Drop the empty first page so the grid refetches it; Empty stays up meanwhile.
       setRefreshing(true);
       setState(fresh(key));
+      return;
     }
+    // Titles are showing: refetch the first page quietly. A list loaded to its end takes the new page (the grid loads on from
+    // there); a longer one only updates the count, so the pages and scroll position hold.
+    client.items({ ...query, limit: PAGE }).then((page) => {
+      if (live.current.key !== key || live.current.busy) return;
+      setState((p) => p.key !== key ? p : p.hasMore
+        ? { ...p, total: page.total ?? p.total }
+        : { key, items: page.items, cursor: page.nextCursor, total: page.total ?? p.total, hasMore: page.nextCursor !== null, loading: false, error: null });
+    }, () => undefined); // the next poll tries again
   }
+  // While a scan runs, poll its progress every 5 s, whether or not titles are showing yet (#145).
+  const scanning = library.scan.state === "scanning";
+  const poll = useRef(onPoll);
+  poll.current = onPoll;
+  useEffect(() => {
+    if (!scanning) return;
+    const abort = new AbortController();
+    const id = setInterval(() => {
+      client.libraries(abort.signal).then(
+        (l) => { const next = l.items.find((x) => x.id === library.id); if (next) poll.current(next); },
+        () => undefined, // next tick tries again
+      );
+    }, 5000);
+    return () => { clearInterval(id); abort.abort(); };
+  }, [client, library.id, scanning]);
 
   function setParams(patch: Record<string, string | null>) {
     const p = new URLSearchParams(location.search);
@@ -181,7 +207,7 @@ export function Library({ client, library: initial }: { client: Client; library:
 
   const sort = query.sort ?? "title";
   const year = query.yearFrom !== undefined && query.yearFrom === query.yearTo ? String(query.yearFrom) : null;
-  const filtered = query.genre || year || query.resolution || query.hdr || query.audioLanguage || query.watched !== undefined;
+  const filtered = query.genre || query.yearFrom !== undefined || query.yearTo !== undefined || query.resolution || query.hdr || query.audioLanguage || query.watched !== undefined;
   const years: Option[] = facets?.years
     ? Array.from({ length: facets.years.max - facets.years.min + 1 }, (_, i) => String(facets.years!.max - i)).map((y) => ({ value: y, label: y }))
     : [];
@@ -222,7 +248,7 @@ export function Library({ client, library: initial }: { client: Client; library:
       {s.error && !(offline && s.items.length > 0) && <ErrorState error={s.error} thing="library" level={2} onRetry={() => setState({ ...cur, error: null })} />}
       {s.items.length === 0 && !s.error && (s.hasMore || s.loading) && !refreshing && <Skeleton kind="grid" />}
       {s.items.length === 0 && !s.error && ((!s.hasMore && !s.loading) || refreshing) && (
-        library.availability === "offline" ? <OfflineLibrary /> : filtered || query.from ? <p>No titles match these filters.</p> : <Empty library={library} client={client} onPoll={onPoll} />
+        library.availability === "offline" ? <OfflineLibrary /> : filtered || query.from ? <p>No titles match these filters.</p> : <Empty library={library} />
       )}
       <div className={sort === "title" ? "withrail" : undefined} onFocus={(e) => {
         const idx = (e.target as HTMLElement).closest<HTMLElement>("[data-index]")?.dataset.index;

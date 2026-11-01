@@ -95,7 +95,8 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 .chips { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
 .row header { display: flex; align-items: baseline; justify-content: space-between; }
 .rowwrap { position: relative; }
-.strip { display: flex; gap: 0.75rem; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; }
+/* Padding (undone by the margin) keeps the cards' 2px-offset focus outline inside the clipped scroll box. */
+.strip { display: flex; gap: 0.75rem; padding: 4px; margin: -4px; overflow-x: auto; scrollbar-width: none; scroll-behavior: smooth; }
 .strip::-webkit-scrollbar { display: none; }
 .strip .card { flex: 0 0 9.5rem; }
 .strip .card.wide { flex-basis: 17rem; }

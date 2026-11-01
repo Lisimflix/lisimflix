@@ -201,9 +201,17 @@ test.describe("library page", () => {
 
   test("firstPageVisibleUnder1sOnFixture", async ({ page }) => {
     await open(page, "/");
-    await page.getByRole("navigation").getByRole("link", { name: "Movies" }).click();
-    const t0 = Date.now();
-    await expect(cards(page).first()).toBeVisible();
-    expect(Date.now() - t0).toBeLessThan(1000);
+    await expect(page.getByRole("navigation").getByRole("link", { name: "Movies" })).toBeVisible();
+    // Timed inside the page, from the click to the first card, so test-runner overhead on a busy machine doesn't count (#145).
+    const ms = await page.evaluate(() => new Promise<number>((resolve) => {
+      const link = [...document.querySelectorAll<HTMLAnchorElement>("nav a")].find((a) => a.textContent === "Movies")!;
+      const t0 = performance.now();
+      const seen = new MutationObserver(() => {
+        if (document.querySelector("a.card")) { seen.disconnect(); resolve(performance.now() - t0); }
+      });
+      seen.observe(document.body, { childList: true, subtree: true });
+      link.click();
+    }));
+    expect(ms).toBeLessThan(1000);
   });
 });

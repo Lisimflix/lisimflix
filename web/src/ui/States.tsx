@@ -1,5 +1,4 @@
-import { useEffect } from "react";
-import type { ApiError, Client, Library } from "../api/client";
+import type { ApiError, Library } from "../api/client";
 
 const SHAPES = { row: 8, grid: 18, detail: 0 } as const;
 
@@ -24,20 +23,9 @@ export function Skeleton({ kind }: { kind: "row" | "grid" | "detail" }) {
 
 const TYPE_NOUN: Record<string, string> = { movies: "movies", tv: "shows", anime: "anime" };
 
-// Empty library. While its first scan runs it shows progress and re-polls libraries() every 5 s (stops on unmount).
-export function Empty({ library: lib, client, onPoll }: { library: Library; client: Client; onPoll: (next: Library) => void }) {
+// Empty library. While its first scan runs it shows progress; the library page polls it (#145).
+export function Empty({ library: lib }: { library: Library }) {
   const scanning = lib.scan.state === "scanning";
-  useEffect(() => {
-    if (!scanning) return;
-    const abort = new AbortController();
-    const id = setInterval(() => {
-      client.libraries(abort.signal).then(
-        (l) => { const next = l.items.find((x) => x.id === lib.id); if (next) onPoll(next); },
-        () => undefined, // next tick tries again
-      );
-    }, 5000);
-    return () => { clearInterval(id); abort.abort(); };
-  }, [client, lib.id, scanning, onPoll]);
   const { filesSeen, filesTotal } = lib.scan;
   return (
     <section className="empty" aria-label="Empty library">

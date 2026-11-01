@@ -21,6 +21,10 @@ export function MenuChip({ label, options, value, onChange }: { label: string; o
   useEffect(() => {
     if (open) list.current?.focus();
   }, [open]);
+  // aria-activedescendant doesn't scroll, and the list is height-capped.
+  useEffect(() => {
+    if (open) document.getElementById(`${id}-${active}`)?.scrollIntoView({ block: "nearest" });
+  }, [open, active, id]);
 
   const close = () => {
     setOpen(false);
