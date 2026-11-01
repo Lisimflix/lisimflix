@@ -22,7 +22,8 @@ carries a few Debian 12 packages, including glibc (LGPL-2.1) and OpenSSL (Apache
 copyright files are in the image at `/usr/share/doc/<package>/copyright`, and the exact
 package versions at `/var/lib/dpkg/status.d/<package>`. The source of each version is
 on [snapshot.debian.org](https://snapshot.debian.org/), under the package's `Source` name
-(for example glibc `2.36-9+deb12u14` at <https://snapshot.debian.org/package/glibc/2.36-9%2Bdeb12u14/>).
+(for example glibc `2.36-9+deb12u14` at <https://snapshot.debian.org/package/glibc/2.36-9%2Bdeb12u14/>;
+an example from when this was written: the image's `status.d` has the current version).
 How the base image is built: <https://github.com/GoogleContainerTools/distroless>.
 
 ## jellyfin-ffmpeg (ffprobe only)

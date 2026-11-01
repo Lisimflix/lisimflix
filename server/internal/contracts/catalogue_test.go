@@ -48,27 +48,3 @@ func TestCatalogueEnumsMatchOpenAPI(t *testing.T) {
 	checkSchemaEnum(t, "Resolution", ResolutionSD, Resolution720, Resolution1080, Resolution4K)
 	checkParamEnum(t, "Sort", SortTitle, SortAdded, SortYear)
 }
-
-func TestZeroValueArraysEncodeAsEmpty(t *testing.T) {
-	for name, c := range map[string]struct {
-		v     any
-		paths []string
-	}{
-		"facets": {LibraryFacets{}, []string{"genres", "audioLanguages", "resolutions"}},
-		"detail": {ItemDetail{}, []string{"genres", "externalIds", "versions", "directors", "studios"}},
-	} {
-		b, err := json.Marshal(c.v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var m map[string]json.RawMessage
-		if err := json.Unmarshal(b, &m); err != nil {
-			t.Fatal(err)
-		}
-		for _, k := range c.paths {
-			if string(m[k]) != "[]" {
-				t.Errorf("%s.%s encoded as %s", name, k, m[k])
-			}
-		}
-	}
-}

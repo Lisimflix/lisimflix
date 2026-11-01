@@ -30,10 +30,10 @@ ARG TAGS=
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -tags "$TAGS" \
       -ldflags="-s -w -X main.version=$VERSION" -o /out/lisimflix ./cmd/lisimflix
 # Licence texts of the Go standard library and every module compiled into the
-# binary (same build tags), then the web ones (#115). A module without one
+# binary (same build tags and target platform as the build, #132), then the web ones (#115). A module without one
 # fails the build.
 RUN set -e; { printf '==== Go %s (standard library) ====\n\n' "$(go env GOVERSION)"; cat "$(go env GOROOT)/LICENSE"; echo; \
-      go list -deps -tags "$TAGS" -f '{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}} {{.Dir}}{{end}}{{end}}' ./cmd/lisimflix | sort -u | \
+      CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go list -deps -tags "$TAGS" -f '{{with .Module}}{{if not .Main}}{{.Path}}@{{.Version}} {{.Dir}}{{end}}{{end}}' ./cmd/lisimflix | sort -u | \
       while read -r m d; do \
         f=$(ls "$d"/LICENSE* "$d"/LICENCE* "$d"/COPYING* 2>/dev/null || true); [ -n "$f" ] || { echo "no licence file in $m" >&2; exit 1; }; \
         printf '==== %s ====\n\n' "$m"; cat $f; echo; \

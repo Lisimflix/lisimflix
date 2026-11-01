@@ -1,5 +1,7 @@
 package contracts
 
+import "encoding/json"
+
 // Profile wire types (CTR-2, spec §6.3).
 
 // Profile is a viewing identity under the signed-in account.
@@ -17,6 +19,13 @@ type ProfilePolicy struct {
 	LibraryIDs    []string       `json:"libraryIds"`
 	RatingCeiling *ContentRating `json:"ratingCeiling"` // null: no rating limit
 	AllowUnrated  bool           `json:"allowUnrated"`
+}
+
+// MarshalJSON encodes nil LibraryIDs as [] because the contract requires an array.
+func (p ProfilePolicy) MarshalJSON() ([]byte, error) {
+	type plain ProfilePolicy // no methods: avoids recursion
+	p.LibraryIDs = nonNil(p.LibraryIDs)
+	return json.Marshal(plain(p))
 }
 
 type ProfileList = Page[Profile]

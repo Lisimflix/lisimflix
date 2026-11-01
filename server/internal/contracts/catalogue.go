@@ -259,6 +259,13 @@ type MediaVersion struct {
 	FileName       *string          `json:"fileName"`  // bare name, admins only; never a path
 }
 
+// MarshalJSON encodes nil slices as [] because the contract requires arrays.
+func (v MediaVersion) MarshalJSON() ([]byte, error) {
+	type plain MediaVersion // no methods: avoids recursion
+	v.Video, v.Audio, v.Subtitles = nonNil(v.Video), nonNil(v.Audio), nonNil(v.Subtitles)
+	return json.Marshal(plain(v))
+}
+
 // Segment is a range of a file's media timeline, in milliseconds.
 type Segment struct {
 	StartMs int64 `json:"startMs"`
