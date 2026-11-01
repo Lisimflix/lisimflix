@@ -2,6 +2,7 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -41,15 +42,41 @@ func CSRF(key []byte, secure bool) func(http.Handler) http.Handler {
 			contracts.WriteError(w, r, contracts.CodeCSRFFailed, "Request blocked. Reload the page and try again.")
 		})),
 	)
+	// rotate issues a new CSRF secret: gorilla/csrf mints one only when the
+	// request has no CSRF cookie, so it runs a cookie-less GET copy of r through
+	// protect, which sets the new cookie on w, and returns a token for it.
+	rotate := func(w http.ResponseWriter, r *http.Request) string {
+		fresh := r.Clone(r.Context())
+		fresh.Method, fresh.Body = http.MethodGet, http.NoBody
+		fresh.Header.Del("Cookie")
+		if !secure {
+			fresh = csrf.PlaintextHTTPRequest(fresh)
+		}
+		var token string
+		protect(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) { token = csrf.Token(r) })).ServeHTTP(w, fresh)
+		return token
+	}
 	return func(h http.Handler) http.Handler {
 		p := protect(h)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !secure {
 				r = csrf.PlaintextHTTPRequest(r)
 			}
-			p.ServeHTTP(w, r)
+			p.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), rotateKey{}, rotate)))
 		})
 	}
+}
+
+type rotateKey struct{}
+
+// rotateCSRF replaces the CSRF secret (cookie) and returns a token for the new
+// one, so a token issued before login or logout stops working after it (#36).
+// Outside CSRF it returns the current token.
+func rotateCSRF(w http.ResponseWriter, r *http.Request) string {
+	if rotate, ok := r.Context().Value(rotateKey{}).(func(http.ResponseWriter, *http.Request) string); ok {
+		return rotate(w, r)
+	}
+	return csrf.Token(r)
 }
 
 // Register adds the three CTR-1 auth routes. They must be served behind CSRF.
@@ -83,8 +110,8 @@ func (m *Manager) fromRequest(r *http.Request) (*session, bool) {
 	return m.lookup(r.Context(), c.Value)
 }
 
-func (m *Manager) state(r *http.Request, signedIn bool) contracts.AuthState {
-	st := contracts.AuthState{CSRFToken: csrf.Token(r)}
+func (m *Manager) state(csrfToken string, signedIn bool) contracts.AuthState {
+	st := contracts.AuthState{CSRFToken: csrfToken}
 	if signedIn {
 		st.Authenticated = true
 		st.Viewer = &contracts.Viewer{AccountID: m.viewer.AccountID, ProfileID: m.viewer.ProfileID, Username: m.viewer.Username}
@@ -94,7 +121,7 @@ func (m *Manager) state(r *http.Request, signedIn bool) contracts.AuthState {
 
 func (m *Manager) handleSession(w http.ResponseWriter, r *http.Request) {
 	_, ok := m.fromRequest(r)
-	writeJSON(w, http.StatusOK, m.state(r, ok))
+	writeJSON(w, http.StatusOK, m.state(csrf.Token(r), ok))
 }
 
 func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -142,7 +169,7 @@ func (m *Manager) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Name: CookieName, Value: token, Path: "/", Expires: s.created.Add(absoluteTimeout),
 		HttpOnly: true, Secure: m.secure, SameSite: http.SameSiteLaxMode,
 	})
-	writeJSON(w, http.StatusOK, m.state(r, true))
+	writeJSON(w, http.StatusOK, m.state(rotateCSRF(w, r), true))
 }
 
 func (m *Manager) handleLogout(w http.ResponseWriter, r *http.Request) {
@@ -152,6 +179,7 @@ func (m *Manager) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{Name: CookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, Secure: m.secure, SameSite: http.SameSiteLaxMode})
+	rotateCSRF(w, r) // the client fetches the new token with GET session, as after any logout
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusNoContent)
 }
