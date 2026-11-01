@@ -192,6 +192,28 @@ test.describe("play, resume and progress", () => {
     await expect.poll(() => api.of("DELETE", "/playback/sessions/play-fixture-1").length).toBe(1);
   });
 
+  test("backRefetchesDetailAfterFinalReport", async ({ page }) => {
+    const log: string[] = [];
+    const api = await open(page, MOVIE);
+    api.overrides.push(async (route, call) => {
+      if (call.path.endsWith("/progress") && (call.body as { kind: string }).kind === "stop") {
+        await new Promise((r) => setTimeout(r, 500));
+        await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ accepted: true, reason: null, state: null }) });
+        log.push("stop answered");
+        return true;
+      }
+      if (call.method === "GET" && call.path === MOVIE_PATH) log.push("detail fetched");
+      return false;
+    });
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect.poll(() => time(page)).toBeGreaterThan(0.3);
+    log.length = 0; // drop the detail load before Play
+    await page.getByRole("button", { name: "← Back" }).click();
+    await expect(page.getByRole("heading", { level: 1 })).toHaveText("Synthetic Test Movie");
+    await expect.poll(() => log).toContain("detail fetched");
+    expect(log).toEqual(["stop answered", "detail fetched"]); // not the old resume point
+  });
+
   test("episodeRowPlayResumes", async ({ page }) => {
     const base = movie({ resumeOn: V1 });
     const detail = { ...base, item: { ...base.item, id: "epi-synthetic-0001", kind: "episode" } };

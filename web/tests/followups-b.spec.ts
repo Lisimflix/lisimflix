@@ -72,10 +72,10 @@ test.describe("B1 expired session", () => {
         await route.fulfill(json(401, "unauthenticated"));
         return true;
       }
-      if (!late && call.path === "/api/v1/next-up") {
-        late = true;
+      if (call.path === "/api/v1/next-up" && api.of("GET", "/api/v1/next-up").length === 1) {
         await new Promise((r) => setTimeout(r, 1500));
         await route.fulfill(json(401, "unauthenticated"));
+        late = true; // set once the late 401 has really been delivered
         return true;
       }
       return false;
@@ -85,9 +85,10 @@ test.describe("B1 expired session", () => {
     await expect(page.getByRole("alert")).toHaveText("Your sign-in has ended.");
     await signIn(page);
     await expect(page.getByRole("heading", { level: 1, name: "Home" })).toBeAttached();
-    await page.waitForTimeout(2000);
-    expect(late).toBe(true);
+    await expect.poll(() => late).toBe(true);
+    await page.waitForTimeout(300); // let the page handle the delivered 401
     await expect(page.getByRole("heading", { level: 1, name: "Home" })).toBeAttached();
+    await expect(page.getByRole("button", { name: "Sign in" })).toHaveCount(0);
     expect(api.of("POST", "/auth/login")).toHaveLength(2);
   });
 
@@ -237,14 +238,15 @@ test("B8 emptyStaysUpWhileScanRefetches", async ({ page }) => {
     new MutationObserver(() => { if (document.querySelector(".skeleton") || !document.querySelector(".empty")) w.flicker++; }).observe(document.body, { childList: true, subtree: true });
   });
   api.set("/api/v1/libraries", anime(200));
-  let refetched = false;
   api.overrides.push(async (_r, call) => {
-    if (call.path === "/api/v1/items") { refetched = true; await new Promise((r) => setTimeout(r, 800)); }
+    if (call.path === "/api/v1/items") await new Promise((r) => setTimeout(r, 800));
     return false;
   });
+  // Resolves only once the slow refetch has really answered (still empty).
+  const answered = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/v1/items");
   await page.clock.runFor(5100);
-  await expect.poll(() => refetched).toBe(true);
-  await page.waitForTimeout(1200); // the refetch has answered (still empty)
+  await answered;
+  await page.waitForTimeout(100); // let the page render the answer
   await expect(page.getByText("No anime yet")).toBeVisible();
   expect(await page.evaluate(() => (window as unknown as { flicker: number }).flicker)).toBe(0);
 });

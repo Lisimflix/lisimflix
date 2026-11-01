@@ -51,8 +51,7 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
       },
     );
     // A superseded or unmounted start drops its answer (and stops a late session).
-    // Playback moves the resume point, so rows fetched before it are stale.
-    return () => { ++generation.current; gone.current = true; invalidate(); };
+    return () => { ++generation.current; gone.current = true; };
   }, [client, itemId, versionId, tries]);
 
   // Progress is best effort: 404 (DATA-1 not live) and the rest are ignored, except an ended sign-in or changed file.
@@ -91,7 +90,8 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
           startMs={startMs ?? undefined}
           mediaError={() => client.item(itemId).then((d) => `This ${d.item.kind === "episode" ? "episode" : "movie"} couldn't be played.`, () => "This item couldn't be played.")}
           onProgress={onProgress}
-          onStop={onStop}
+          // Playback moves the resume point, so data fetched before it is stale; refetches wait for the final report (#142 review).
+          onStop={(request) => { invalidate(request); onStop(request); }}
           onEnd={(error) => (error ? leave("error", error) : exit())}
         />
       )}

@@ -46,7 +46,8 @@ export function VirtualGrid<T extends { id: string }>({
   const cols = Math.max(1, Math.floor((m.width + gap) / (cardWidth + gap)));
   const cardW = (m.width - gap * (cols - 1)) / cols;
   const rowH = cardW * cardAspect + captionHeight + gap;
-  const count = Math.max(total ?? 0, items.length);
+  // Once the last page is in, items is the whole list: a total that counted items since gone must not leave empty cells.
+  const count = hasMore ? Math.max(total ?? 0, items.length) : items.length;
   const rows = Math.ceil(count / cols);
   const rel = m.scrollY - m.top;
   const clamp = (n: number) => Math.min(Math.max(n, 0), Math.max(rows - 1, 0));

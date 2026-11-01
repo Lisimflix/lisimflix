@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, type Client, type ItemDetail, type MediaVersion } from "../api/client";
 import { ErrorState, SourceUnavailable, Skeleton } from "../ui/States";
-import { invalidate } from "../app/cache";
+import { afterPlayback, invalidate } from "../app/cache";
 import { takeNotice, type Notice } from "../app/notice";
 import { Link, navigate } from "../app/router";
 import { codecName, formatClock, languageName, resolutionName, resumeChoice, versionLabel } from "./format";
@@ -40,7 +40,7 @@ export function Detail({ client, id }: { client: Client; id: string }) {
     setDetail(null);
     setError(null);
     const abort = new AbortController();
-    client.item(id, abort.signal).then(setDetail, (e) => !abort.signal.aborted && setError(e instanceof ApiError ? e : new ApiError(0, "network_error", "Something went wrong.")));
+    afterPlayback().then(() => client.item(id, abort.signal)).then(setDetail, (e) => !abort.signal.aborted && setError(e instanceof ApiError ? e : new ApiError(0, "network_error", "Something went wrong.")));
     return () => abort.abort();
   }, [client, id, tries]);
   if (error) return <ErrorState error={error} thing="item" onRetry={() => setTries(tries + 1)} />;

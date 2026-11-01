@@ -2,12 +2,15 @@ import { clearNotice } from "./notice";
 
 // In-memory, per page load, scoped per history entry (decision 12): a fresh navigation refetches, Back reuses. Cleared on sign-out so one profile's rows never reach the next.
 const store = new Map<string, Promise<unknown>>();
+// Playback's final progress report (and stop); reads of resume data wait for it, so they never fetch the old resume point.
+let settled: Promise<unknown> = Promise.resolve();
+export const afterPlayback = () => settled;
 
 export function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   key = `${history.state?.key}:${key}`;
   let hit = store.get(key) as Promise<T> | undefined;
   if (!hit) {
-    hit = load();
+    hit = settled.then(load);
     store.set(key, hit);
     hit.catch(() => store.delete(key));
   }
@@ -27,8 +30,10 @@ export function saveView<T>(entry: string | undefined, slot: string, patch: Part
 }
 
 // Drop fetched data but keep per-entry views, so Back after playback refetches while grid scroll/focus restore still works.
-export function invalidate() {
+// after: the playback stop request; refetches wait for it, capped at 2 s like logout.
+export function invalidate(after?: Promise<unknown>) {
   store.clear();
+  if (after) settled = Promise.race([after.catch(() => undefined), new Promise((r) => setTimeout(r, 2000))]);
 }
 
 export function clearCache() {

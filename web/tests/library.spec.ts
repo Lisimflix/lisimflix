@@ -26,6 +26,14 @@ test.describe("library page", () => {
     await expect(page.getByRole("link", { name: /^Synthetic Unmatched Movie/ })).toBeVisible();
   });
 
+  test("noPlaceholdersOnceListEnds", async ({ page }) => {
+    // The fixture says 412 but its listing ends after 2 items (items dropped out during a scan).
+    const api = await open(page);
+    await expect.poll(() => itemRequests(api).length).toBe(2);
+    await expect(cards(page)).toHaveCount(2);
+    await expect(page.locator(".card.ph")).toHaveCount(0);
+  });
+
   test("unmatchedCardHasBadgeNoFilename", async ({ page }) => {
     await open(page);
     const unmatched = page.getByRole("link", { name: /^Synthetic Unmatched Movie/ });
@@ -46,7 +54,7 @@ test.describe("library page", () => {
   test("cardShowsProgressAndMinutesLeft", async ({ page }) => {
     await open(page);
     const card = page.getByRole("link", { name: /^Synthetic Test Movie/ });
-    await expect(card).toHaveAccessibleName("Synthetic Test Movie, 60 min left");
+    await expect(card).toHaveAccessibleName("Synthetic Test Movie, 2026, 60 min left");
     await expect(card.getByRole("progressbar")).toHaveAttribute("aria-valuenow", "34");
   });
 

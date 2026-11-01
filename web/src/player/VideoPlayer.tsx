@@ -91,7 +91,7 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
       if (e.persisted) onEnd();
     };
     const progressTimer = setInterval(() => {
-      if (!el.paused) void send("tick");
+      if (ready && !el.paused) void send("tick");
     }, 10_000);
     window.addEventListener("pagehide", onPageHide);
     window.addEventListener("pageshow", onPageShow);

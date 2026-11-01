@@ -31,7 +31,9 @@ test.describe("home", () => {
 
   test("episodeCardShowsShowAndNumber", async ({ page }) => {
     await open(page);
-    await expect(page.getByRole("link", { name: /^Synthetic Episode Two/ }).first()).toContainText("Synthetic Show · S1 E2");
+    const card = page.getByRole("link", { name: /^Synthetic Episode Two/ }).first();
+    await expect(card).toContainText("Synthetic Show · S1 E2");
+    await expect(card).toHaveAccessibleName(/^Synthetic Episode Two, Synthetic Show · S1 E2\b/); // screen readers can tell episodes apart
   });
 
   test("rowArrowsHideAtEnds", async ({ page }) => {

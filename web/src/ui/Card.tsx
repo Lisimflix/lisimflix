@@ -21,6 +21,7 @@ export function Card({ item, href, size, showTitle = false }: { item: ItemSummar
   const offline = item.available === false;
   const name = [
     item.title,
+    subtitle(item, showTitle),
     watched && "watched",
     unmatched && "unmatched",
     offline && "file offline",
