@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
+	"github.com/Lisimflix/lisimflix/server/internal/library"
 	"github.com/Lisimflix/lisimflix/server/internal/obs"
 )
 
@@ -186,6 +187,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rec.Scopes = group(scopes)
 	for _, s := range rec.Scopes {
 		if err := h.hint.Hint(s.RootID, s.Path, CauseImport); err != nil {
+			if errors.Is(err, library.ErrInvalid) {
+				// A scope the library won't scan (e.g. through a symlinked
+				// folder) is the path's problem, like an unmappable path.
+				reject(err.Error())
+				return
+			}
 			// The scheduler doesn't know the root yet (just added) or isn't
 			// running; the next reconciliation scan covers the change.
 			rec.Result, rec.Reason = ResultRejected, "library not ready: "+err.Error()

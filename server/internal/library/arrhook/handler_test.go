@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/Lisimflix/lisimflix/server/internal/library"
 )
 
 const sonarrUA = "Sonarr/4.0.20.3014 (ubuntu 22.04)"
@@ -256,6 +258,20 @@ func TestSchedulerNotReady(t *testing.T) {
 		t.Fatalf("%d %+v", rec.Code, a)
 	}
 	if r := f.lastReceipt(t); r.Result != ResultRejected || !strings.Contains(r.Reason, "not ready") {
+		t.Fatalf("receipt %+v", r)
+	}
+}
+
+// A scope the scheduler refuses as invalid (a symlinked folder, #127) is the
+// sender's path problem, like an unmappable path: 400, not a retryable 503.
+func TestInvalidScopeIsRejected(t *testing.T) {
+	f := newHook(t)
+	f.hints.err = fmt.Errorf("%w: scope %q goes through the symlink %q", library.ErrInvalid, "x/y.mkv", "x")
+	rec := f.ok(fixture(t, "sonarr_download.json"))
+	if a := decode(t, rec); rec.Code != http.StatusBadRequest || a.Code != "invalid_request" {
+		t.Fatalf("%d %+v", rec.Code, a)
+	}
+	if r := f.lastReceipt(t); r.Result != ResultRejected || !strings.Contains(r.Reason, "symlink") {
 		t.Fatalf("receipt %+v", r)
 	}
 }

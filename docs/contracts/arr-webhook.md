@@ -57,7 +57,7 @@ another scope are dropped.
 | 202 | `{"result":"queued","receiptId":"rcpt-...","scopes":[{"rootId":"...","path":"..."}]}` | scans queued |
 | 200 | `{"result":"test","receiptId":"rcpt-...","scopes":[]}` | `Test` event |
 | 200 | `{"result":"ignored","receiptId":"rcpt-...","scopes":[]}` | event that doesn't change files |
-| 400 | `{"code":"invalid_request","message":"Notification rejected: <reason>","requestId":"..."}` | bad payload, unsupported app or version, path that can't be mapped, body too large |
+| 400 | `{"code":"invalid_request","message":"Notification rejected: <reason>","requestId":"..."}` | bad payload, unsupported app or version, path that can't be mapped or goes through a symlinked folder, body too large |
 | 401 | `{"code":"unauthenticated",...}` with `WWW-Authenticate: Basic` | missing, wrong or revoked credentials |
 | 405 | none | method other than POST or PUT |
 | 429 | `{"code":"rate_limited",...}` | a limit below was reached |

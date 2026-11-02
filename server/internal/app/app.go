@@ -87,10 +87,12 @@ func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS
 	root.HandleFunc("/health/", func(w http.ResponseWriter, r *http.Request) {
 		health(w, http.StatusNotFound, "not_found")
 	})
+	seen := map[string]bool{}
 	for _, m := range mounts {
-		if !strings.HasPrefix(m.Pattern, "/") || strings.HasPrefix(m.Pattern, "/api/") || strings.HasPrefix(m.Pattern, "/health/") || m.Handler == nil {
+		if !strings.HasPrefix(m.Pattern, "/") || m.Pattern == "/" || m.Pattern == "/api" || m.Pattern == "/health" || seen[m.Pattern] || strings.HasPrefix(m.Pattern, "/api/") || strings.HasPrefix(m.Pattern, "/health/") || m.Handler == nil {
 			return nil, fmt.Errorf("app: invalid mount %q", m.Pattern)
 		}
+		seen[m.Pattern] = true
 		root.Handle(m.Pattern, m.Handler)
 	}
 	root.Handle("/", spa(web))

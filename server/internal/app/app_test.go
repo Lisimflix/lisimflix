@@ -351,6 +351,22 @@ func TestNewRejectsInconsistentInputs(t *testing.T) {
 			_, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/health/x", http.NotFoundHandler()})
 			return err
 		},
+		"mount at /": func() error {
+			_, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/", http.NotFoundHandler()})
+			return err
+		},
+		"mount at /api": func() error {
+			_, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/api", http.NotFoundHandler()})
+			return err
+		},
+		"mount at /health": func() error {
+			_, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/health", http.NotFoundHandler()})
+			return err
+		},
+		"duplicate mount": func() error {
+			_, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/hooks/x", http.NotFoundHandler()}, Mount{"/hooks/x", http.NotFoundHandler()})
+			return err
+		},
 		"mount without handler": func() error { _, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/hooks/x", nil}); return err },
 	} {
 		if fn() == nil {
