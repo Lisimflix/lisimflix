@@ -97,6 +97,8 @@ func TestAddChecksInput(t *testing.T) {
 		"no mappings":     {"s2", Sonarr, []string{"TV"}, nil},
 		"relative remote": {"s2", Sonarr, []string{"TV"}, []Mapping{{"tv", "TV"}}},
 		"local escapes":   {"s2", Sonarr, []string{"TV"}, []Mapping{{"/tv", "../etc"}}},
+		"drive climbs":    {"s2", Sonarr, []string{"TV"}, []Mapping{{`C:\..`, "TV"}}},
+		"unc climbs":      {"s2", Sonarr, []string{"TV"}, []Mapping{{`\\nas\..\..\Movies`, "TV"}}},
 		"absolute local":  {"s2", Sonarr, []string{"TV"}, []Mapping{{"/tv", "/media/TV"}}},
 	} {
 		if _, _, err := st.Add(ctx, c.name, c.kind, c.roots, c.maps); !errors.Is(err, ErrInvalid) {

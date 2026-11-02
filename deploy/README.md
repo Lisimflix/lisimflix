@@ -131,7 +131,8 @@ for Radarr.
 
 1. Run the command above. It prints the exact settings and the password, once.
 2. In Sonarr (Settings → Connect → +) choose Webhook, paste the printed URL, username and
-   password, set the method to POST, tick the triggers listed, and press Test.
+   password, set the method to POST, tick the triggers listed (including the "File Delete For Upgrade" one, which
+   sends the replaced file's delete), and press Test.
 3. `lisimflix hook receipts --name sonarr` shows each notification and why one was rejected.
 
 - **Reachability:** Sonarr and Radarr must be able to reach the printed URL: the same Docker

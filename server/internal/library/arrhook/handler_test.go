@@ -25,12 +25,15 @@ type hints struct {
 	mu    sync.Mutex
 	calls []string
 	err   error
+	// failAt, when > 0, makes only that call (1-based) fail with err.
+	failAt, n int
 }
 
 func (h *hints) Hint(rootID, scope, cause string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.err != nil {
+	h.n++
+	if h.err != nil && (h.failAt == 0 || h.failAt == h.n) {
 		return h.err
 	}
 	h.calls = append(h.calls, rootID+" "+scope+" "+cause)
@@ -272,6 +275,29 @@ func TestInvalidScopeIsRejected(t *testing.T) {
 		t.Fatalf("%d %+v", rec.Code, a)
 	}
 	if r := f.lastReceipt(t); r.Result != ResultRejected || !strings.Contains(r.Reason, "symlink") {
+		t.Fatalf("receipt %+v", r)
+	}
+}
+
+// A scope refused partway through leaves the earlier scopes queued; the
+// receipt must list exactly those, and say so.
+func TestPartialQueueReceiptIsTruthful(t *testing.T) {
+	f := newHook(t)
+	f.hints.err, f.hints.failAt = fmt.Errorf("%w: symlink", library.ErrInvalid), 2
+	rec := f.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/x"},"episodeFile":{"path":"/tv/x/a.mkv"},"deletedFiles":[{"path":"/tv/y/b.mkv"}]}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	r := f.lastReceipt(t)
+	if r.Result != ResultRejected || len(r.Scopes) != 1 || len(f.hints.list()) != 1 ||
+		!strings.Contains(r.Reason, "1 of 2") || !strings.Contains(r.Reason, "symlink") {
+		t.Fatalf("receipt %+v, queued %q", r, f.hints.list())
+	}
+	// Nothing queued before the failure: no scopes, no "of" prefix.
+	f2 := newHook(t)
+	f2.hints.err = errors.New("library: not found")
+	f2.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/x"},"episodeFile":{"path":"/tv/x/a.mkv"}}`))
+	if r := f2.lastReceipt(t); len(r.Scopes) != 0 || strings.Contains(r.Reason, " of ") {
 		t.Fatalf("receipt %+v", r)
 	}
 }

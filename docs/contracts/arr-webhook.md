@@ -43,12 +43,17 @@ A known event without the paths it should carry is a schema error (400).
 Each source has `--map REMOTE=LOCAL` pairs: a folder as Sonarr/Radarr sees it, and the same folder
 relative to Lisimflix's media root. The longest match wins, by whole folders (`/tv` doesn't cover
 `/tvshows`). Windows paths get forward slashes, and remote paths are cleaned before mapping, so `..`
-can't climb out of a mapping. Every mapped path must fall inside one of the source's library folders.
+can't climb out of a mapping: a path that would leave its drive (`C:\..`) or its UNC share
+(`\\nas\share\..`) is treated as not absolute and rejected. Every mapped path must fall inside one of the source's library folders.
 
-**All or nothing:** if any path in a notification can't be mapped (unmapped, an escape, another
-library, relative), the whole notification is rejected with 400 and nothing is queued. Files of one
-notification that share a folder become one scan of that folder; duplicates and scopes inside
-another scope are dropped.
+**Paths are checked first:** every path in a notification is mapped and confined before anything is
+queued. If any can't be mapped (unmapped, an escape, another library, relative), the whole
+notification is rejected with 400 and nothing is queued. Files of one notification that share a
+folder become one scan of that folder; duplicates and scopes inside another scope are dropped.
+
+A scope the scheduler then refuses (a symlinked folder: 400; the library not ready: 503) can leave
+earlier scopes of the same notification queued. The receipt lists exactly the scopes that were
+queued, and its reason starts "N of M scans queued before:".
 
 ## Responses
 

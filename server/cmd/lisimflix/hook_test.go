@@ -37,6 +37,9 @@ func TestServeImportNotification(t *testing.T) {
 	if user == nil || pass == nil || !strings.Contains(out, "/hooks/v1/arr") {
 		t.Fatalf("hook add output:\n%s", out)
 	}
+	if !strings.Contains(out, "On Movie File Delete For Upgrade") {
+		t.Fatalf("hook add output lacks the upgrade-delete trigger:\n%s", out)
+	}
 	status := func() library.RootStatus {
 		st, _ := f.s.scans.Status(context.Background())
 		for _, s := range st {
@@ -80,5 +83,11 @@ func TestServeImportNotification(t *testing.T) {
 	}
 	if out := run1("hook", "list"); !strings.Contains(out, "revoked") {
 		t.Fatalf("list:\n%s", out)
+	}
+}
+
+func TestPrintable(t *testing.T) {
+	if got := printable("a\x1b[31mred\t\nb\u200bc é"); got != "a?[31mred??b?c é" {
+		t.Fatalf("%q", got)
 	}
 }

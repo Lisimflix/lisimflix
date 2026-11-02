@@ -9,6 +9,7 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
 
 	"github.com/Lisimflix/lisimflix/server/internal/library/arrhook"
 )
@@ -60,8 +61,10 @@ func cmdHook(args []string, stdout io.Writer) error {
 		app := map[string]string{arrhook.Sonarr: "Sonarr", arrhook.Radarr: "Radarr"}[src.Kind]
 		fmt.Fprintf(stdout, "added %s (%s)\n\n", src.ID, src.Name)
 		fmt.Fprintf(stdout, "In %s: Settings > Connect > + > Webhook\n", app)
-		fmt.Fprintf(stdout, "  Triggers:  On Import, On Upgrade, On Rename, On File Delete, On %s Delete (and On Import Complete)\n",
-			map[string]string{arrhook.Sonarr: "Series", arrhook.Radarr: "Movie"}[src.Kind])
+		unit := map[string]string{arrhook.Sonarr: "Series", arrhook.Radarr: "Movie"}[src.Kind]
+		file := map[string]string{arrhook.Sonarr: "Episode File", arrhook.Radarr: "Movie File"}[src.Kind]
+		fmt.Fprintf(stdout, "  Triggers:  On Import, On Upgrade, On Rename, On File Delete, On %s Delete For Upgrade, On %s Delete (and On Import Complete)\n",
+			file, unit)
 		fmt.Fprintf(stdout, "  URL:       %s%s\n", strings.TrimSuffix(cfg.PublicOrigin, "/"), arrhook.Path)
 		fmt.Fprintf(stdout, "  Method:    POST\n")
 		fmt.Fprintf(stdout, "  Username:  %s\n", src.ID)
@@ -112,12 +115,24 @@ func cmdHook(args []string, stdout io.Writer) error {
 				for _, x := range r.Scopes {
 					sc = append(sc, x.Path)
 				}
-				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.At.Local().Format(time.DateTime), r.Event, r.App, r.Result,
-					strings.Join(sc, "; "), r.Reason)
+				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.At.Local().Format(time.DateTime), printable(r.Event), printable(r.App), r.Result,
+					printable(strings.Join(sc, "; ")), printable(r.Reason))
 			}
 			return tw.Flush()
 		}
 		return arrhook.ErrNotFound
 	}
 	return fmt.Errorf("unknown hook command %q", args[0])
+}
+
+// printable replaces anything that is not a printable rune (control
+// characters, escapes, tabs, newlines) with "?": receipt text is sender-controlled
+// and must not drive the admin's terminal or break the table.
+func printable(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsPrint(r) {
+			return r
+		}
+		return '?'
+	}, s)
 }

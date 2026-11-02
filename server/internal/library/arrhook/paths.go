@@ -15,17 +15,44 @@ var (
 	errNotAbsolute = errors.New("arrhook: path must be absolute")
 )
 
-var driveRe = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+var (
+	driveRe      = regexp.MustCompile(`^[A-Za-z]:[\\/]`)
+	driveCleanRe = regexp.MustCompile(`^[A-Za-z]:(/|$)`)
+)
 
 // normRemote cleans a path as a source reports it. Windows drive and UNC paths
 // use backslashes, which become slashes; anything else must start with "/".
+// The cleaned result must stay absolute: a drive path keeps its "X:" prefix and
+// a UNC path keeps its \\server\share prefix, so ".." can't climb out of them
+// (it would otherwise leave a relative path that matches any mapping).
 func normRemote(p string) (string, bool) {
-	if driveRe.MatchString(p) || strings.HasPrefix(p, `\\`) {
-		p = strings.ReplaceAll(p, `\`, "/")
-	} else if !strings.HasPrefix(p, "/") {
-		return "", false
+	switch {
+	case driveRe.MatchString(p):
+		p = path.Clean(strings.ReplaceAll(p, `\`, "/"))
+		if !driveCleanRe.MatchString(p) {
+			return "", false // ".." climbed off the drive
+		}
+		return p, true
+	case strings.HasPrefix(p, `\\`):
+		var parts []string
+		for _, s := range strings.Split(strings.ReplaceAll(p, `\`, "/"), "/") {
+			if s != "" {
+				parts = append(parts, s)
+			}
+		}
+		if len(parts) < 2 || slices.Contains(parts[:2], "..") || slices.Contains(parts[:2], ".") {
+			return "", false
+		}
+		c := path.Clean("/" + strings.Join(parts, "/"))
+		share := "/" + parts[0] + "/" + parts[1]
+		if c != share && !strings.HasPrefix(c, share+"/") {
+			return "", false // ".." climbed above the share
+		}
+		return c, true
+	case strings.HasPrefix(p, "/"):
+		return path.Clean(p), true
 	}
-	return path.Clean(p), true
+	return "", false
 }
 
 // within reports whether p is dir or inside it. Whole folders only: "/tv" does

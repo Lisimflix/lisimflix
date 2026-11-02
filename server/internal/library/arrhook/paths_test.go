@@ -31,6 +31,9 @@ func TestResolve(t *testing.T) {
 		{"/tv/../etc/passwd", Scope{}, errUnmapped},                     // cleaned first
 		{"/data/Movies/x.mkv", Scope{}, errOutside},                     // mapped, but no root of this source
 		{"/data/series/../../tv/x.mkv", Scope{"root-tv", "x.mkv"}, nil}, // = /tv/x.mkv
+		{`C:\..\..\Movies\x.mkv`, Scope{}, errNotAbsolute},              // would clean to a relative path
+		{`C:\..`, Scope{}, errNotAbsolute},
+		{`\\nas\..\..\Movies`, Scope{}, errNotAbsolute}, // climbs above the share
 		{"Show/x.mkv", Scope{}, errNotAbsolute},
 		{"", Scope{}, errNotAbsolute},
 	} {
@@ -64,6 +67,30 @@ func TestGroup(t *testing.T) {
 	} {
 		if got := group(c.in); !slices.Equal(got, c.want) {
 			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestNormRemote(t *testing.T) {
+	for _, c := range []struct {
+		in, want string
+		ok       bool
+	}{
+		{`C:\Media\TV\`, "C:/Media/TV", true},
+		{`C:\Media\..`, "C:", true},
+		{`C:\..\..\Movies\x.mkv`, "", false},
+		{`C:\..`, "", false},
+		{`\\nas\share\TV\x.mkv`, "/nas/share/TV/x.mkv", true},
+		{`\\nas\share\TV\..\Movies`, "/nas/share/Movies", true},
+		{`\\nas\share\..\Movies`, "", false},
+		{`\\nas\..\..\Movies`, "", false},
+		{`\\nas`, "", false},
+		{"/tv/../..", "/", true},
+		{"tv", "", false},
+	} {
+		got, ok := normRemote(c.in)
+		if got != c.want || ok != c.ok {
+			t.Errorf("normRemote(%q) = %q, %v; want %q, %v", c.in, got, ok, c.want, c.ok)
 		}
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -184,22 +185,29 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		scopes = append(scopes, s)
 	}
-	rec.Scopes = group(scopes)
-	for _, s := range rec.Scopes {
+	all := group(scopes)
+	for i, s := range all {
 		if err := h.hint.Hint(s.RootID, s.Path, CauseImport); err != nil {
+			// The receipt lists only what was queued before the refusal.
+			rec.Scopes = all[:i]
+			queued := ""
+			if i > 0 {
+				queued = fmt.Sprintf("%d of %d scans queued before: ", i, len(all))
+			}
 			if errors.Is(err, library.ErrInvalid) {
 				// A scope the library won't scan (e.g. through a symlinked
 				// folder) is the path's problem, like an unmappable path.
-				reject(err.Error())
+				reject(queued + err.Error())
 				return
 			}
 			// The scheduler doesn't know the root yet (just added) or isn't
 			// running; the next reconciliation scan covers the change.
-			rec.Result, rec.Reason = ResultRejected, "library not ready: "+err.Error()
+			rec.Result, rec.Reason = ResultRejected, queued+"library not ready: "+err.Error()
 			h.finish(w, r, log, src, rec, http.StatusServiceUnavailable)
 			return
 		}
 	}
+	rec.Scopes = all
 	rec.Result = ResultQueued
 	h.finish(w, r, log, src, rec, http.StatusAccepted)
 }

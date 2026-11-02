@@ -3,8 +3,6 @@
 // it was given, with its own paths mapped onto the media root. The
 // notifications are hints: the catalogue still decides what is in the library
 // by scanning. Nothing here deletes media or catalogue entries.
-//
-// Planned: LIB-4 (the webhook handler in a later task calls this store).
 package arrhook
 
 import (
