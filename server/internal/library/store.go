@@ -20,7 +20,6 @@ import (
 var migrationsFS embed.FS
 
 // Migrations is the catalogue's schema, for storage.Migrate.
-// Planned: LIB-2b (serve registers it with the other modules' migrations).
 func Migrations() storage.Source {
 	sub, err := fs.Sub(migrationsFS, "migrations")
 	if err != nil {
@@ -62,7 +61,6 @@ type Store struct {
 	now func() time.Time
 }
 
-// Planned: LIB-2b (serve builds the store and scanner).
 func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
 
 func newID(prefix string) string { return prefix + "-" + rand.Text() }
@@ -72,7 +70,6 @@ func ms(t time.Time) int64 { return t.UnixMilli() }
 // CreateLibrary adds a library over one or more folders, given relative to the
 // media root. A folder can't be the media root's parent, nor overlap a folder
 // of any library.
-// Planned: LIB-2c (the libraries API).
 func (s *Store) CreateLibrary(ctx context.Context, name, typ string, roots []string) (Library, error) {
 	name = strings.TrimSpace(name)
 	switch {
@@ -129,7 +126,6 @@ func overlaps(a, b string) bool {
 }
 
 // Library returns one library and its roots.
-// Planned: LIB-2c (the libraries API).
 func (s *Store) Library(ctx context.Context, id string) (Library, error) {
 	var lib Library
 	err := s.db.QueryRowContext(ctx, `SELECT id, name, type FROM library_libraries WHERE id = ?`, id).Scan(&lib.ID, &lib.Name, &lib.Type)
@@ -157,6 +153,23 @@ func (s *Store) Library(ctx context.Context, id string) (Library, error) {
 	return lib, nil
 }
 
+// Libraries returns every library with its roots, by name.
+func (s *Store) Libraries(ctx context.Context) ([]Library, error) {
+	ids, err := queryStrings(ctx, s.db, `SELECT id FROM library_libraries ORDER BY name, id`)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Library, 0, len(ids))
+	for _, id := range ids {
+		lib, err := s.Library(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, lib)
+	}
+	return out, nil
+}
+
 // root returns a root and its library's type.
 func (s *Store) root(ctx context.Context, id string) (Root, string, error) {
 	var r Root
@@ -181,7 +194,6 @@ func (s *Store) root(ctx context.Context, id string) (Root, string, error) {
 
 // MarkInterrupted ends runs left "running" by a crash or restart. Scans are
 // idempotent, so the next scan of the root simply starts again (spec §3.6).
-// Planned: LIB-2b (serve calls it at startup).
 func (s *Store) MarkInterrupted(ctx context.Context) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

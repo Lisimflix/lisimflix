@@ -40,7 +40,7 @@ const quiet = 30 * time.Second
 
 func probeDue(t *testing.T, sc *Scanner, root string, p Prober) ProbeRun {
 	t.Helper()
-	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet)
+	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +192,23 @@ func TestDeferredRevisionNeverMovesBackwards(t *testing.T) {
 	}
 }
 
+// A limit takes the oldest changes first and leaves the rest for later calls.
+func TestProbeDueLimit(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "A (2001)/A (2001).mkv", "B (2002)/B (2002).mkv", "C (2003)/C (2003).mkv")
+	old := time.Now().Add(-3 * time.Hour)
+	os.Chtimes(filepath.Join(m.dir, "Movies/C (2003)/C (2003).mkv"), old, old)
+	scan(t, sc, root)
+	p := &scriptedProber{}
+	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet, 1)
+	if err != nil || run.Queued != 1 || run.Stored != 1 || len(p.calls) != 1 || p.calls[0] != "C (2003)/C (2003).mkv" {
+		t.Fatalf("limit 1: %+v %v calls %v", run, err, p.calls)
+	}
+	if run := probeDue(t, sc, root, p); run.Queued != 2 {
+		t.Fatalf("rest: %+v", run)
+	}
+	_ = s
+}
+
 // #109 point 2: a file that changed after the last scan and is quiet now is
 // probed once, not on every ProbeDue turn until the next scan. Its newer
 // revision is recorded with the result.
@@ -215,7 +232,7 @@ func TestFileChangedSinceTheScanIsProbedOnce(t *testing.T) {
 // #109 point 3: workers <= 0 means the default, not "probe nothing".
 func TestProbeDueWithoutWorkersUsesTheDefault(t *testing.T) {
 	_, _, _, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
-	run, err := sc.ProbeDue(context.Background(), root, &scriptedProber{}, 0, quiet)
+	run, err := sc.ProbeDue(context.Background(), root, &scriptedProber{}, 0, quiet, 0)
 	if err != nil || run.Stored != 1 {
 		t.Fatalf("%+v %v", run, err)
 	}

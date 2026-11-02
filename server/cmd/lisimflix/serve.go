@@ -18,6 +18,7 @@ import (
 	"github.com/Lisimflix/lisimflix/server/internal/app"
 	"github.com/Lisimflix/lisimflix/server/internal/auth"
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
+	"github.com/Lisimflix/lisimflix/server/internal/library"
 	"github.com/Lisimflix/lisimflix/server/internal/m1config"
 	"github.com/Lisimflix/lisimflix/server/internal/playback"
 	"github.com/Lisimflix/lisimflix/server/internal/storage"
@@ -42,6 +43,10 @@ type server struct {
 
 	stopNightly context.CancelFunc // stops the nightly job and the auth sweep
 	nightlyDone chan struct{}
+
+	scans       *library.Scheduler // nil when storage failed to start
+	stopLibrary context.CancelFunc
+	libraryDone chan struct{}
 	once        sync.Once
 }
 
@@ -79,7 +84,8 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	}
 	am.SetLogger(log)
 
-	s := &server{cfg: cfg, pb: pb, single: single, root: root, nightlyDone: make(chan struct{})}
+	s := &server{cfg: cfg, pb: pb, single: single, root: root, nightlyDone: make(chan struct{}), libraryDone: make(chan struct{}),
+		stopLibrary: func() {}}
 	dbPath, backups = storagePaths(cfgPath, dbPath, backups)
 	snap := storage.SnapshotOptions{Dir: backups, AppVersion: version, ExtraFiles: []string{cfgPath}}
 	s.db, s.storageErr = openStorage(ctx, dbPath, snap, extra)
@@ -101,6 +107,22 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	} else {
 		close(s.nightlyDone)
 	}
+	if s.db != nil {
+		// LIB-2: scans and probes run in the background; browsing and
+		// playback never wait for them.
+		sc := &library.Scanner{Store: library.NewStore(s.db), Media: root}
+		s.scans = library.NewScheduler(sc, newProber(), log, libraryOptions)
+		lctx, cancel := context.WithCancel(context.Background())
+		s.stopLibrary = cancel
+		go func() {
+			defer close(s.libraryDone)
+			if err := s.scans.Run(lctx); err != nil {
+				log.Error("library.scheduler", "err", err.Error())
+			}
+		}()
+	} else {
+		close(s.libraryDone)
+	}
 
 	ready := func(context.Context) error {
 		if s.storageErr != nil {
@@ -121,7 +143,7 @@ func openStorage(ctx context.Context, path string, snap storage.SnapshotOptions,
 	if err != nil {
 		return nil, err
 	}
-	srcs := append([]storage.Source{storage.Core()}, extra...)
+	srcs := append([]storage.Source{storage.Core(), library.Migrations()}, extra...)
 	if _, err := db.MigrateWithBackup(ctx, srcs, snap, time.Now); err != nil {
 		db.Close()
 		return nil, err
@@ -130,7 +152,8 @@ func openStorage(ctx context.Context, path string, snap storage.SnapshotOptions,
 }
 
 // shutdown closes in the approved order: playback first (cutting streams, or
-// Shutdown would wait for them), then the HTTP server, the media root, the
+// Shutdown would wait for them), then the HTTP server, the library scheduler
+// (scans stop, keeping finished work; bounded by ctx), the media root, the
 // nightly job (a running snapshot finishes, bounded by ctx) and the
 // database. srv may be nil. It is safe to call more than once.
 func (s *server) shutdown(ctx context.Context, srv *http.Server) error {
@@ -139,6 +162,11 @@ func (s *server) shutdown(ctx context.Context, srv *http.Server) error {
 		s.pb.Close()
 		if srv != nil {
 			err = srv.Shutdown(ctx)
+		}
+		s.stopLibrary()
+		select {
+		case <-s.libraryDone:
+		case <-ctx.Done():
 		}
 		s.root.Close()
 		s.stopNightly()

@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -343,7 +344,7 @@ func TestUpgradeTakesPreUpgradeSnapshot(t *testing.T) {
 	f := newFixture(t)
 	f.s.shutdown(context.Background(), nil)
 	newer := storage.Source{Module: "itest", FS: fstest.MapFS{
-		"20261027120000_itest_marker.sql": {Data: []byte("CREATE TABLE itest_marker (id INTEGER PRIMARY KEY) STRICT;")},
+		"20261231000000_itest_marker.sql": {Data: []byte("CREATE TABLE itest_marker (id INTEGER PRIMARY KEY) STRICT;")},
 	}}
 	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, []storage.Source{newer}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil || s.storageErr != nil {
@@ -354,7 +355,7 @@ func TestUpgradeTakesPreUpgradeSnapshot(t *testing.T) {
 	if err != nil || !found || m.Reason != "pre-upgrade" {
 		t.Fatalf("latest snapshot = %+v %v %v", m, found, err)
 	}
-	if len(m.Schema) != 1 {
+	if len(m.Schema) == 0 || slices.Contains(m.Schema, "20261231000000_itest_marker") {
 		t.Fatalf("pre-upgrade snapshot schema = %v, want the old one", m.Schema)
 	}
 	var hasConfig bool

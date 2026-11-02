@@ -8,6 +8,9 @@ movie at its original quality, with no re-encoding, in Chrome and Firefox on Lin
 (Windows follows in a later milestone). The M1 server, web player and container are on `main`,
 and playback passes on all four targets ([results](docs/testing/m1-results.md), #19).
 
+Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
+anime, and the server keeps it scanned and probed. Nothing browses libraries yet (LIB-2c, UI-2).
+
 To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
 only: plain HTTP, one viewer and one movie.
 
