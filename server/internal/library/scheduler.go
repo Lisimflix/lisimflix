@@ -78,6 +78,9 @@ type rootSched struct {
 	watch    string
 	probe    bool      // probes may be due now
 	probeAt  time.Time // a deferred probe becomes due then
+	// empty counts whole-root scans in a row that found the folder empty with
+	// nothing catalogued (a new library waiting for media); 0 if not (#140).
+	empty int
 }
 
 func (r *rootSched) pending() bool { return r.full != "" || len(r.scopes) > 0 }
@@ -558,9 +561,9 @@ func (s *Scheduler) execute(ctx context.Context, j *job) {
 	j.cancel = cancel
 	rs := s.roots[j.root]
 	w := s.w
-	var abs, watch string
+	var abs, watch, rel string
 	if rs != nil {
-		abs, watch = rs.abs, rs.watch
+		abs, watch, rel = rs.abs, rs.watch, rs.Path
 	}
 	s.mu.Unlock()
 
@@ -568,7 +571,7 @@ func (s *Scheduler) execute(ctx context.Context, j *job) {
 	if j.full != "" {
 		scopes = []string{"."}
 		// Watch before the walk, so a change during the scan is hinted.
-		if w != nil && watch != WatchOn && rs != nil && s.sc.reachable(rs.Path) {
+		if w != nil && watch != WatchOn && rs != nil && s.sc.watchable(jctx, j.root, rel) {
 			st, err := w.watch(j.root, abs)
 			s.mu.Lock()
 			rs.watch = st
@@ -632,6 +635,9 @@ func (s *Scheduler) after(ctx context.Context, rootID string, run Run) {
 		s.log.Error("library.scan", "root_id", rootID, "err", err.Error())
 	}
 	root, _, err := s.sc.Store.root(bg, rootID)
+	// A whole-root scan that found nothing in an empty folder (a populated
+	// root that empties fails with ReasonRootEmpty instead).
+	empty := err == nil && run.Status == RunCompleted && run.Scope == "." && run.Seen == 0 && !s.sc.reachable(root.Path)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rs := s.roots[rootID]
@@ -647,6 +653,17 @@ func (s *Scheduler) after(ctx context.Context, rootID string, run Run) {
 		// root is back, so reconcile all of it.
 		if run.Scope != "." && root.State != RootAvailable {
 			s.queueFull(rs, CauseRecheck, s.now())
+		}
+		switch {
+		case empty:
+			// The watch finds the first file; the periodic scan backs off
+			// meanwhile (#140).
+			rs.empty++
+			if s.opt.FullScanEvery > 0 {
+				rs.nextFull = s.now().Add(emptyBackoff(rs.empty, s.opt.FullScanEvery))
+			}
+		case run.Scope == "." || run.Seen > 0:
+			rs.empty = 0
 		}
 	case run.Reason == ReasonRootUnavailable || run.Reason == ReasonRootEmpty:
 		if s.w != nil {
@@ -687,7 +704,9 @@ func (s *Scheduler) recheck(ctx context.Context) {
 		switch {
 		case rs.State == RootOffline:
 			check = append(check, cand{rs, false})
-		case w != nil && rs.watch == WatchOff:
+		case w != nil && rs.watch == WatchOff && rs.empty == 0:
+			// An empty root's lost watch waits for its backed-off periodic
+			// scan, which re-arms it (#140).
 			check = append(check, cand{rs, true})
 		}
 	}
@@ -799,6 +818,38 @@ func (s *Scheduler) logRun(rootID string, run Run, d time.Duration) {
 		"cause", run.Cause, "status", run.Status, "reason", run.Reason, "duration_ms", d.Milliseconds(),
 		"seen", run.Seen, "added", run.Added, "changed", run.Changed, "returned", run.Returned,
 		"missing", run.Missing, "unplaced", run.Unplaced)
+}
+
+// emptyBackoff is the wait before the next whole-root scan of a root found
+// empty n times in a row: 15 minutes, then an hour, then the normal interval,
+// never longer than it (#140).
+func emptyBackoff(n int, every time.Duration) time.Duration {
+	steps := []time.Duration{15 * time.Minute, time.Hour}
+	if n <= len(steps) {
+		return min(steps[n-1], every)
+	}
+	return every
+}
+
+// watchable reports whether a root's watch may be armed before a scan: it
+// has entries, or it is an empty folder with nothing catalogued (a new
+// library waiting for media, #140). An empty folder where files were stays
+// unwatched: it is more likely an unmounted disk.
+func (sc *Scanner) watchable(ctx context.Context, rootID, rootPath string) bool {
+	dir, err := sc.Media.OpenRoot(rootPath)
+	if err != nil {
+		return false
+	}
+	defer dir.Close()
+	empty, err := rootEmpty(dir)
+	if err != nil {
+		return false
+	}
+	if !empty {
+		return true
+	}
+	c, err := sc.Store.fileCounts(ctx, rootID)
+	return err == nil && c.Present == 0
 }
 
 // reachable reports whether a root can be read and has entries: the cheap

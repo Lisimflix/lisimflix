@@ -108,3 +108,24 @@ func TestLibraryAddRefusesSymlinkedFolder(t *testing.T) {
 		t.Fatalf("symlinked folder accepted (%d): %s", code, out.String())
 	}
 }
+
+// #140 note 3: a symlink anywhere in the folder's path is refused, not only
+// the last part (Media/Movies with Media a link to the media root's Store).
+func TestLibraryAddRefusesSymlinkedParent(t *testing.T) {
+	f := newFixture(t)
+	media := filepath.Join(f.dir, "media")
+	if err := os.MkdirAll(filepath.Join(media, "Store", "Movies"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("Store", filepath.Join(media, "Media")); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Media/Movies"}, nil, &out, &out); code == 0 || !strings.Contains(out.String(), "symlink") {
+		t.Fatalf("folder under a symlinked parent accepted (%d): %s", code, out.String())
+	}
+	out.Reset()
+	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Store/Movies"}, nil, &out, &out); code != 0 {
+		t.Fatalf("the real folder was refused (%d): %s", code, out.String())
+	}
+}

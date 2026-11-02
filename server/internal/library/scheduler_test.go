@@ -43,6 +43,9 @@ func startScheduler(t *testing.T, libType string, opts SchedulerOptions, p Probe
 	s.now = time.Now // real time: the scheduler compares probe_after with it
 	m := newMedia(t)
 	dir := map[string]string{"movies": "Movies", "tv": "TV"}[libType]
+	if err := os.MkdirAll(filepath.Join(m.dir, dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for _, f := range files {
 		m.write(dir+"/"+f, 10)
 	}
@@ -602,5 +605,91 @@ func TestOverdueScheduledScanIsPromoted(t *testing.T) {
 	rs.full = CauseManual // urgent: one whole-root candidate, priority 0
 	if c := sch.candidates(rs, now); len(c) != 1 || !c[0].full || c[0].prio != 0 {
 		t.Fatalf("urgent: %+v", c)
+	}
+}
+
+func (f *schedFixture) emptyMark(t *testing.T) (int, time.Duration) {
+	t.Helper()
+	f.sch.mu.Lock()
+	defer f.sch.mu.Unlock()
+	rs := f.sch.roots[f.root]
+	return rs.empty, time.Until(rs.nextFull)
+}
+
+// #140 note 1: a new library whose folder is still empty is watched, so its
+// first file is found at once, and isn't rescanned every Recheck.
+func TestEmptyRootIsWatchedNotRescanned(t *testing.T) {
+	f := startScheduler(t, "movies", fastOpts, &scriptedProber{})
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed'`) == 1 })
+	eventually(t, "watching", func() bool { return f.status(t).Watch == WatchOn })
+	time.Sleep(400 * time.Millisecond) // eight rechecks
+	if n := f.runs(t, `1`); n != 1 {
+		t.Fatalf("%d runs for an empty root, want only the startup scan", n)
+	}
+	f.m.write("Movies/A (2001)/A (2001).mkv", 10)
+	eventually(t, "first file found by the watch", func() bool { return f.probed(t, "A (2001)/A (2001).mkv") })
+	if n := f.runs(t, `cause = 'watch' AND status = 'completed'`); n < 1 {
+		t.Fatalf("%d watch runs: the first file must come through the watch", n)
+	}
+	if n, _ := f.emptyMark(t); n != 0 {
+		t.Fatalf("empty mark %d after content was found", n)
+	}
+}
+
+// An empty root whose watch is lost skips the every-minute recheck scan and
+// backs off instead: 15 min, then 1 h, then the normal interval.
+func TestEmptyRootBacksOff(t *testing.T) {
+	opts := fastOpts
+	opts.FullScanEvery = 6 * time.Hour
+	f := startScheduler(t, "movies", opts, &scriptedProber{})
+	eventually(t, "watching", func() bool { return f.status(t).Watch == WatchOn })
+	near := func(got, want time.Duration) bool { return got > want-time.Minute && got <= want }
+	eventually(t, "startup scan done", func() bool { n, _ := f.emptyMark(t); return n > 0 })
+	if n, next := f.emptyMark(t); n != 1 || !near(next, 15*time.Minute) {
+		t.Fatalf("after the first empty scan: mark %d, next full scan in %v; want 1, 15m", n, next)
+	}
+	f.sch.mu.Lock()
+	w := f.sch.w
+	f.sch.mu.Unlock()
+	for _, p := range w.fw.WatchList() {
+		w.fw.Remove(p) // as an unmount would
+	}
+	time.Sleep(400 * time.Millisecond) // eight rechecks
+	if n := f.runs(t, `1`); n != 1 {
+		t.Fatalf("%d runs: a lost watch on an empty root must wait for the backoff", n)
+	}
+	for i, want := range []time.Duration{time.Hour, 6 * time.Hour, 6 * time.Hour} {
+		if err := f.sch.ScanNow(f.lib.ID); err != nil {
+			t.Fatal(err)
+		}
+		eventually(t, "manual scan", func() bool { return f.runs(t, `cause = 'manual' AND status = 'completed'`) == i+1 })
+		eventually(t, "backoff step", func() bool { n, next := f.emptyMark(t); return n == i+2 && near(next, want) })
+	}
+}
+
+// A folder that had files and is now empty is still treated as offline (an
+// unmounted disk), unwatched and without the empty mark.
+func TestEmptiedRootStaysOffline(t *testing.T) {
+	f := startScheduler(t, "movies", fastOpts, &scriptedProber{}, "A (2001)/A (2001).mkv")
+	eventually(t, "watching", func() bool { return f.status(t).Watch == WatchOn })
+	if err := os.RemoveAll(filepath.Join(f.m.dir, "Movies", "A (2001)")); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, "root offline", func() bool { st := f.status(t); return st.State == RootOffline && st.Watch == WatchOff })
+	if n, _ := f.emptyMark(t); n != 0 {
+		t.Fatalf("empty mark %d on an emptied root", n)
+	}
+	if f.sc.watchable(context.Background(), f.root, "Movies") {
+		t.Fatal("an emptied root with catalogued files must not be watched")
+	}
+}
+
+// A folder holding only non-media files isn't empty: no mark, no backoff.
+func TestRootWithoutMediaIsNotMarkedEmpty(t *testing.T) {
+	f := startScheduler(t, "movies", fastOpts, &scriptedProber{}, "readme.txt")
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed' AND seen = 0`) == 1 })
+	eventually(t, "watching", func() bool { return f.status(t).Watch == WatchOn })
+	if n, _ := f.emptyMark(t); n != 0 {
+		t.Fatalf("empty mark %d on a folder with files", n)
 	}
 }

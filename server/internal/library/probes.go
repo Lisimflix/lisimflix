@@ -87,13 +87,13 @@ func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, worker
 	return run, firstErr
 }
 
+// resultFits matches a file a probe result may be saved to (compare-and-set).
+const resultFits = `root_id = ? AND path = ? AND ((size = ? AND mtime_ns = ?) OR mtime_ns < ?)`
+
 // record saves one probe outcome. A result is for the catalogue's revision,
 // or for a newer one (a file changed since the last scan and quiet now), which
 // it records with the result so the file isn't probed again before the next
 // scan (#109). A result older than the catalogue's revision is stale.
-const resultFits = `root_id = ? AND path = ? AND ((size = ? AND mtime_ns = ?) OR mtime_ns < ?)`
-
-// record saves one probe outcome.
 func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time.Duration, run *ProbeRun) error {
 	switch {
 	case o.Err == nil:
