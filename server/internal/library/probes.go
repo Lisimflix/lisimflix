@@ -34,8 +34,9 @@ var timeoutRetries = []time.Duration{15 * time.Minute, time.Hour, 6 * time.Hour,
 // ProbeDue probes the root's present files whose probe doesn't match their
 // current revision, using LIB-1's queue with workers at a time. Unchanged
 // files are never probed again (SCALE-01). A result is saved only if the
-// catalogue holds the revision it describes, or an older one (compare-and-set
-// on size and mtime; see resultFits). A file that is still changing gets a
+// catalogue holds the revision it describes, an older one, or still the one
+// the probe was queued from (compare-and-set on size and mtime; see
+// resultFits). A file that is still changing gets a
 // not-before time instead of being re-queued at once (#62). workers <= 0
 // means DefaultWorkers. limit bounds the files taken in one call (0: all),
 // oldest change first, so a large backlog is worked through in turns with
@@ -46,9 +47,9 @@ func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, worker
 	if err != nil {
 		return ProbeRun{}, err
 	}
-	paths, err := queryStrings(ctx, st.db, `SELECT path FROM library_files WHERE root_id = ? AND state = 'present'
-		AND (probe_size IS NOT size OR probe_mtime_ns IS NOT mtime_ns)
-		AND (probe_after IS NULL OR probe_after <= ?) ORDER BY mtime_ns, path LIMIT ?`, rootID, ms(st.now()), cmp.Or(limit, -1))
+	// Each file's revision as queued: a result is the newest while the
+	// catalogue still holds it (#139).
+	queued, paths, err := st.dueProbes(ctx, rootID, limit)
 	if err != nil || len(paths) == 0 {
 		return ProbeRun{}, err
 	}
@@ -70,7 +71,7 @@ func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, worker
 	q := NewQueue(dir, p, quiet, func(o Outcome) {
 		mu.Lock()
 		defer mu.Unlock()
-		if err := st.record(context.WithoutCancel(ctx), rootID, o, quiet, &run); err != nil && firstErr == nil {
+		if err := st.record(context.WithoutCancel(ctx), rootID, o, queued[o.Path], quiet, &run); err != nil && firstErr == nil {
 			firstErr = err
 		}
 		if left--; left == 0 {
@@ -87,14 +88,48 @@ func (sc *Scanner) ProbeDue(ctx context.Context, rootID string, p Prober, worker
 	return run, firstErr
 }
 
-// resultFits matches a file a probe result may be saved to (compare-and-set).
-const resultFits = `root_id = ? AND path = ? AND ((size = ? AND mtime_ns = ?) OR mtime_ns < ?)`
+// dueProbes returns the root's files due a probe, oldest change first, and
+// the revision each had when it was queued. limit 0 means all.
+func (s *Store) dueProbes(ctx context.Context, rootID string, limit int) (map[string]Revision, []string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT path, size, mtime_ns FROM library_files WHERE root_id = ? AND state = 'present'
+		AND (probe_size IS NOT size OR probe_mtime_ns IS NOT mtime_ns)
+		AND (probe_after IS NULL OR probe_after <= ?) ORDER BY mtime_ns, path LIMIT ?`, rootID, ms(s.now()), cmp.Or(limit, -1))
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	queued := map[string]Revision{}
+	var paths []string
+	for rows.Next() {
+		var p string
+		var r Revision
+		if err := rows.Scan(&p, &r.Size, &r.ModTime); err != nil {
+			return nil, nil, err
+		}
+		queued[p] = r
+		paths = append(paths, p)
+	}
+	return queued, paths, rows.Err()
+}
+
+// resultFits matches a file a probe result may be saved to (compare-and-set):
+// the catalogue holds the result's revision, an older mtime, or still the
+// revision the probe was queued from. The last covers a size change that
+// kept its mtime, which no scan has recorded yet (#139).
+const resultFits = `root_id = ? AND path = ? AND ((size = ? AND mtime_ns = ?) OR mtime_ns < ? OR (size = ? AND mtime_ns = ?))`
+
+// fitsArgs are resultFits' arguments.
+func fitsArgs(rootID string, o Outcome, queued Revision) []any {
+	return []any{rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime, queued.Size, queued.ModTime}
+}
 
 // record saves one probe outcome. A result is for the catalogue's revision,
 // or for a newer one (a file changed since the last scan and quiet now), which
 // it records with the result so the file isn't probed again before the next
-// scan (#109). A result older than the catalogue's revision is stale.
-func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time.Duration, run *ProbeRun) error {
+// scan (#109). queued is the file's revision when the probe was queued: while
+// the catalogue still holds it, the result is the newest even if only the
+// size changed (#139). A result older than the catalogue's revision is stale.
+func (s *Store) record(ctx context.Context, rootID string, o Outcome, queued Revision, quiet time.Duration, run *ProbeRun) error {
 	switch {
 	case o.Err == nil:
 		js, err := json.Marshal(o.Probe)
@@ -103,7 +138,7 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		}
 		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
 			probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
-			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, string(js), rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
+			append([]any{o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, string(js)}, fitsArgs(rootID, o, queued)...)...)
 		if err != nil {
 			return err
 		}
@@ -126,7 +161,7 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		run.Gone++
 	default:
 		if errors.Is(o.Err, probe.ErrTimeout) {
-			if done, err := s.retryTimeout(ctx, rootID, o, run); done || err != nil {
+			if done, err := s.retryTimeout(ctx, rootID, o, queued, run); done || err != nil {
 				return err
 			}
 		}
@@ -136,7 +171,7 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		}
 		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
 			probe_error = ?, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
-			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg, rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
+			append([]any{o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg}, fitsArgs(rootID, o, queued)...)...)
 		if err != nil {
 			return err
 		}
@@ -152,14 +187,14 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 // retryTimeout defers a file whose probe timed out, unless it has run out of
 // retries, and reports whether it dealt with the outcome. Like a stored
 // result, it applies only to the catalogue's revision or a newer one.
-func (s *Store) retryTimeout(ctx context.Context, rootID string, o Outcome, run *ProbeRun) (bool, error) {
+func (s *Store) retryTimeout(ctx context.Context, rootID string, o Outcome, queued Revision, run *ProbeRun) (bool, error) {
 	var n int
 	err := s.db.QueryRowContext(ctx, `SELECT probe_timeouts FROM library_files WHERE root_id = ? AND path = ?`, rootID, o.Path).Scan(&n)
 	if err != nil || n >= len(timeoutRetries) {
 		return false, err
 	}
 	res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_timeouts = ?, probe_after = ?, probe_error = NULL
-		WHERE `+resultFits, o.Rev.Size, o.Rev.ModTime, n+1, ms(s.now().Add(timeoutRetries[n])), rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
+		WHERE `+resultFits, append([]any{o.Rev.Size, o.Rev.ModTime, n + 1, ms(s.now().Add(timeoutRetries[n]))}, fitsArgs(rootID, o, queued)...)...)
 	if err != nil {
 		return false, err
 	}
