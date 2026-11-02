@@ -110,6 +110,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	log := obs.Log(ctx, h.log)
 	peer := peerKey(r.RemoteAddr)
 	if h.over(h.failures, peer, failuresPerIP) {
+		log.Warn("library.hook", "result", "rate_limited", "peer", peer)
 		contracts.WriteError(w, r, contracts.CodeRateLimited, "Too many failed attempts. Try again later.")
 		return
 	}
@@ -121,14 +122,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			contracts.WriteError(w, r, contracts.CodeInternalError, "Internal error.")
 			return
 		}
-		h.count(h.failures, peer, failuresPerIP)
+		if h.count(h.failures, peer, failuresPerIP) {
+			// Only when the map is full of live peers: refuse the new one
+			// rather than fail open without recording its failure.
+			log.Warn("library.hook", "result", "rate_limited", "peer", peer)
+			contracts.WriteError(w, r, contracts.CodeRateLimited, "Too many failed attempts. Try again later.")
+			return
+		}
 		log.Warn("library.hook", "result", "unauthenticated", "peer", peer)
 		w.Header().Set("WWW-Authenticate", `Basic realm="lisimflix-hooks", charset="UTF-8"`)
 		contracts.WriteError(w, r, contracts.CodeUnauthenticated, "Use the source ID as the username and its token as the password.")
 		return
 	}
 	if h.count(h.sources, src.ID, perSource) {
-		log.Warn("library.hook", "source_id", src.ID, "result", "rate_limited")
+		log.Warn("library.hook", "source_id", src.ID, "source", src.Name, "result", "rate_limited")
 		contracts.WriteError(w, r, contracts.CodeRateLimited, "Too many notifications. Missed changes are found by the next scan.")
 		return
 	}

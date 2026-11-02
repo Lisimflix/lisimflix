@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -278,5 +280,54 @@ func TestUntrustedTextIsCapped(t *testing.T) {
 	r = f.lastReceipt(t)
 	if r.Result != ResultRejected || len(r.Reason) == 0 || len(r.Reason) > maxReason || !utf8.ValidString(r.Reason) {
 		t.Fatalf("reason %d bytes valid=%v", len(r.Reason), utf8.ValidString(r.Reason))
+	}
+}
+
+// With the failure map full of live peers a new peer is refused (429), not
+// waved through unrecorded; it is accepted again once the window passes.
+func TestFullFailureMapRefusesNewPeers(t *testing.T) {
+	f := newHook(t)
+	var logs bytes.Buffer
+	f.h.log = slog.New(slog.NewTextHandler(&logs, nil))
+	f.h.mu.Lock()
+	for i := range maxPeerEntries {
+		f.h.failures[fmt.Sprintf("198.51.100.%d-%d", i, i)] = &counter{start: f.clock, n: 1}
+	}
+	f.h.mu.Unlock()
+
+	rec := f.send(http.MethodPost, sonarrUA, f.src.ID, "lfh_wrong", fixture(t, "sonarr_test.json"))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("new peer with full map: %d", rec.Code)
+	}
+	out := logs.String()
+	if !strings.Contains(out, "result=rate_limited") || !strings.Contains(out, "peer=192.0.2.1") ||
+		strings.Contains(out, "lfh_wrong") {
+		t.Fatalf("log %q", out)
+	}
+	f.clock = f.clock.Add(window)
+	if rec := f.send(http.MethodPost, sonarrUA, f.src.ID, "lfh_wrong", nil); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("after the window: %d", rec.Code)
+	}
+}
+
+// The lockout and per-source limits both log result=rate_limited with who.
+func TestRateLimitsAreLogged(t *testing.T) {
+	f := newHook(t)
+	var logs bytes.Buffer
+	f.h.log = slog.New(slog.NewTextHandler(&logs, nil))
+	for range perSource + 1 {
+		f.ok(fixture(t, "sonarr_test.json"))
+	}
+	if out := logs.String(); !strings.Contains(out, "result=rate_limited") || !strings.Contains(out, "source_id="+f.src.ID) || !strings.Contains(out, "source=sonarr") {
+		t.Fatalf("source limit log %q", out)
+	}
+	logs.Reset()
+	f.clock = f.clock.Add(window)
+	for range failuresPerIP {
+		f.send(http.MethodPost, sonarrUA, f.src.ID, "lfh_wrong", nil)
+	}
+	f.send(http.MethodPost, sonarrUA, f.src.ID, f.token, nil)
+	if out := logs.String(); !strings.Contains(out, "result=rate_limited") || !strings.Contains(out, "peer=192.0.2.1") {
+		t.Fatalf("lockout log %q", out)
 	}
 }
