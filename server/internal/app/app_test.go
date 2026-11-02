@@ -343,9 +343,50 @@ func TestNewRejectsInconsistentInputs(t *testing.T) {
 			_, err := New(cfg, plainAM, play, fstest.MapFS{"a.js": {Data: []byte("x")}}, ready, nil)
 			return err
 		},
+		"mount under /api/": func() error {
+			_, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/api/v1/hooks", http.NotFoundHandler()})
+			return err
+		},
+		"mount under /health/": func() error {
+			_, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/health/x", http.NotFoundHandler()})
+			return err
+		},
+		"mount without handler": func() error { _, err := New(cfg, plainAM, play, web, ready, nil, Mount{"/hooks/x", nil}); return err },
 	} {
 		if fn() == nil {
 			t.Errorf("%s: accepted", name)
 		}
+	}
+}
+
+// A mount is served outside the API's Origin/CSRF checks (its callers are
+// servers, not browsers), with the same security headers and request IDs,
+// and the API stays protected.
+func TestMountSkipsBrowserChecks(t *testing.T) {
+	cfg := m1config.Config{PublicOrigin: lanOrigin, CSRFKey: bytes.Repeat([]byte{3}, 32),
+		Viewer: m1config.Viewer{AccountID: "a", ProfileID: "p", Username: "viewer", PasswordHash: viewerHash}}
+	am, _ := auth.NewManager(cfg.Viewer, false, func(string) {})
+	hook := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusAccepted) })
+	h, err := New(cfg, am, &fakePlayback{}, web, func(context.Context) error { return nil }, nil, Mount{"/hooks/v1/arr", hook})
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+	resp, err := http.Post(srv.URL+"/hooks/v1/arr", "application/json", strings.NewReader(`{}`)) // no Origin, no CSRF token
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted || resp.Header.Get("X-Request-Id") == "" || resp.Header.Get("X-Content-Type-Options") != "nosniff" {
+		t.Fatalf("mount: %d %v", resp.StatusCode, resp.Header)
+	}
+	resp, err = http.Post(srv.URL+"/api/v1/auth/logout", "application/json", strings.NewReader(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("API without Origin: %d, want 403", resp.StatusCode)
 	}
 }
