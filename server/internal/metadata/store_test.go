@@ -145,8 +145,8 @@ func TestEnqueueAndPause(t *testing.T) {
 	if n, err := e.st.Enqueue(ctx, 10); err != nil || n != 0 {
 		t.Fatalf("nothing left %d %v", n, err)
 	}
-	if p, _, _ := e.st.Paused(ctx, "tmdb"); p {
-		t.Fatal("paused before Pause")
+	if p, _, err := e.st.Paused(ctx, "tmdb"); p || err != nil {
+		t.Fatalf("before Pause: paused %v, %v", p, err)
 	}
 	if err := e.st.Pause(ctx, "tmdb", "bad key"); err != nil {
 		t.Fatal(err)
@@ -154,9 +154,11 @@ func TestEnqueueAndPause(t *testing.T) {
 	if p, why, err := e.st.Paused(ctx, "tmdb"); err != nil || !p || why != "bad key" {
 		t.Fatalf("paused %v %q %v", p, why, err)
 	}
-	e.st.Resume(ctx, "tmdb")
-	if p, _, _ := e.st.Paused(ctx, "tmdb"); p {
-		t.Fatal("still paused after Resume")
+	if err := e.st.Resume(ctx, "tmdb"); err != nil {
+		t.Fatal(err)
+	}
+	if p, _, err := e.st.Paused(ctx, "tmdb"); p || err != nil {
+		t.Fatalf("after Resume: paused %v, %v", p, err)
 	}
 }
 
@@ -200,5 +202,45 @@ func TestFixMatchValidatesTheID(t *testing.T) {
 		if _, err := e.st.FixMatch(ctx, id, e.get(id).Revision, c[0], c[1]); err != nil {
 			t.Errorf("FixMatch(%s, %s) = %v", c[0], c[1], err)
 		}
+	}
+}
+
+// #136: values exactly at Decision 8's limits are accepted.
+func TestEditAcceptsBoundaries(t *testing.T) {
+	e := newEnv(t)
+	e.write("Movies/Heat (1995)/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	for _, ed := range []Edit{
+		{Field: FieldTitle, Value: raw(strings.Repeat("x", maxTitle))},
+		{Field: FieldYear, Value: raw(minYear)},
+		{Field: FieldYear, Value: raw(maxYear)},
+		{Field: FieldGenres, Value: raw(strings.Split("a b c d e f g h i j k l m n o p q r s t", " "))},
+	} {
+		if _, err := e.st.Edit(context.Background(), id, e.get(id).Revision, []Edit{ed}); err != nil {
+			t.Errorf("%s: %v", ed.Field, err)
+		}
+	}
+	if f := e.get(id).Fields; len(*f.Title.Value) != maxTitle || *f.Year.Value != maxYear || len(f.Genres.Value) != maxGenres {
+		t.Fatalf("stored %+v", f)
+	}
+}
+
+// #136: a database error says which operation and item it came from; the
+// package's own errors are returned as they are.
+func TestDatabaseErrorsHaveContext(t *testing.T) {
+	e := newEnv(t)
+	e.write("Movies/Heat (1995)/Heat (1995).mkv", "x")
+	e.library("movies", "Movies")
+	id := e.item("Heat")
+	if _, err := e.db.Exec(`CREATE TRIGGER fields_broken BEFORE INSERT ON metadata_fields BEGIN SELECT RAISE(ABORT, 'fields broken'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := e.st.Edit(context.Background(), id, 1, []Edit{{Field: FieldOverview, Value: raw("x")}})
+	if err == nil || !strings.Contains(err.Error(), "edit "+id) || !strings.Contains(err.Error(), "fields broken") {
+		t.Fatalf("Edit error %v: want the operation and item", err)
+	}
+	if _, err := e.st.Edit(context.Background(), id, 9, []Edit{{Field: FieldOverview, Value: raw("x")}}); err != ErrRevisionConflict {
+		t.Fatalf("stale Edit: %v, want ErrRevisionConflict as it is", err)
 	}
 }
