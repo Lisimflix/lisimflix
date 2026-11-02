@@ -29,16 +29,16 @@ type Resolver interface {
 // ErrNotFound is the Resolver's answer for an unknown or forbidden item/version.
 var ErrNotFound = errors.New("playback: no such item or version")
 
-// M1 is M1's resolver: one configured movie, itemID == versionID == movie.ID.
+// M1 resolves M1's one configured movie: itemID == versionID == fileID ==
+// movie.ID, so source revisions are the ones init wrote. Build it with Single.
 type M1 struct {
 	movie     contracts.Movie
 	rel       string
 	authorize func(contracts.Principal, string) bool
 }
 
-// Single is M1's resolver: one movie, itemID == versionID == movie.ID and
-// fileID == movie.ID, so source revisions are the ones init wrote.
-// LIB-2c replaces Single with a catalogue Resolver.
+// Single returns the M1 resolver for one movie.
+// Planned: LIB-2c (a catalogue Resolver replaces Single).
 func Single(movie contracts.Movie, relativePath string, authorize func(contracts.Principal, string) bool) *M1 {
 	return &M1{movie: movie, rel: relativePath, authorize: authorize}
 }
