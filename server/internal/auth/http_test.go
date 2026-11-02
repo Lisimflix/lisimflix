@@ -365,6 +365,7 @@ func TestLogoutInvokesRevocation(t *testing.T) {
 	if code, _ := c.principal(); code != 401 {
 		t.Fatalf("after logout = %d", code)
 	}
+	c.session() // logout rotated the CSRF secret (#36)
 	if resp, _ := c.do("POST", "/api/v1/auth/logout", "", nil); resp.StatusCode != 401 {
 		t.Fatalf("second logout = %d", resp.StatusCode)
 	}
@@ -688,4 +689,33 @@ func TestIPv6PeerSlotIsPerPrefix(t *testing.T) {
 	}
 	close(release)
 	<-first
+}
+
+// #36: login and logout rotate the CSRF secret, so a token issued before
+// either one is refused after it.
+func TestCSRFSecretRotatesOnLoginAndLogout(t *testing.T) {
+	for _, tls := range []bool{false, true} {
+		h := newHarness(t, tls)
+		c := h.client()
+		c.session()
+		before := c.token
+		if resp, b := c.login("viewer", testPassword); resp.StatusCode != 200 {
+			t.Fatalf("tls=%v login = %d %s", tls, resp.StatusCode, b)
+		}
+		signedIn := c.token
+		if resp, b := c.do("POST", "/api/v1/auth/logout", "", map[string]string{"X-CSRF-Token": before}); resp.StatusCode != 403 || errCode(t, b) != contracts.CodeCSRFFailed {
+			t.Fatalf("tls=%v pre-login token after login = %d %s", tls, resp.StatusCode, b)
+		}
+		if resp, b := c.do("POST", "/api/v1/auth/logout", "", nil); resp.StatusCode != 204 {
+			t.Fatalf("tls=%v logout with the login token = %d %s", tls, resp.StatusCode, b)
+		}
+		c.token = signedIn
+		if resp, b := c.login("viewer", testPassword); resp.StatusCode != 403 || errCode(t, b) != contracts.CodeCSRFFailed {
+			t.Fatalf("tls=%v signed-in token after logout = %d %s", tls, resp.StatusCode, b)
+		}
+		c.session()
+		if resp, b := c.login("viewer", testPassword); resp.StatusCode != 200 {
+			t.Fatalf("tls=%v login with a fresh token = %d %s", tls, resp.StatusCode, b)
+		}
+	}
 }
