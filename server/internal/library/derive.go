@@ -104,7 +104,6 @@ func (s *Store) SetDisplay(ctx context.Context, itemID string, d Display) error 
 // BackfillDerived fills the derived columns of rows that predate them: items
 // without a sort key and probed files without file facts, 500 rows per
 // transaction. It reports how many of each it filled.
-// Planned: LIB-2c (serve runs it once before the scheduler starts).
 func (s *Store) BackfillDerived(ctx context.Context) (items, files int, err error) {
 	for {
 		n, err := s.backfillItems(ctx)

@@ -26,7 +26,6 @@ func queryHash(q string) string {
 // encodeCursor builds an opaque keyset cursor: base64url JSON holding the
 // version, the first 8 bytes of SHA-256 of the canonical query q, and the sort
 // keys of the last item returned (the item ID last).
-// Planned: LIB-2c (listItems paging, in the catalogue API).
 func encodeCursor(q string, keys ...any) string {
 	if keys == nil {
 		keys = []any{}
@@ -45,7 +44,6 @@ func encodeCursor(q string, keys ...any) string {
 // back as int64, other numbers as float64, strings and nil as themselves. A
 // cursor that doesn't decode, is over 512 bytes, or was made by another
 // version or query is an ErrBadRequest.
-// Planned: LIB-2c (listItems paging, in the catalogue API).
 func decodeCursor(c, q string) ([]any, error) {
 	if len(c) > maxCursor {
 		return nil, fmt.Errorf("%w: cursor is too long", ErrBadRequest)

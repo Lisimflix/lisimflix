@@ -38,7 +38,7 @@ func orDefault(a, b string) string {
 	return b
 }
 
-// cmdLibrary adds and lists libraries until the admin screens (LIB-2c)
+// cmdLibrary adds and lists libraries until the admin screens (LIB-2d)
 // exist. A running server picks up a new library within a minute.
 func cmdLibrary(args []string, stdout io.Writer) error {
 	if len(args) == 0 {

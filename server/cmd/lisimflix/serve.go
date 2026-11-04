@@ -51,8 +51,9 @@ type server struct {
 }
 
 // compose wires the approved modules (plan #26): config → media root →
-// playback → auth → storage → app. A storage failure keeps serving but
-// reports not-ready. extra adds module migration sources.
+// storage → playback → auth → app (LIB-2c moved storage ahead of playback,
+// whose catalogue resolver reads it). A storage failure keeps serving the M1
+// movie but reports not-ready. extra adds module migration sources.
 func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, extra []storage.Source, log *slog.Logger) (*server, error) {
 	cfg, err := m1config.Load(cfgPath)
 	if err != nil {
@@ -68,33 +69,54 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	single := playback.Single(cfg.Movie(), cfg.RelativePath, func(p contracts.Principal, movieID string) bool {
 		return p.AccountID == v.AccountID && p.ProfileID == v.ProfileID && movieID == cfg.MovieID
 	})
+
+	// Storage first: catalogue playback and the catalogue API read it. A
+	// storage failure keeps serving the M1 movie and reports not-ready.
+	var db *storage.DB
+	var storageErr error
+	dbPath, backups = storagePaths(cfgPath, dbPath, backups)
+	snap := storage.SnapshotOptions{Dir: backups, AppVersion: version, ExtraFiles: []string{cfgPath}}
+	db, storageErr = openStorage(ctx, dbPath, snap, extra)
+	switch {
+	case errors.Is(storageErr, storage.ErrSchemaTooNew):
+		log.Error("not ready: the database is newer than this version; restore a compatible snapshot from the backups directory with a matching image", "err", storageErr)
+	case storageErr != nil:
+		log.Error("not ready: storage failed to start", "err", storageErr)
+	}
+	var resolver playback.Resolver = single
+	var store *library.Store
+	var catalogue http.Handler // nil without storage: its routes answer 404
+	if db != nil {
+		// LIB-2c: catalogue files play, and the M1 movie still does.
+		store = library.NewStore(db)
+		access := library.M1Access(v)
+		resolver = playback.Chain(library.NewResolver(store, access), single)
+		catalogue = library.NewAPI(store, access, log).Handler()
+	}
+	closeEarly := func() {
+		root.Close()
+		if db != nil {
+			db.Close()
+		}
+	}
 	pb, err := playback.New(root, playback.Options{
-		Resolver: single, Movies: single.Movies, GrantKey: grantKey,
+		Resolver: resolver, Movies: single.Movies, GrantKey: grantKey,
 		MaxSessions: cfg.MaxPlaybackSessions, Log: log,
 	})
 	if err != nil {
-		root.Close()
+		closeEarly()
 		return nil, err
 	}
 	am, err := auth.NewManager(v, strings.HasPrefix(cfg.PublicOrigin, "https:"), pb.RevokeAuthSession)
 	if err != nil {
 		pb.Close()
-		root.Close()
+		closeEarly()
 		return nil, err
 	}
 	am.SetLogger(log)
 
-	s := &server{cfg: cfg, pb: pb, single: single, root: root, nightlyDone: make(chan struct{}), libraryDone: make(chan struct{}),
-		stopLibrary: func() {}}
-	dbPath, backups = storagePaths(cfgPath, dbPath, backups)
-	snap := storage.SnapshotOptions{Dir: backups, AppVersion: version, ExtraFiles: []string{cfgPath}}
-	s.db, s.storageErr = openStorage(ctx, dbPath, snap, extra)
-	switch {
-	case errors.Is(s.storageErr, storage.ErrSchemaTooNew):
-		log.Error("not ready: the database is newer than this version; restore a compatible snapshot from the backups directory with a matching image", "err", s.storageErr)
-	case s.storageErr != nil:
-		log.Error("not ready: storage failed to start", "err", s.storageErr)
-	}
+	s := &server{cfg: cfg, pb: pb, single: single, root: root, db: db, storageErr: storageErr,
+		nightlyDone: make(chan struct{}), libraryDone: make(chan struct{}), stopLibrary: func() {}}
 	nctx, cancel := context.WithCancel(context.Background())
 	s.stopNightly = cancel // also stops the auth sweep
 	go am.Run(nctx, authSweepEvery)
@@ -110,12 +132,23 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	if s.db != nil {
 		// LIB-2: scans and probes run in the background; browsing and
 		// playback never wait for them.
-		sc := &library.Scanner{Store: library.NewStore(s.db), Media: root}
+		sc := &library.Scanner{Store: store, Media: root}
 		s.scans = library.NewScheduler(sc, newProber(), log, libraryOptions)
 		lctx, cancel := context.WithCancel(context.Background())
 		s.stopLibrary = cancel
 		go func() {
 			defer close(s.libraryDone)
+			// LIB-2c: rows from before the derived columns get them once,
+			// before any scan writes more.
+			items, files, err := store.BackfillDerived(lctx)
+			if err != nil {
+				log.Error("library.backfill", "items", items, "files", files, "err", err.Error())
+			} else if items > 0 || files > 0 {
+				log.Info("library.backfill", "items", items, "files", files)
+			}
+			if lctx.Err() != nil {
+				return
+			}
 			if err := s.scans.Run(lctx); err != nil {
 				log.Error("library.scheduler", "err", err.Error())
 			}
@@ -130,7 +163,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		}
 		return single.Check(root)
 	}
-	s.handler, err = app.New(cfg, am, pb.Handler(), web, ready, log)
+	s.handler, err = app.New(cfg, am, pb.Handler(), catalogue, web, ready, log)
 	if err != nil {
 		s.shutdown(ctx, nil)
 		return nil, err

@@ -7,11 +7,11 @@ replacement that anyone can run on their own Linux/Docker host.
 movie at its original quality, with no re-encoding, in Chrome and Firefox on Linux and macOS
 (Windows follows in a later milestone). The M1 server, web player and container are on `main`,
 and playback passes on all four targets ([results](docs/testing/m1-results.md), #19).
-The browse app (home, libraries, detail, play, resume and progress) is built and runs against
-fixtures until LIB-2c serves the catalogue; until then the web app falls back to M1.
+The browse app (UI-2) now browses and plays real libraries through the catalogue API (LIB-2c),
+falling back to the M1 movie when storage is down.
 
 Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
-anime, and the server keeps it scanned and probed. Nothing browses libraries yet (LIB-2c, UI-2).
+anime, and the server keeps it scanned and probed for the browse app. The admin screens follow (LIB-2d).
 
 To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
 only: plain HTTP, one viewer and one movie.

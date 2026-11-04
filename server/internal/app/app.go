@@ -1,6 +1,6 @@
-// Package app composes the M1 HTTP application: auth routes, the protected
-// playback API, health endpoints and the embedded web app. The executable,
-// server timeouts and shutdown belong to the integration plan.
+// Package app composes the HTTP application: auth routes, the protected
+// playback and catalogue APIs, health endpoints and the embedded web app.
+// The executable, server timeouts and shutdown belong to the integration plan.
 package app
 
 import (
@@ -29,10 +29,13 @@ const (
 )
 
 // New returns the application handler. playback owns GET /api/v1/movies and
-// everything under /api/v1/playback/, and only ever sees requests with a live
-// session. web must contain index.html. ready reports whether initialisation
+// everything under /api/v1/playback/; catalogue owns /api/v1/libraries and
+// /api/v1/items and everything under them. Both only ever see requests with a
+// live session. A nil catalogue (storage didn't start) leaves its routes
+// answering 404 not_found, so the browse app falls back to the M1 movie (UI-2
+// decision 10). web must contain index.html. ready reports whether initialisation
 // succeeded; /health/ready returns 503 while it returns an error.
-func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger) (http.Handler, error) {
+func New(cfg m1config.Config, am *auth.Manager, playback, catalogue http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger) (http.Handler, error) {
 	if am == nil || playback == nil || web == nil || ready == nil {
 		return nil, errors.New("app: auth manager, playback handler, web assets and ready check are required")
 	}
@@ -57,6 +60,11 @@ func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS
 	am.Register(api)
 	api.Handle("/api/v1/movies", am.Require(playback))
 	api.Handle("/api/v1/playback/", am.Require(playback))
+	if catalogue != nil {
+		for _, p := range []string{"/api/v1/libraries", "/api/v1/libraries/", "/api/v1/items", "/api/v1/items/"} {
+			api.Handle(p, am.Require(catalogue))
+		}
+	}
 	api.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		contracts.WriteError(w, r, contracts.CodeNotFound, "Not found.")
 	})

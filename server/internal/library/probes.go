@@ -219,7 +219,7 @@ func (s *Store) retryTimeout(ctx context.Context, rootID string, o Outcome, run 
 
 // RetryProbe clears a file's probe so the next ProbeDue probes it again: the
 // admin's explicit retry after a failure (spec §3.6).
-// Planned: LIB-2c (the admin retry action).
+// Planned: LIB-2d (the admin retry action).
 func (s *Store) RetryProbe(ctx context.Context, fileID string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

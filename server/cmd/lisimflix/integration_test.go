@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -164,3 +165,181 @@ func TestM1RealHTTPRangeAndRevocation(t *testing.T) {
 }
 
 func itoa(n int64) string { return strconv.FormatInt(n, 10) }
+
+// client is a signed-in browser for the integration tests.
+type client struct {
+	t     *testing.T
+	base  string
+	c     *http.Client
+	token string
+}
+
+func signIn(t *testing.T, base string) *client {
+	t.Helper()
+	jar, _ := cookiejar.New(nil)
+	cl := &client{t: t, base: base, c: &http.Client{Jar: jar}}
+	var st contracts.AuthState
+	_, b := cl.do("GET", "/api/v1/auth/session", "", nil)
+	json.Unmarshal(b, &st)
+	cl.token = st.CSRFToken
+	resp, b := cl.do("POST", "/api/v1/auth/login", `{"username":"viewer","password":"`+password+`"}`, nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("login = %d %s", resp.StatusCode, b)
+	}
+	json.Unmarshal(b, &st)
+	cl.token = st.CSRFToken
+	return cl
+}
+
+func (cl *client) do(method, path, body string, hdr map[string]string) (*http.Response, []byte) {
+	cl.t.Helper()
+	req, _ := http.NewRequest(method, cl.base+path, strings.NewReader(body))
+	req.Header.Set("Origin", cl.base)
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if cl.token != "" {
+		req.Header.Set("X-CSRF-Token", cl.token)
+	}
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
+	resp, err := cl.c.Do(req)
+	if err != nil {
+		cl.t.Fatal(err)
+	}
+	b, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	return resp, b
+}
+
+// get decodes a 200 JSON answer into v.
+func (cl *client) get(path string, v any) {
+	cl.t.Helper()
+	resp, b := cl.do("GET", path, "", nil)
+	if resp.StatusCode != 200 {
+		cl.t.Fatalf("GET %s = %d %s", path, resp.StatusCode, b)
+	}
+	if err := json.Unmarshal(b, v); err != nil {
+		cl.t.Fatalf("GET %s: %v", path, err)
+	}
+}
+
+// play starts a session for the item and version and checks that ranges of
+// it return file's original bytes.
+func (cl *client) play(key, itemID, versionID string, file string) {
+	cl.t.Helper()
+	resp, b := cl.do("POST", "/api/v1/playback/sessions", `{"itemId":"`+itemID+`","versionId":"`+versionID+`"}`, map[string]string{"Idempotency-Key": key})
+	if resp.StatusCode != 201 {
+		cl.t.Fatalf("start %s = %d %s", key, resp.StatusCode, b)
+	}
+	var ps contracts.PlaybackSession
+	json.Unmarshal(b, &ps)
+	src, err := os.Open(file)
+	if err != nil {
+		cl.t.Fatal(err)
+	}
+	defer src.Close()
+	info, _ := src.Stat()
+	size := info.Size()
+	for _, r := range [][2]int64{{0, 1023}, {size / 2, size/2 + 65535}, {size - 545, size - 1}} {
+		resp, got := cl.do("GET", ps.ContentURL, "", map[string]string{"Range": "bytes=" + itoa(r[0]) + "-" + itoa(r[1])})
+		want := make([]byte, r[1]-r[0]+1)
+		src.ReadAt(want, r[0])
+		if resp.StatusCode != 206 || !bytes.Equal(got, want) {
+			cl.t.Fatalf("%s range %d-%d = %d, %d bytes; the original bytes must come back", key, r[0], r[1], resp.StatusCode, len(got))
+		}
+	}
+}
+
+func copyFile(t *testing.T, from, to string) {
+	t.Helper()
+	in, err := os.Open(from)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	out, err := os.Create(to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		t.Fatal(err)
+	}
+	if err := out.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// LIB-2c end to end: a library added with the CLI is scanned, browsed through
+// the catalogue API and played by item and version, while the M1 movie still
+// plays through /api/v1/movies.
+func TestServePlaysACatalogueFile(t *testing.T) {
+	movie, probe := realMedia(t)
+	fastLibrary(t)
+	dir := t.TempDir()
+	media := filepath.Join(dir, "media")
+	film := filepath.Join(media, "Movies", "Clip (2020)", "Clip (2020).mp4")
+	if err := os.MkdirAll(filepath.Dir(film), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The M1 movie is copied, so this test never writes beside the original.
+	m1 := filepath.Join(media, filepath.Base(movie))
+	copyFile(t, movie, m1)
+	// The catalogue file has its own bytes, so a range proves which file played.
+	clip := make([]byte, 3<<20)
+	rand.Read(clip)
+	if err := os.WriteFile(film, clip, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfgPath := filepath.Join(dir, "m1.json")
+	ts := httptest.NewUnstartedServer(nil)
+	origin := "http://" + ts.Listener.Addr().String()
+	if err := cmdInit([]string{"--config", cfgPath, "--origin", origin, "--media-root", media,
+		"--movie", filepath.Base(movie), "--probe-json", probe, "--username", "viewer"},
+		strings.NewReader(password+"\n"+password+"\n"), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	s, err := compose(context.Background(), cfgPath, "", "", testWeb, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts.Config.Handler = s.handler
+	ts.Start()
+	defer func() { ts.Close(); s.shutdown(context.Background(), nil) }()
+
+	var out bytes.Buffer
+	if code := run([]string{"library", "add", "--config", cfgPath, "--name", "Films", "--type", "movies", "--folder", "Movies"},
+		nil, &out, &out); code != 0 {
+		t.Fatalf("library add: %s", out.String())
+	}
+	cl := signIn(t, ts.URL)
+	var libs contracts.LibraryList
+	cl.get("/api/v1/libraries", &libs)
+	if len(libs.Items) != 1 || libs.Items[0].Name != "Films" {
+		t.Fatalf("libraries %+v", libs)
+	}
+	var page contracts.ItemPage
+	waitFor(t, "the scan", func() bool {
+		cl.get("/api/v1/items?libraryId="+libs.Items[0].ID, &page)
+		return len(page.Items) == 1
+	})
+	it := page.Items[0]
+	if it.Title != "Clip" || it.Kind != contracts.KindMovie || it.Available == nil || !*it.Available {
+		t.Fatalf("item %+v", it)
+	}
+	var d contracts.ItemDetail
+	cl.get("/api/v1/items/"+it.ID, &d)
+	if len(d.Versions) != 1 || !d.Versions[0].Available {
+		t.Fatalf("versions %+v", d.Versions)
+	}
+	cl.play("catalogue-1", it.ID, d.Versions[0].ID, film)
+
+	var list contracts.MovieList
+	cl.get("/api/v1/movies", &list)
+	if len(list.Items) != 1 {
+		t.Fatalf("movies %+v", list)
+	}
+	cl.play("m1-1", list.Items[0].ID, list.Items[0].ID, m1)
+}

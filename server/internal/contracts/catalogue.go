@@ -59,7 +59,6 @@ const (
 )
 
 // Resolution buckets (LibraryFacets.resolutions, listItems resolution).
-// Planned: LIB-2c (facets and the listItems resolution filter).
 const (
 	ResolutionSD   = "sd"
 	Resolution720  = "720p"
@@ -68,7 +67,6 @@ const (
 )
 
 // listItems sort orders.
-// Planned: LIB-2c (listItems handler).
 const (
 	SortTitle = "title"
 	SortAdded = "added"
@@ -114,7 +112,6 @@ type LibraryScan struct {
 
 // LibraryFacets are the filter-menu values present in a library's permitted
 // items. AudioLanguages are ISO 639-2/T.
-// Planned: LIB-2c (getLibraryFacets).
 type LibraryFacets struct {
 	Genres         []string   `json:"genres"`
 	Years          *YearRange `json:"years"`
@@ -125,7 +122,6 @@ type LibraryFacets struct {
 }
 
 // MarshalJSON encodes nil slices as [] because the contract requires arrays.
-// Planned: LIB-2c (getLibraryFacets handler).
 func (f LibraryFacets) MarshalJSON() ([]byte, error) {
 	type plain LibraryFacets // no methods: avoids recursion
 	f.Genres = nonNil(f.Genres)
@@ -142,7 +138,6 @@ func nonNil[T any](s []T) []T {
 }
 
 // YearRange is the first and last item year in a library; Min <= Max.
-// Planned: LIB-2c (getLibraryFacets handler).
 type YearRange struct {
 	Min int64 `json:"min"`
 	Max int64 `json:"max"`
@@ -188,7 +183,7 @@ type ItemPage struct {
 }
 
 // MarshalJSON encodes nil Items as [] because the contract requires an array.
-// Planned: LIB-2c, DATA-1, DATA-2 (listItems, listContinueWatching and listNextUp handlers).
+// Planned: DATA-1, DATA-2 (listContinueWatching and listNextUp handlers).
 func (p ItemPage) MarshalJSON() ([]byte, error) {
 	items := p.Items
 	if items == nil {
@@ -229,7 +224,7 @@ type ItemDetail struct {
 }
 
 // MarshalJSON encodes nil slices as [] because the contract requires arrays.
-// Planned: LIB-2c, META-1 (getItem handler).
+// Planned: META-1 (getItem serves directors, studios and communityRating).
 func (d ItemDetail) MarshalJSON() ([]byte, error) {
 	type plain ItemDetail // no methods: avoids recursion
 	d.Genres = nonNil(d.Genres)

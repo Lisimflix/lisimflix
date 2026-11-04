@@ -28,7 +28,6 @@ type Access func(contracts.Principal) Grant
 // and anyone else nothing. The M1 account is the owner who ran init and the
 // only account auth.Require authenticates today.
 // shortcut: one M1 viewer until ACC-2 replaces Access
-// Planned: LIB-2c (the catalogue API serves it).
 func M1Access(v m1config.Viewer) Access {
 	return func(p contracts.Principal) Grant {
 		if p.AccountID != "" && p.AccountID == v.AccountID && p.ProfileID == v.ProfileID {

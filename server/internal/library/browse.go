@@ -50,7 +50,6 @@ const librariesQuery = "libraries"
 
 // Libraries lists the libraries the grant covers, by name then ID, one page at
 // a time. A library's availability and first-scan progress come from its roots.
-// Planned: LIB-2c (the catalogue API serves it).
 func (s *Store) Libraries(ctx context.Context, g Grant, cursor string, limit int) (contracts.LibraryList, error) {
 	limit, err := pageLimit(limit)
 	if err != nil {
@@ -165,7 +164,6 @@ var resolutionOrder = []string{contracts.Resolution4K, contracts.Resolution1080,
 // its present files (a file counts while it is present, wherever its root is
 // right now, because its item stays listed offline). A library the grant
 // doesn't cover is ErrNotFound, the same as an unknown one.
-// Planned: LIB-2c (the catalogue API serves it).
 func (s *Store) Facets(ctx context.Context, g Grant, libraryID string) (contracts.LibraryFacets, error) {
 	f := contracts.LibraryFacets{Genres: []string{}, AudioLanguages: []string{}, Resolutions: []string{}}
 	if !g.allows(libraryID) {
@@ -441,7 +439,6 @@ func checkItemQuery(q ItemQuery) (string, error) {
 // children, in the requested order. Total is set on the first page only. A
 // library or parent the grant doesn't cover is ErrNotFound, the same as an
 // unknown one; a request listItems can't apply is ErrBadRequest.
-// Planned: LIB-2c (the catalogue API serves it).
 func (s *Store) Items(ctx context.Context, g Grant, q ItemQuery) (contracts.ItemPage, error) {
 	sort, err := checkItemQuery(q)
 	if err != nil {

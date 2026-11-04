@@ -17,7 +17,6 @@ import (
 // duration the summary carries). An item outside the grant is ErrNotFound,
 // the same as an unknown ID. META-1c fills the descriptive fields; until then
 // they are null or empty, and externalIds stays empty.
-// Planned: LIB-2c (the catalogue API serves it).
 func (s *Store) Item(ctx context.Context, g Grant, itemID string) (contracts.ItemDetail, error) {
 	d := contracts.ItemDetail{Genres: []string{}, ExternalIDs: []contracts.ExternalID{}, Versions: []contracts.MediaVersion{},
 		Directors: []string{}, Studios: []string{}}

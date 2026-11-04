@@ -26,7 +26,6 @@ type API struct {
 
 // NewAPI serves st's catalogue, filtered by access. Unexpected errors are
 // logged to log; a nil log discards.
-// Planned: LIB-2c (serve mounts it).
 func NewAPI(st *Store, access Access, log *slog.Logger) *API {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
