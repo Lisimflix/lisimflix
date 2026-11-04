@@ -9,8 +9,9 @@ import (
 )
 
 // SetWatched marks the item watched (origin manual) or, with false, resets it:
-// watched, resume and coverage are cleared and sessions that began before now
-// become stale. The play count is untouched. A stale expectedRevision is
+// watched, resume and coverage are cleared and sessions whose first event id
+// is at or below the highest event id at the time of the mark become stale.
+// The play count is untouched. A stale expectedRevision is
 // ErrRevisionConflict and changes nothing. No event row is written.
 //
 // Planned: DATA-1b (setWatched handler).
@@ -32,8 +33,9 @@ func (s *Store) SetWatched(ctx context.Context, profileID, itemID string, watche
 	})
 }
 
-// Hide removes the item from Continue Watching until a session that begins
-// after now plays it. Events and progress are kept. Revision rules as SetWatched.
+// Hide removes the item from Continue Watching until a session with no events
+// yet at the time of the hide plays it. Events and progress are kept.
+// Revision rules as SetWatched.
 //
 // Planned: DATA-1b (hideContinueWatching handler).
 func (s *Store) Hide(ctx context.Context, profileID, itemID string, expectedRevision int64) (contracts.UserItemState, error) {

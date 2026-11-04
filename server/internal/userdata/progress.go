@@ -134,7 +134,6 @@ func validate(sess Session, e contracts.ProgressEvent) error {
 
 // isLate reports whether the session began at or before a reset or hide mark
 // (an event id). A session with no events yet is new, and a null mark is none.
-// Planned: DATA-1a (SetWatched, Hide).
 func isLate(firstEventID int64, hasEvents bool, mark sql.NullInt64) bool {
 	return hasEvents && mark.Valid && firstEventID <= mark.Int64
 }

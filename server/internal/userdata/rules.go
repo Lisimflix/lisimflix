@@ -5,8 +5,6 @@ package userdata
 import "slices"
 
 // Positions and durations are milliseconds.
-//
-// Planned: DATA-1a (Apply, SetWatched).
 const (
 	// WatchedPercent is the share of the duration that must be covered for
 	// an item to count as watched.
@@ -19,14 +17,10 @@ const (
 )
 
 // Span is a half-open playback range [StartMs, EndMs).
-//
-// Planned: DATA-1a (Apply, SetWatched).
 type Span struct{ StartMs, EndMs int64 }
 
 // Merge returns spans sorted, non-overlapping, with touching spans joined and
 // empty spans dropped. The input is not modified.
-//
-// Planned: DATA-1a (Apply, SetWatched).
 func Merge(spans []Span) []Span {
 	s := slices.DeleteFunc(slices.Clone(spans), func(x Span) bool { return x.EndMs <= x.StartMs })
 	slices.SortFunc(s, func(a, b Span) int {
@@ -50,8 +44,6 @@ func Merge(spans []Span) []Span {
 }
 
 // Covered is the total length of the merged spans.
-//
-// Planned: DATA-1a (Apply, SetWatched).
 func Covered(spans []Span) int64 {
 	var total int64
 	for _, s := range Merge(spans) {
@@ -62,8 +54,6 @@ func Covered(spans []Span) int64 {
 
 // Advance turns a progress tick into the span it credits: forward movement of
 // at most MaxTickAdvanceMs. Backward, zero or larger jumps credit nothing.
-//
-// Planned: DATA-1a (Apply).
 func Advance(prevMs, posMs int64) (Span, bool) {
 	if d := posMs - prevMs; d <= 0 || d > MaxTickAdvanceMs {
 		return Span{}, false
@@ -73,13 +63,11 @@ func Advance(prevMs, posMs int64) (Span, bool) {
 
 // IsWatched reports whether coveredMs reaches WatchedPercent of durationMs.
 // An unknown (non-positive) duration is never watched.
-//
-// Planned: DATA-1a (Apply, SetWatched).
 func IsWatched(coveredMs, durationMs int64) bool {
 	return durationMs > 0 && coveredMs*100 >= durationMs*WatchedPercent
 }
 
 // IsPlayed reports whether coveredMs reaches PlayedMinMs.
 //
-// Planned: DATA-1a (Apply).
+// Planned: DATA-1b (listContinueWatching handler; shares the 30 s rule that ContinueWatching applies in SQL via PlayedMinMs).
 func IsPlayed(coveredMs int64) bool { return coveredMs >= PlayedMinMs }
