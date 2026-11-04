@@ -301,9 +301,9 @@ func TestSchedulerScopedSuccessOnDegradedRootRechecks(t *testing.T) {
 	}
 	f.m.write("Movies/B (2002)/B (2002).mkv", 10)
 	eventually(t, "recheck", func() bool { return f.runs(t, `cause = 'recheck' AND scope IS NULL AND status = 'completed'`) == 1 })
-	if st := f.status(t); st.State != RootAvailable {
-		t.Fatalf("root %s", st.State)
-	}
+	// Wait rather than sample: a follow-up whole-root scan may already have
+	// marked the root scanning. A root left degraded still fails (timeout).
+	eventually(t, "root available", func() bool { return f.status(t).State == RootAvailable })
 }
 
 // A folder that never stops changing (a file written in place) is still
