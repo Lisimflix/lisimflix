@@ -41,3 +41,23 @@ func TestGroup(t *testing.T) {
 		}
 	}
 }
+
+// Sort folds like Title but keeps a leading article: the catalogue's sort
+// title has already had its article dropped once, when it was parsed.
+func TestSort(t *testing.T) {
+	for in, want := range map[string]string{
+		"A-Team":                       "a team",
+		"A.I. Artificial Intelligence": "a i artificial intelligence",
+		"An American Werewolf":         "an american werewolf",
+		"The":                          "the",
+		"Matrix":                       "matrix",
+		"Léon: The Professional":       "leon the professional",
+		"Fast & Furious":               "fast and furious",
+		"Ocean's Eleven":               "oceans eleven",
+		"進撃の巨人":                        "進撃の巨人",
+	} {
+		if got := Sort(in); got != want {
+			t.Errorf("Sort(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

@@ -12,9 +12,11 @@ import (
 // backfillBatch bounds the rows one backfill transaction touches (§10.2).
 const backfillBatch = 500
 
-// sortKey is the stored browse order of an item's sort title.
+// sortKey is the stored browse order of an item's sort title (its display sort
+// title if set). The title's leading article was dropped when it was parsed;
+// the key keeps whatever is left ("The A-Team" sorts under A).
 func sortKey(sortTitle string) (key string, group int) {
-	key = textfold.Title(sortTitle)
+	key = textfold.Sort(sortTitle)
 	return key, textfold.Group(key)
 }
 

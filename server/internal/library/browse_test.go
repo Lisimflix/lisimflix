@@ -118,6 +118,24 @@ func TestLibrariesListsGrantedOnly(t *testing.T) {
 	}
 }
 
+// LIB-2c review: an ID-only libraries cursor naming a library outside the
+// grant is refused like an unknown one, so it doesn't reveal that it exists.
+func TestLibraryCursorForHiddenLibraryIsLikeUnknown(t *testing.T) {
+	e := newBrowse(t)
+	a := e.library("Alpha", "movies", []string{"A"}, "A/X (2001)/X (2001).mkv")
+	b := e.library("Beta", "movies", []string{"B"}, "B/Y (2002)/Y (2002).mkv")
+	ctx := context.Background()
+	g := Grant{LibraryIDs: []string{a.ID}}
+	for name, id := range map[string]string{"hidden": b.ID, "unknown": "lib-gone"} {
+		if _, err := e.s.Libraries(ctx, g, encodeCursor(librariesQuery, id), 1); !errorsIs(err, ErrBadRequest) {
+			t.Errorf("%s library cursor: %v", name, err)
+		}
+	}
+	if _, err := e.s.Libraries(ctx, g, encodeCursor(librariesQuery, a.ID), 1); err != nil {
+		t.Errorf("granted library cursor: %v", err)
+	}
+}
+
 func TestLibraryAvailabilityPartialAndOffline(t *testing.T) {
 	e := newBrowse(t)
 	lib := e.library("Movies", "movies", []string{"M1", "M2"}, "M1/A (2001)/A (2001).mkv", "M2/B (2002)/B (2002).mkv")
@@ -361,6 +379,43 @@ func TestTitleSortGroupsAndJump(t *testing.T) {
 	p2 := e.items(grantAll, ItemQuery{LibraryID: lib.ID, From: "E", Limit: 5, Cursor: *p1.NextCursor})
 	if got := titles(p2); !reflect.DeepEqual(got, []string{"The Matrix", "Zodiac"}) || p2.NextCursor != nil || p2.Total != nil {
 		t.Fatalf("from=E page 2 %v %v %v", got, p2.NextCursor, p2.Total)
+	}
+}
+
+// LIB-2c review: the sort title drops a leading article once, when parsed;
+// the sort key doesn't drop another ("The A-Team" sorts under A, not T).
+func TestSortTitleDropsOneArticle(t *testing.T) {
+	e := newBrowse(t)
+	lib := e.library("Movies", "movies", []string{"Movies"},
+		"Movies/The A-Team (2010)/The A-Team (2010).mkv",
+		"Movies/A.I. Artificial Intelligence (2001)/A.I. Artificial Intelligence (2001).mkv",
+		"Movies/The Matrix (1999)/The Matrix (1999).mkv",
+		"Movies/Heat (1995)/Heat (1995).mkv")
+	all := []string{"A.I. Artificial Intelligence", "The A-Team", "Heat", "The Matrix"}
+	if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID})); !reflect.DeepEqual(got, all) {
+		t.Fatalf("sort %v\nwant %v", got, all)
+	}
+	for from, want := range map[string][]string{"A": all, "B": all[2:], "I": all[3:], "M": all[3:], "T": {}} {
+		if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID, From: from})); !reflect.DeepEqual(got, want) {
+			t.Errorf("from=%s: %v, want %v", from, got, want)
+		}
+	}
+	// The backfill computes the same keys.
+	if _, err := e.s.db.Exec(`UPDATE library_items SET sort_key = NULL, sort_group = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.BackfillSortKeys(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID, From: "A", Limit: 2})); !reflect.DeepEqual(got, all[:2]) {
+		t.Errorf("after backfill, from=A: %v", got)
+	}
+	// So does a display sort title.
+	if err := e.s.SetDisplay(context.Background(), e.itemID("Heat"), Display{SortTitle: ptr("A Heat")}); err != nil {
+		t.Fatal(err)
+	}
+	if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID, From: "B"})); !reflect.DeepEqual(got, []string{"The Matrix"}) {
+		t.Errorf("display sort title, from=B: %v", got)
 	}
 }
 
@@ -828,7 +883,10 @@ func TestOfflineRootItemsStayListedUnavailable(t *testing.T) {
 	}
 }
 
-func TestCombinedFiltersMatchFilesIndependently(t *testing.T) {
+// LIB-2c review decision: a movie or episode matches combined file filters
+// only when one of its files meets them all; a show or season matches when
+// each is met by some episode's file.
+func TestCombinedFiltersOneFileForMoviesAnyEpisodeForShows(t *testing.T) {
 	e := newBrowse(t)
 	vid := func(w, h int) []probe.VideoStream {
 		return []probe.VideoStream{{Index: 0, Codec: "hevc", Width: w, Height: h, Default: true}}
@@ -848,17 +906,22 @@ func TestCombinedFiltersMatchFilesIndependently(t *testing.T) {
 		"Show - S01E01.mkv": {Container: "matroska", Video: vid(3840, 2160), Audio: aud("eng")},
 		"Show - S02E01.mkv": {Container: "matroska", Video: vid(1920, 1080), Audio: aud("ger")},
 	})
-	// Each filter may be met by a different file (or episode).
-	q := ItemQuery{Resolution: "4k", AudioLanguage: "deu"}
-	for libID, want := range map[string][]string{lib.ID: {"Mix"}, tv.ID: {"Show"}} {
-		q.LibraryID = libID
-		p := e.items(grantAll, q)
-		if got := titles(p); !reflect.DeepEqual(got, want) || *p.Total != 1 {
-			t.Errorf("4k + deu: %v total %v, want %v", got, *p.Total, want)
+	for name, c := range map[string]struct {
+		q    ItemQuery
+		want []string
+	}{
+		"movies 4k + deu":       {ItemQuery{LibraryID: lib.ID, Resolution: "4k", AudioLanguage: "deu"}, []string{}},
+		"movies 4k":             {ItemQuery{LibraryID: lib.ID, Resolution: "4k"}, []string{"Mix"}},
+		"movies deu":            {ItemQuery{LibraryID: lib.ID, AudioLanguage: "deu"}, []string{"Mix"}},
+		"movies 1080p + deu":    {ItemQuery{LibraryID: lib.ID, Resolution: "1080p", AudioLanguage: "deu"}, []string{"Mix"}},
+		"movies 4k + sdr + eng": {ItemQuery{LibraryID: lib.ID, Resolution: "4k", HDR: ptr(false), AudioLanguage: "eng"}, []string{"Mix"}},
+		"shows 4k + deu":        {ItemQuery{LibraryID: tv.ID, Resolution: "4k", AudioLanguage: "deu"}, []string{"Show"}},
+		"shows 4k + jpn":        {ItemQuery{LibraryID: tv.ID, Resolution: "4k", AudioLanguage: "jpn"}, []string{}},
+	} {
+		p := e.items(grantAll, c.q)
+		if got := titles(p); !reflect.DeepEqual(got, c.want) || p.Total == nil || *p.Total != int64(len(c.want)) {
+			t.Errorf("%s: %v total %v, want %v", name, got, p.Total, c.want)
 		}
-	}
-	if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID, Resolution: "4k", HDR: ptr(false), AudioLanguage: "eng"})); !reflect.DeepEqual(got, []string{"Mix"}) {
-		t.Errorf("4k + sdr + eng: %v", got)
 	}
 }
 

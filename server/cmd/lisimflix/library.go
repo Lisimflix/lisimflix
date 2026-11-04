@@ -28,6 +28,10 @@ var newProber = func() library.Prober {
 	return probe.Runner{Path: orDefault(os.Getenv("LISIMFLIX_FFPROBE"), defaultFFprobe)}
 }
 
+// backfillSortKeys fills missing item sort keys before serve mounts the
+// catalogue. Tests replace it to make it fail.
+var backfillSortKeys = (*library.Store).BackfillSortKeys
+
 // libraryOptions are the scheduler's settings: the spec defaults. Tests
 // shorten them.
 var libraryOptions = library.SchedulerOptions{}

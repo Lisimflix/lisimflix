@@ -141,7 +141,7 @@ func TestAPIShapesMatchContract(t *testing.T) {
 	}
 	// Every listItems parameter reaches the store.
 	q := url.Values{"libraryId": {a.movies.ID}, "sort": {"title"}, "from": {"F"}, "yearFrom": {"2000"}, "yearTo": {"2002"},
-		"resolution": {"4k"}, "hdr": {"true"}, "audioLanguage": {"eng"}, "limit": {"200"}}
+		"resolution": {"1080p"}, "hdr": {"false"}, "audioLanguage": {"eng"}, "limit": {"200"}}
 	ok(adminP, "/api/v1/items?"+q.Encode(), &page)
 	if len(page.Items) != 1 || page.Items[0].ID != film {
 		t.Fatalf("filtered %+v", page)

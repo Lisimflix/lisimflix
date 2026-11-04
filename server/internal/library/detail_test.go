@@ -218,3 +218,40 @@ func TestItemDetailCorruptProbeServesBareVersion(t *testing.T) {
 		}
 	}
 }
+
+// LIB-2c review: a retired file's version is gone for viewers. getItem leaves
+// it out, and listItems never takes it as the default version, even when the
+// remaining one is missing too.
+func TestRetiredVersionIsLeftOut(t *testing.T) {
+	e := newBrowse(t)
+	lib := filmLibrary(e)
+	root := lib.Roots[0].ID
+	if err := os.Remove(filepath.Join(e.m.dir, filmHD)); err != nil {
+		t.Fatal(err)
+	}
+	e.scan(root)
+	if _, err := e.s.db.Exec(`UPDATE library_files SET state = 'retired' WHERE path = ?`, strings.TrimPrefix(filmHD, "Movies/")); err != nil {
+		t.Fatal(err)
+	}
+	check := func(stage string, available bool) {
+		t.Helper()
+		vs := e.detail(grantAll, e.itemID("Film")).Versions
+		if len(vs) != 1 || vs[0].Label == nil || *vs[0].Label != "Director's Cut" {
+			t.Fatalf("%s: versions %+v", stage, vs)
+		}
+		p := e.items(grantAll, ItemQuery{LibraryID: lib.ID})
+		if len(p.Items) != 1 || p.Items[0].DurationMs == nil || *p.Items[0].DurationMs != 6000 {
+			t.Fatalf("%s: durationMs %+v", stage, p.Items)
+		}
+		if a := p.Items[0].Available; a == nil || *a != available {
+			t.Fatalf("%s: available %v", stage, a)
+		}
+	}
+	check("cut present", true)
+	// The cut goes missing: the retired unlabelled version still doesn't count.
+	if err := os.Remove(filepath.Join(e.m.dir, filmCut)); err != nil {
+		t.Fatal(err)
+	}
+	e.scan(root)
+	check("cut missing", false)
+}

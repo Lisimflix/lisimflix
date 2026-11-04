@@ -13,8 +13,8 @@ falling back to the M1 movie when storage is down.
 Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
 anime, and the server keeps it scanned and probed for the browse app. The admin screens follow (LIB-2d).
 
-To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
-only: plain HTTP, one viewer and one movie.
+To run it, see [`deploy/README.md`](deploy/README.md). M1 is for one viewer on a trusted
+private network only, over plain HTTP.
 
 ## Layout
 

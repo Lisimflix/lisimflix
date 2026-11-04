@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http/httptest"
@@ -222,5 +223,30 @@ func TestLibraryAddRefusesSymlinkedParent(t *testing.T) {
 	out.Reset()
 	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Store/Movies"}, nil, &out, &out); code != 0 {
 		t.Fatalf("the real folder was refused (%d): %s", code, out.String())
+	}
+}
+
+// LIB-2c review: if the sort-key backfill fails, serve leaves the catalogue
+// routes out (they 404, so the browse app falls back to M1) and logs why,
+// rather than serving listings that page wrongly.
+func TestServeWithoutCatalogueWhenSortKeyBackfillFails(t *testing.T) {
+	f := newFixture(t)
+	f.s.shutdown(context.Background(), nil)
+	orig := backfillSortKeys
+	t.Cleanup(func() { backfillSortKeys = orig })
+	backfillSortKeys = func(*library.Store, context.Context) (int, error) { return 0, errors.New("disk I/O error") }
+	var logs bytes.Buffer
+	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.shutdown(context.Background(), nil)
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/libraries", nil))
+	if rec.Code != 404 {
+		t.Fatalf("libraries after a failed backfill = %d, want 404", rec.Code)
+	}
+	if !strings.Contains(logs.String(), `"msg":"library.backfill_sort_keys"`) || !strings.Contains(logs.String(), "disk I/O error") {
+		t.Fatalf("no backfill error logged: %s", logs.String())
 	}
 }

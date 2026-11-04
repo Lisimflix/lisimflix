@@ -43,11 +43,25 @@ var latinFold = func() map[rune]string {
 	return m
 }()
 
-// Title reduces a title to a comparable form: lower case, Latin accents
-// folded, "&" written as "and", apostrophes dropped ("Ocean's" is "oceans"),
-// other punctuation turned into spaces, and a leading "the", "a" or "an"
-// dropped when more words follow. Titles in other scripts compare as written.
+// Title reduces a title to a comparable form: Sort's fold, with a leading
+// "the", "a" or "an" dropped when more words follow.
 func Title(title string) string {
+	words := strings.Fields(Sort(title))
+	if len(words) > 1 {
+		switch words[0] {
+		case "the", "a", "an":
+			words = words[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// Sort folds a sort title, whose leading article was already dropped once when
+// it was parsed: lower case, Latin accents folded, "&" written as "and",
+// apostrophes dropped ("Ocean's" is "oceans"), other punctuation turned into
+// spaces and runs of spaces into one. Titles in other scripts compare as
+// written. Unlike Title it keeps a leading article ("A-Team" is "a team").
+func Sort(title string) string {
 	var b strings.Builder
 	lastLatin := false // was the last letter written Latin?
 	for _, r := range strings.ToLower(title) {
@@ -75,14 +89,7 @@ func Title(title string) string {
 			b.WriteByte(' ')
 		}
 	}
-	words := strings.Fields(b.String())
-	if len(words) > 1 {
-		switch words[0] {
-		case "the", "a", "an":
-			words = words[1:]
-		}
-	}
-	return strings.Join(words, " ")
+	return strings.Join(strings.Fields(b.String()), " ")
 }
 
 // Group returns the catalogue letter group of an already folded title: 1 when

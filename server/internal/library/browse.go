@@ -85,7 +85,15 @@ func (s *Store) Libraries(ctx context.Context, g Grant, cursor string, limit int
 				if id, ok = after[0].(string); !ok {
 					return badRequest("cursor is not valid")
 				}
-				if err := tx.QueryRowContext(ctx, `SELECT name FROM library_libraries WHERE id = ?`, id).Scan(&name); err != nil {
+				// Within the grant, so a hidden library's ID reads as unknown.
+				lq, largs := `SELECT name FROM library_libraries WHERE id = ?`, []any{id}
+				if !g.All {
+					lq += " AND id IN (" + placeholders(len(g.LibraryIDs)) + ")"
+					for _, gid := range g.LibraryIDs {
+						largs = append(largs, gid)
+					}
+				}
+				if err := tx.QueryRowContext(ctx, lq, largs...).Scan(&name); err != nil {
 					if errors.Is(err, sql.ErrNoRows) {
 						return badRequest("cursor is not valid")
 					}
@@ -348,8 +356,12 @@ func (o itemOrder) valid(k []any) bool {
 
 func placeholders(n int) string { return strings.TrimSuffix(strings.Repeat("?, ", n), ", ") }
 
-// versionOrderSQL orders an item's versions (v, its file f, f's root r) as
-// LIB-2c decision 10 does: available first, then unlabelled, then by
+// liveVersion matches the versions viewers see: a retired file's version is
+// gone: retirement is the only removal (spec §3.6).
+const liveVersion = `f.state != 'retired'`
+
+// versionOrderSQL orders an item's live versions (v, its file f, f's root r)
+// as LIB-2c decision 10 does: available first, then unlabelled, then by
 // resolution (4k first), then by version ID. The first is the default.
 const versionOrderSQL = `(f.state = 'present' AND r.state != 'offline') DESC, v.label IS NOT NULL,
 	CASE f.resolution WHEN '4k' THEN 0 WHEN '1080p' THEN 1 WHEN '720p' THEN 2 WHEN 'sd' THEN 3 ELSE 4 END, v.id`
@@ -361,7 +373,7 @@ const itemColumns = `i.id, i.kind, i.library_id, i.parent_id, COALESCE(i.display
 	COALESCE(i.display_sort_title, i.sort_title), ` + itemYear + `, i.idx, i.created_at,
 	(SELECT CASE WHEN f.duration_ms > 0 THEN f.duration_ms END FROM library_versions v
 		JOIN library_files f ON f.id = v.file_id JOIN library_roots r ON r.id = f.root_id
-		WHERE v.item_id = i.id ORDER BY ` + versionOrderSQL + ` LIMIT 1),
+		WHERE v.item_id = i.id AND ` + liveVersion + ` ORDER BY ` + versionOrderSQL + ` LIMIT 1),
 	CASE WHEN i.kind IN ('show', 'season') THEN (SELECT COUNT(*) FROM library_items c WHERE c.parent_id = i.id) END,
 	CASE i.kind WHEN 'season' THEN COALESCE(p.display_title, p.title) WHEN 'episode' THEN COALESCE(gp.display_title, gp.title) END,
 	CASE WHEN i.kind = 'episode' THEN p.idx END,
@@ -372,13 +384,16 @@ const itemColumns = `i.id, i.kind, i.library_id, i.parent_id, COALESCE(i.display
 const itemJoins = ` FROM library_items i LEFT JOIN library_items p ON p.id = i.parent_id
 	LEFT JOIN library_items gp ON gp.id = p.parent_id`
 
-// itemFiles is the present files of item i and of its descendants (a show's
-// seasons' episodes: two levels at most). Each file filter gets its own
-// EXISTS: it matches when any one of them matches it (decision 6), so two
-// filters may be met by different files or episodes.
-const itemFiles = `EXISTS (SELECT 1 FROM library_versions v JOIN library_files f ON f.id = v.file_id
-	WHERE v.item_id IN (SELECT i.id
-		UNION ALL SELECT c.id FROM library_items c WHERE c.parent_id = i.id
+// ownFiles is the present files of a movie or episode i: one EXISTS holds
+// every file filter, so a single file must meet them all.
+const ownFiles = `EXISTS (SELECT 1 FROM library_versions v JOIN library_files f ON f.id = v.file_id
+	WHERE v.item_id = i.id AND f.state = 'present'`
+
+// descendantFiles is the present files of a show's or season's episodes (two
+// levels at most). Each file filter gets its own EXISTS, so filters may be met
+// by different episodes (decision 6).
+const descendantFiles = `EXISTS (SELECT 1 FROM library_versions v JOIN library_files f ON f.id = v.file_id
+	WHERE v.item_id IN (SELECT c.id FROM library_items c WHERE c.parent_id = i.id
 		UNION ALL SELECT e.id FROM library_items c JOIN library_items e ON e.parent_id = c.id WHERE c.parent_id = i.id)
 	AND f.state = 'present'`
 
@@ -553,9 +568,21 @@ func (s *Store) Items(ctx context.Context, g Grant, q ItemQuery) (contracts.Item
 			fileConds = append(fileConds, "EXISTS (SELECT 1 FROM library_file_audio a WHERE a.file_id = f.id AND a.lang = ?)")
 			fileArgs = append(fileArgs, []any{q.AudioLanguage})
 		}
-		for i, fc := range fileConds {
-			conds = append(conds, itemFiles+" AND "+fc+")")
-			args = append(args, fileArgs[i]...)
+		if len(fileConds) > 0 {
+			// A movie or episode: one of its files meets every filter. A show
+			// or season: each filter is met by some episode's file.
+			own := ownFiles + " AND " + strings.Join(fileConds, " AND ") + ")"
+			var desc []string
+			var descArgs []any
+			for i, fc := range fileConds {
+				desc = append(desc, descendantFiles+" AND "+fc+")")
+				descArgs = append(descArgs, fileArgs[i]...)
+			}
+			conds = append(conds, "(CASE WHEN i.kind IN ('movie', 'episode') THEN "+own+" ELSE "+strings.Join(desc, " AND ")+" END)")
+			for _, a := range fileArgs {
+				args = append(args, a...)
+			}
+			args = append(args, descArgs...)
 		}
 		where := " WHERE " + strings.Join(conds, " AND ")
 

@@ -85,21 +85,25 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	}
 	var resolver playback.Resolver = single
 	var store *library.Store
-	var catalogue http.Handler // nil without storage: its routes answer 404
+	var catalogue http.Handler // nil without storage or sort keys: its routes answer 404
 	if db != nil {
 		// LIB-2c: catalogue files play, and the M1 movie still does.
 		store = library.NewStore(db)
 		// Items from before the sort keys (a LIB-2b database) get them
 		// before the catalogue is served: listItems pages on them. It is
-		// one fast pass; file facts are filled in the background below.
-		if n, err := store.BackfillSortKeys(ctx); err != nil {
-			log.Error("library.backfill_sort_keys", "items", n, "err", err.Error())
-		} else if n > 0 {
-			log.Info("library.backfill_sort_keys", "items", n)
-		}
+		// one fast pass; file facts are filled in the background below. If
+		// it fails, the catalogue routes stay unmounted (404, so the browse
+		// app falls back to M1) rather than page on missing keys.
 		access := library.M1Access(v)
 		resolver = playback.Chain(library.NewResolver(store, access), single)
-		catalogue = library.NewAPI(store, access, log).Handler()
+		if n, err := backfillSortKeys(store, ctx); err != nil {
+			log.Error("library.backfill_sort_keys", "items", n, "err", err.Error(), "catalogue", "not served")
+		} else {
+			if n > 0 {
+				log.Info("library.backfill_sort_keys", "items", n)
+			}
+			catalogue = library.NewAPI(store, access, log).Handler()
+		}
 	}
 	closeEarly := func() {
 		root.Close()

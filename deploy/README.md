@@ -1,6 +1,6 @@
 # Running the M1 container
 
-M1 serves one movie to one viewer on a **trusted private network** over plain
+M1 serves one viewer on a **trusted private network** over plain
 HTTP. Plain HTTP has no transport encryption: don't forward the port to the
 internet. Remote access with HTTPS is later work (spec §6.6).
 
