@@ -55,13 +55,17 @@ A scope the scheduler then refuses (a symlinked folder: 400; the library not rea
 earlier scopes of the same notification queued. The receipt lists exactly the scopes that were
 queued, and its reason starts "N of M scans queued before:".
 
+A path the library never scans (inside a hidden, `sample` or recycle folder) is left out rather
+than rejected: the rest of the notification is queued. If every path is like that, the answer is
+200 `ignored`.
+
 ## Responses
 
 | Status | Body | When |
 |---|---|---|
 | 202 | `{"result":"queued","receiptId":"rcpt-...","scopes":[{"rootId":"...","path":"..."}]}` | scans queued |
 | 200 | `{"result":"test","receiptId":"rcpt-...","scopes":[]}` | `Test` event |
-| 200 | `{"result":"ignored","receiptId":"rcpt-...","scopes":[]}` | event that doesn't change files |
+| 200 | `{"result":"ignored","receiptId":"rcpt-...","scopes":[]}` | event that doesn't change files, or only paths the library never scans |
 | 400 | `{"code":"invalid_request","message":"Notification rejected: <reason>","requestId":"..."}` | bad payload, unsupported app or version, path that can't be mapped or goes through a symlinked folder, body too large |
 | 401 | `{"code":"unauthenticated",...}` with `WWW-Authenticate: Basic` | missing, wrong or revoked credentials |
 | 405 | none | method other than POST or PUT |

@@ -3,6 +3,7 @@ package arrhook
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -126,5 +127,21 @@ func TestReceiptsAreBounded(t *testing.T) {
 	}
 	if !rs[0].At.Equal(at.Add((keepReceipts+4)*time.Second)) || rs[0].Scopes[0] != (Scope{tvRoot, "Show"}) {
 		t.Fatalf("newest %+v", rs[0])
+	}
+}
+
+// #159 review: --folder is cleaned the way `library add` cleans it, so
+// "./TV" and "TV/" find the TV library.
+func TestAddCleansFolders(t *testing.T) {
+	st, tvRoot, _ := newStore(t)
+	ctx := context.Background()
+	for i, folder := range []string{"./TV", "TV/", "./TV/"} {
+		src, _, err := st.Add(ctx, fmt.Sprintf("sonarr-%d", i), Sonarr, []string{folder}, []Mapping{{"/tv", "TV"}})
+		if err != nil {
+			t.Fatalf("%q: %v", folder, err)
+		}
+		if len(src.Roots) != 1 || src.Roots[0].ID != tvRoot || src.Roots[0].Path != "TV" {
+			t.Fatalf("%q: roots %+v", folder, src.Roots)
+		}
 	}
 }

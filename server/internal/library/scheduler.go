@@ -383,8 +383,11 @@ func (s *Scheduler) hooks() watchHooks {
 // missing (#127). Components that don't exist are fine (deleted files).
 func (s *Scheduler) Hint(rootID, scope, cause string) error {
 	scope = path.Clean(scope)
-	if !fs.ValidPath(scope) || skippedPath(scope) {
+	if !fs.ValidPath(scope) {
 		return fmt.Errorf("%w: scope %q", ErrInvalid, scope)
+	}
+	if skippedPath(scope) {
+		return fmt.Errorf("%w: scope %q", ErrSkipped, scope)
 	}
 	s.mu.Lock()
 	rs, ok := s.roots[rootID]

@@ -348,7 +348,10 @@ func TestSchedulerHint(t *testing.T) {
 	if err := f.sch.Hint("root-nope", "A (2001)", CauseImport); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown root: %v", err)
 	}
-	for _, bad := range []string{"../x", "/abs", ".grab/x.mkv"} {
+	if err := f.sch.Hint(f.root, ".grab/x.mkv", CauseImport); !errors.Is(err, ErrSkipped) || errors.Is(err, ErrInvalid) {
+		t.Fatalf("skipped path: %v, want ErrSkipped", err)
+	}
+	for _, bad := range []string{"../x", "/abs"} {
 		if err := f.sch.Hint(f.root, bad, CauseImport); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("scope %q: %v", bad, err)
 		}

@@ -373,3 +373,27 @@ func TestRateLimitsAreLogged(t *testing.T) {
 		t.Fatalf("lockout log %q", out)
 	}
 }
+
+// #159 review: a path the library never scans (hidden, sample, recycle
+// folders) is left out, not a rejection: the rest of the import is queued.
+func TestSkippedPathIsLeftOut(t *testing.T) {
+	f := newHook(t)
+	f.hints.err, f.hints.failAt = fmt.Errorf("%w: sample", library.ErrSkipped), 2
+	rec := f.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/x"},"episodeFile":{"path":"/tv/x/a.mkv"},"deletedFiles":[{"path":"/tv/y/sample/b.mkv"}]}`))
+	if a := decode(t, rec); rec.Code != http.StatusAccepted || a.Result != ResultQueued {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if r := f.lastReceipt(t); r.Result != ResultQueued || len(r.Scopes) != 1 || len(f.hints.list()) != 1 {
+		t.Fatalf("receipt %+v, queued %q", r, f.hints.list())
+	}
+	// Only skipped paths: nothing to scan, not a failure.
+	f2 := newHook(t)
+	f2.hints.err = fmt.Errorf("%w: sample", library.ErrSkipped)
+	rec = f2.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/x"},"episodeFile":{"path":"/tv/x/sample/a.mkv"}}`))
+	if a := decode(t, rec); rec.Code != http.StatusOK || a.Result != ResultIgnored {
+		t.Fatalf("only skipped: %d %s", rec.Code, rec.Body)
+	}
+	if r := f2.lastReceipt(t); r.Result != ResultIgnored || len(r.Scopes) != 0 || r.Reason == "" {
+		t.Fatalf("receipt %+v", r)
+	}
+}

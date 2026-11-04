@@ -153,6 +153,9 @@ func (s *Store) Add(ctx context.Context, name, kind string, roots []string, maps
 	}
 	done := map[string]bool{}
 	for _, p := range roots {
+		// Cleaned as `library add` cleans its folder, so "./TV" and "TV/"
+		// find the TV library (#159).
+		p = path.Clean(strings.TrimPrefix(p, "./"))
 		var id string
 		err := tx.QueryRowContext(ctx, `SELECT id FROM library_roots WHERE path = ?`, p).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {

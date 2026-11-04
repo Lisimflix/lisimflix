@@ -186,13 +186,22 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		scopes = append(scopes, s)
 	}
 	all := group(scopes)
-	for i, s := range all {
-		if err := h.hint.Hint(s.RootID, s.Path, CauseImport); err != nil {
+	var done []Scope // queued so far
+	skipped := 0
+	for _, s := range all {
+		err := h.hint.Hint(s.RootID, s.Path, CauseImport)
+		if errors.Is(err, library.ErrSkipped) {
+			// A path the library never scans (hidden, sample or recycle
+			// folders) has nothing to scan; the rest still counts (#159).
+			skipped++
+			continue
+		}
+		if err != nil {
 			// The receipt lists only what was queued before the refusal.
-			rec.Scopes = all[:i]
+			rec.Scopes = done
 			queued := ""
-			if i > 0 {
-				queued = fmt.Sprintf("%d of %d scans queued before: ", i, len(all))
+			if len(done) > 0 {
+				queued = fmt.Sprintf("%d of %d scans queued before: ", len(done), len(all))
 			}
 			if errors.Is(err, library.ErrInvalid) {
 				// A scope the library won't scan (e.g. through a symlinked
@@ -206,8 +215,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			h.finish(w, r, log, src, rec, http.StatusServiceUnavailable)
 			return
 		}
+		done = append(done, s)
 	}
-	rec.Scopes = all
+	rec.Scopes = done
+	if len(done) == 0 && skipped > 0 {
+		rec.Result, rec.Reason = ResultIgnored, "only paths the library never scans (hidden, sample or recycle folders)"
+		h.finish(w, r, log, src, rec, http.StatusOK)
+		return
+	}
 	rec.Result = ResultQueued
 	h.finish(w, r, log, src, rec, http.StatusAccepted)
 }
