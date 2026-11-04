@@ -29,14 +29,14 @@ func Migrations() storage.Source {
 var (
 	// Planned: DATA-1a (SetWatched, Hide).
 	ErrRevisionConflict = errors.New("userdata: revision conflict")
-	// Planned: DATA-1a (Apply validation).
+	// Planned: DATA-1b (reportProgress handler maps it to 400).
 	ErrInvalid = errors.New("userdata: invalid")
 )
 
 // Session is a live playback session, which fixes the item, version and
 // source revision its events apply to.
 //
-// Planned: DATA-1a (Apply).
+// Planned: DATA-1b (reportProgress handler supplies it).
 type Session struct {
 	ID, ItemID, VersionID, SourceRevision string
 	DurationMs                            int64
@@ -78,6 +78,7 @@ func (s *Store) Get(ctx context.Context, profileID, itemID string) (contracts.Us
 		return st, fmt.Errorf("userdata: get: %w", err)
 	}
 	st.Revision = rev
+	// Resume and watched are each written as a whole group (Apply and SetWatched always write every column of a group).
 	st.HiddenFromContinueWatching = hidden != 0
 	if pos.Valid && dur.Valid && verID.Valid && srcRev.Valid && resAt.Valid {
 		st.Resume = &contracts.Resume{PositionMs: pos.Int64, DurationMs: dur.Int64, VersionID: verID.String,

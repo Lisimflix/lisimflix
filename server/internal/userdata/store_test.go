@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Lisimflix/lisimflix/server/internal/contracts"
 	"github.com/Lisimflix/lisimflix/server/internal/storage"
 )
 
@@ -47,8 +48,11 @@ func TestMigrateIsIdempotent(t *testing.T) {
 }
 
 func TestProfilesAreSeparate(t *testing.T) {
-	t.Skip("needs Task 3's Apply helper to write state for p1")
 	e := newEnv(t)
+	e.play(sess("s1", "r1"), contracts.ProgressTick, 1, 10_000)
+	if p1, err := e.st.Get(context.Background(), "p1", "item"); err != nil || p1.Resume == nil {
+		t.Fatalf("p1 has no state: %+v, %v", p1, err)
+	}
 	st, err := e.st.Get(context.Background(), "p2", "item")
 	if err != nil {
 		t.Fatal(err)
@@ -85,5 +89,28 @@ func TestBump(t *testing.T) {
 		if _, err := step(stale); !errors.Is(err, ErrRevisionConflict) {
 			t.Fatalf("stale %d: err = %v, want ErrRevisionConflict", stale, err)
 		}
+	}
+}
+
+func TestBumpFromProgressOnlyRow(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.play(sess("s1", "r1"), contracts.ProgressTick, 1, 10_000) // creates the row at revision 0
+	tx, err := e.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if rev, err := bump(ctx, tx, "p1", "item", 0); err != nil || rev != 1 {
+		t.Fatalf("bump = %d, %v", rev, err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if n := e.count(`SELECT COUNT(*) FROM userdata_state WHERE profile_id = 'p1' AND item_id = 'item'`); n != 1 {
+		t.Fatalf("%d state rows, want 1", n)
+	}
+	if st, _ := e.st.Get(ctx, "p1", "item"); st.Revision != 1 {
+		t.Fatalf("revision = %d, want 1", st.Revision)
 	}
 }
