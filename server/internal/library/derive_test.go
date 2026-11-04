@@ -2,6 +2,7 @@ package library
 
 import (
 	"context"
+	"errors"
 	"os"
 	"reflect"
 	"testing"
@@ -77,7 +78,9 @@ func TestSetDisplayRefreshesSortKey(t *testing.T) {
 	s, _, _, _, _ := setupMovies(t, "Heat (1995)/Heat (1995).mkv", "Alien (1979)/Alien (1979).mkv")
 	ctx := context.Background()
 	var id string
-	s.db.QueryRow(`SELECT id FROM library_items WHERE title = 'Heat'`).Scan(&id)
+	if err := s.db.QueryRow(`SELECT id FROM library_items WHERE title = 'Heat'`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
 	z := "Zzz"
 	if err := s.SetDisplay(ctx, id, Display{SortTitle: &z}); err != nil {
 		t.Fatal(err)
@@ -118,7 +121,9 @@ func TestBackfillFillsOldRows(t *testing.T) {
 		for rows.Next() {
 			var a, b string
 			var g int
-			rows.Scan(&a, &b, &g)
+			if err := rows.Scan(&a, &b, &g); err != nil {
+				t.Fatal(err)
+			}
 			out = append(out, a+"|"+b+"|"+string(rune('0'+g)))
 		}
 		return
@@ -128,7 +133,9 @@ func TestBackfillFillsOldRows(t *testing.T) {
 	var ids []string
 	for rows.Next() {
 		var id string
-		rows.Scan(&id)
+		if err := rows.Scan(&id); err != nil {
+			t.Fatal(err)
+		}
 		ids = append(ids, id)
 	}
 	rows.Close()
@@ -161,11 +168,52 @@ func TestBackfillFillsOldRows(t *testing.T) {
 	var res string
 	var hdr int
 	var dur int64
-	s.db.QueryRow(`SELECT resolution, hdr, duration_ms FROM library_files LIMIT 1`).Scan(&res, &hdr, &dur)
+	if err := s.db.QueryRow(`SELECT resolution, hdr, duration_ms FROM library_files LIMIT 1`).Scan(&res, &hdr, &dur); err != nil {
+		t.Fatal(err)
+	}
 	if res != "1080p" || hdr != 1 || dur != 7_200_000 {
 		t.Fatalf("file facts %s %d %d", res, hdr, dur)
 	}
 	if i, f, _ := s.BackfillDerived(context.Background()); i != 0 || f != 0 {
 		t.Fatalf("second backfill did %d %d", i, f)
 	}
+}
+
+func assertNoFacts(t *testing.T, s *Store) {
+	t.Helper()
+	if r := fileFactsOf(t, s); r.Res != nil || r.HDR != nil || r.Dur != nil || len(r.Audio) != 0 {
+		t.Fatalf("facts not cleared: %+v", r)
+	}
+}
+
+func TestProbeFailureClearsFileFacts(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "Heat (1995)/Heat (1995).mkv")
+	probeDue(t, sc, root, factsProber{})
+	if r := fileFactsOf(t, s); r.Res == nil || len(r.Audio) != 2 {
+		t.Fatalf("facts not set: %+v", r)
+	}
+	m.write("Movies/Heat (1995)/Heat (1995).mkv", 20)
+	scan(t, sc, root)
+	p := &scriptedProber{fail: map[string]error{"Heat (1995)/Heat (1995).mkv": errors.New("corrupt")}}
+	if run := probeDue(t, sc, root, p); run.Failed != 1 {
+		t.Fatalf("run = %+v", run)
+	}
+	assertNoFacts(t, s)
+	// A stale failure writes nothing: BackfillDerived must not pick failed files.
+	if i, f, err := s.BackfillDerived(context.Background()); err != nil || f != 0 {
+		t.Fatalf("backfill %d %d %v", i, f, err)
+	}
+}
+
+func TestRetryProbeClearsFileFacts(t *testing.T) {
+	s, _, _, sc, root := setupMovies(t, "Heat (1995)/Heat (1995).mkv")
+	probeDue(t, sc, root, factsProber{})
+	var id string
+	if err := s.db.QueryRow(`SELECT id FROM library_files`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RetryProbe(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	assertNoFacts(t, s)
 }

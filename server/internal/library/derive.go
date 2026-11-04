@@ -19,7 +19,9 @@ func sortKey(sortTitle string) (key string, group int) {
 }
 
 // storeFacts writes a file's derived columns and audio languages. It runs in
-// the transaction that stores the probe result, so they never disagree.
+// the transaction that stores the probe result, so they never disagree. A
+// probe with no video stores hdr = 0 and a NULL resolution, so hdr = 0 alone
+// doesn't mean "has SDR video": facet code must also require a resolution.
 func storeFacts(ctx context.Context, tx *sql.Tx, fileID string, f fileFacts) error {
 	hdr := 0
 	if f.HDR {
@@ -30,6 +32,15 @@ func storeFacts(ctx context.Context, tx *sql.Tx, fileID string, f fileFacts) err
 		return err
 	}
 	return replaceAudio(ctx, tx, fileID, f.AudioLangs)
+}
+
+// clearFacts removes a file's derived facts when its probe is gone or failed:
+// they described a probe that no longer applies.
+func clearFacts(ctx context.Context, tx *sql.Tx, fileID string) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE library_files SET resolution = NULL, hdr = NULL, duration_ms = NULL WHERE id = ?`, fileID); err != nil {
+		return err
+	}
+	return replaceAudio(ctx, tx, fileID, nil)
 }
 
 func replaceAudio(ctx context.Context, tx *sql.Tx, fileID string, langs []string) error {
@@ -93,6 +104,7 @@ func (s *Store) SetDisplay(ctx context.Context, itemID string, d Display) error 
 // BackfillDerived fills the derived columns of rows that predate them: items
 // without a sort key and probed files without file facts, 500 rows per
 // transaction. It reports how many of each it filled.
+// Planned: LIB-2c (serve runs it once before the scheduler starts).
 func (s *Store) BackfillDerived(ctx context.Context) (items, files int, err error) {
 	for {
 		n, err := s.backfillItems(ctx)

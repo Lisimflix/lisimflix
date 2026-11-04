@@ -133,13 +133,11 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		if len(msg) > maxProbeError {
 			msg = msg[:maxProbeError]
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
-			probe_error = ?, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
-			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg, rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
+		stored, err := s.storeFailure(ctx, rootID, o, msg)
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		if !stored {
 			run.Stale++
 			return nil
 		}
@@ -172,6 +170,31 @@ func (s *Store) storeProbe(ctx context.Context, rootID string, o Outcome, js str
 	return true, tx.Commit()
 }
 
+// storeFailure keeps a probe error and clears the file's derived facts, which
+// described an earlier revision, in one short transaction. It reports false
+// (writing nothing) if the result is stale.
+func (s *Store) storeFailure(ctx context.Context, rootID string, o Outcome, msg string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var fileID string
+	err = tx.QueryRowContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
+		probe_error = ?, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits+` RETURNING id`,
+		o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg, rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime).Scan(&fileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := clearFacts(ctx, tx, fileID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 // retryTimeout defers a file whose probe timed out, unless it has run out of
 // retries, and reports whether it dealt with the outcome. Like a stored
 // result, it applies only to the catalogue's revision or a newer one.
@@ -198,7 +221,12 @@ func (s *Store) retryTimeout(ctx context.Context, rootID string, o Outcome, run 
 // admin's explicit retry after a failure (spec §3.6).
 // Planned: LIB-2c (the admin retry action).
 func (s *Store) RetryProbe(ctx context.Context, fileID string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE library_files SET probe_size = NULL, probe_mtime_ns = NULL, probe_json = NULL,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE library_files SET probe_size = NULL, probe_mtime_ns = NULL, probe_json = NULL,
 		probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE id = ?`, fileID)
 	if err != nil {
 		return err
@@ -206,5 +234,8 @@ func (s *Store) RetryProbe(ctx context.Context, fileID string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if err := clearFacts(ctx, tx, fileID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
