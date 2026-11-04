@@ -376,19 +376,64 @@ func (s *Scheduler) hooks() watchHooks {
 // Hint queues a scoped scan of scope (a folder or file inside the root) as
 // a watcher event would, coalescing with pending work. Import notifications
 // (LIB-4) use it with CauseImport.
-// Planned: LIB-4 (the Sonarr/Radarr webhook queues imported paths).
+//
+// A scope that is, or passes through, a symlinked folder is refused with
+// ErrInvalid: a scoped scan would follow the link but whole-root scans don't
+// walk symlinked folders, so its files would flip between present and
+// missing (#127). Components that don't exist are fine (deleted files).
 func (s *Scheduler) Hint(rootID, scope, cause string) error {
 	scope = path.Clean(scope)
-	if !fs.ValidPath(scope) || skippedPath(scope) {
+	if !fs.ValidPath(scope) {
 		return fmt.Errorf("%w: scope %q", ErrInvalid, scope)
+	}
+	if skippedPath(scope) {
+		return fmt.Errorf("%w: scope %q", ErrSkipped, scope)
+	}
+	s.mu.Lock()
+	rs, ok := s.roots[rootID]
+	var rootPath string
+	if ok {
+		rootPath = rs.Path
+	}
+	s.mu.Unlock()
+	if !ok {
+		return ErrNotFound
+	}
+	if err := s.checkNoSymlink(rootPath, scope); err != nil {
+		return err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	rs, ok := s.roots[rootID]
+	rs, ok = s.roots[rootID] // removed while we looked at the disk?
 	if !ok {
 		return ErrNotFound
 	}
 	s.queueScope(rs, scope, cause)
+	return nil
+}
+
+// checkNoSymlink Lstats every prefix of scope inside the root folder. Errors
+// other than a symlink are not refusals: the scan reports them its own way.
+func (s *Scheduler) checkNoSymlink(rootPath, scope string) error {
+	if scope == "." {
+		return nil
+	}
+	root, err := s.sc.Media.OpenRoot(rootPath)
+	if err != nil {
+		return nil
+	}
+	defer root.Close()
+	parts := strings.Split(scope, "/")
+	for i := range parts {
+		comp := strings.Join(parts[:i+1], "/")
+		info, err := root.Lstat(comp)
+		if err != nil {
+			return nil // missing or unreadable: nothing further to check
+		}
+		if info.Mode()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("%w: scope %q goes through the symlink %q", ErrInvalid, scope, comp)
+		}
+	}
 	return nil
 }
 

@@ -114,3 +114,33 @@ libraries yet (LIB-2c, UI-2).
   it is marked missing. It's rescanned within a minute of coming back.
 - **Logs:** `library.scan` (each scan, with its counts), `library.probe` (each probe turn) and
   `library.watch` (a lost or limited watch, or dropped events) lines.
+
+## 6. Sonarr and Radarr (optional)
+
+Connect Sonarr or Radarr so an import is scanned at once, without waiting for the file watcher:
+
+```sh
+docker compose -f deploy/compose.m1.yml exec lisimflix \
+  lisimflix hook add --name sonarr --kind sonarr --folder TV --map /tv=TV
+```
+
+`--folder` is a library folder, as given to `library add`. `--map REMOTE=LOCAL` says where the
+same folder is: Sonarr's root folder as Sonarr sees it, then that folder as given to
+`library add` (inside the media root). Repeat `--map` or `--folder` for more. Use `--kind radarr`
+for Radarr.
+
+1. Run the command above. It prints the exact settings and the password, once.
+2. In Sonarr (Settings → Connect → +) choose Webhook, paste the printed URL, username and
+   password, set the method to POST, tick the triggers listed (including the "File Delete For Upgrade" one, which
+   sends the replaced file's delete), and press Test.
+3. `lisimflix hook receipts --name sonarr` shows each notification and why one was rejected.
+
+- **Reachability:** Sonarr and Radarr must be able to reach the printed URL: the same Docker
+  network, or the host's address. The URL comes from `publicOrigin` in the config.
+- **Headers:** don't override `User-Agent` in the webhook's custom headers; the version check
+  reads it. Sonarr 4 and Radarr 5 or 6 are supported.
+- **Revoking:** `lisimflix hook revoke --name sonarr` stops its token at once; `hook list` shows
+  the state.
+- **Deleting the last item:** if the last item of a library folder is deleted, the folder shows
+  as offline until it has content again.
+- **Details:** events, responses and limits are in `docs/contracts/arr-webhook.md`.

@@ -12,6 +12,7 @@ fixtures until LIB-2c serves the catalogue; until then the web app falls back to
 
 Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
 anime, and the server keeps it scanned and probed. Nothing browses libraries yet (LIB-2c, UI-2).
+`lisimflix hook add` connects Sonarr or Radarr, so imports are scanned at once (LIB-4).
 
 To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
 only: plain HTTP, one viewer and one movie.

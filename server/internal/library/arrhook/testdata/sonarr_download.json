@@ -1,0 +1,6 @@
+{"series":{"id":1,"title":"Show","titleSlug":"show","path":"/tv/Show (2019)","tvdbId":123,"tvMazeId":0,"tmdbId":0,"type":"standard","year":2019},
+ "episodes":[{"id":10,"episodeNumber":2,"seasonNumber":1,"title":"Two"}],
+ "episodeFile":{"id":20,"relativePath":"Season 01/Show - S01E02 - Two [WEBDL-1080p].mkv","path":"/tv/Show (2019)/Season 01/Show - S01E02 - Two [WEBDL-1080p].mkv","quality":"WEBDL-1080p","qualityVersion":1,"size":1234567,"dateAdded":"2026-10-28T00:00:00Z","sourcePath":"/downloads/complete/Show.S01E02.1080p.WEB.mkv"},
+ "isUpgrade":true,"downloadClient":"SABnzbd","downloadClientType":"SABnzbd","downloadId":"SABnzbd_nzo_1",
+ "deletedFiles":[{"id":19,"relativePath":"Season 01/Show - S01E02 - Two [HDTV-720p].mkv","path":"/tv/Show (2019)/Season 01/Show - S01E02 - Two [HDTV-720p].mkv","quality":"HDTV-720p","qualityVersion":1,"size":700000,"dateAdded":"2026-10-01T00:00:00Z","recycleBinPath":"/recycle/Show - S01E02 - Two [HDTV-720p].mkv"}],
+ "eventType":"Download","instanceName":"Sonarr","applicationUrl":""}

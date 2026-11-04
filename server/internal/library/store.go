@@ -31,6 +31,9 @@ func Migrations() storage.Source {
 var (
 	ErrNotFound = errors.New("library: not found")
 	ErrInvalid  = errors.New("library: invalid library")
+	// ErrSkipped: a path the scanner never visits (hidden, sample or recycle
+	// folders), so a hint for it has nothing to scan (#159).
+	ErrSkipped = errors.New("library: path is never scanned")
 )
 
 // Root states (spec §3.6).

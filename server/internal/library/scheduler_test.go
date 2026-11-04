@@ -7,6 +7,7 @@ import (
 	"github.com/Lisimflix/lisimflix/server/internal/probe"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -347,7 +348,10 @@ func TestSchedulerHint(t *testing.T) {
 	if err := f.sch.Hint("root-nope", "A (2001)", CauseImport); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown root: %v", err)
 	}
-	for _, bad := range []string{"../x", "/abs", ".grab/x.mkv"} {
+	if err := f.sch.Hint(f.root, ".grab/x.mkv", CauseImport); !errors.Is(err, ErrSkipped) || errors.Is(err, ErrInvalid) {
+		t.Fatalf("skipped path: %v, want ErrSkipped", err)
+	}
+	for _, bad := range []string{"../x", "/abs"} {
 		if err := f.sch.Hint(f.root, bad, CauseImport); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("scope %q: %v", bad, err)
 		}
@@ -362,6 +366,29 @@ func TestSchedulerHint(t *testing.T) {
 	})
 	if n := f.runs(t, `cause = 'import'`); n != 1 {
 		t.Fatalf("%d import runs, want 1", n)
+	}
+}
+
+// #127: a scope that is, or passes through, a symlinked folder is refused
+// (whole-root scans don't walk symlinks, so its files would flap between
+// present and missing). Scopes that don't exist yet are fine: deletes name them.
+func TestSchedulerHintRefusesSymlinkedScopes(t *testing.T) {
+	opts := fastOpts
+	opts.NoWatch = true
+	f := startScheduler(t, "movies", opts, &scriptedProber{}, "Real (2001)/Real (2001).mkv")
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed'`) == 1 })
+	if err := os.Symlink("Real (2001)", filepath.Join(f.m.dir, "Movies", "Link (2001)")); err != nil {
+		t.Fatal(err)
+	}
+	for _, scope := range []string{"Link (2001)/Real (2001).mkv", "Link (2001)"} {
+		if err := f.sch.Hint(f.root, scope, CauseImport); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "Link (2001)") {
+			t.Errorf("scope %q: %v", scope, err)
+		}
+	}
+	for _, scope := range []string{"Real (2001)/Real (2001).mkv", "Gone (2003)/Gone (2003).mkv", "."} {
+		if err := f.sch.Hint(f.root, scope, CauseImport); err != nil {
+			t.Errorf("scope %q: %v", scope, err)
+		}
 	}
 }
 

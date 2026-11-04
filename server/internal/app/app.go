@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -30,9 +31,16 @@ const (
 
 // New returns the application handler. playback owns GET /api/v1/movies and
 // everything under /api/v1/playback/, and only ever sees requests with a live
-// session. web must contain index.html. ready reports whether initialisation
+// session. mounts add routes beside the API (see Mount). web must contain index.html. ready reports whether initialisation
 // succeeded; /health/ready returns 503 while it returns an error.
-func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger) (http.Handler, error) {
+// Mount is a route served beside the API, outside its browser-only Origin and
+// CSRF checks: an integration endpoint that authenticates its own callers.
+type Mount struct {
+	Pattern string // a path outside /api/ and /health/, e.g. "/hooks/v1/arr"
+	Handler http.Handler
+}
+
+func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger, mounts ...Mount) (http.Handler, error) {
 	if am == nil || playback == nil || web == nil || ready == nil {
 		return nil, errors.New("app: auth manager, playback handler, web assets and ready check are required")
 	}
@@ -79,6 +87,14 @@ func New(cfg m1config.Config, am *auth.Manager, playback http.Handler, web fs.FS
 	root.HandleFunc("/health/", func(w http.ResponseWriter, r *http.Request) {
 		health(w, http.StatusNotFound, "not_found")
 	})
+	seen := map[string]bool{}
+	for _, m := range mounts {
+		if !strings.HasPrefix(m.Pattern, "/") || m.Pattern == "/" || m.Pattern == "/api" || m.Pattern == "/health" || seen[m.Pattern] || strings.HasPrefix(m.Pattern, "/api/") || strings.HasPrefix(m.Pattern, "/health/") || m.Handler == nil {
+			return nil, fmt.Errorf("app: invalid mount %q", m.Pattern)
+		}
+		seen[m.Pattern] = true
+		root.Handle(m.Pattern, m.Handler)
+	}
 	root.Handle("/", spa(web))
 	return observe(log, securityHeaders(root)), nil
 }
