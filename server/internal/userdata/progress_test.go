@@ -69,18 +69,26 @@ func TestDuplicateAndStale(t *testing.T) {
 	e.play(s, tick, 1, 10_000)
 	e.play(s, tick, 3, 30_000)
 	before := e.get()
-	for _, c := range []struct {
-		seq  int64
-		want string
-	}{{2, "stale"}, {3, "duplicate"}, {1, "duplicate"}} {
-		r := e.play(s, tick, c.seq, 20_000)
-		if reason(r) != c.want {
-			t.Fatalf("seq %d: %s, want %s", c.seq, reason(r), c.want)
+	from := int64(30_000)
+	check := func(label string, ev contracts.ProgressEvent, want string) {
+		t.Helper()
+		r, err := e.st.Apply(context.Background(), "p1", s, ev)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if reason(r) != want {
+			t.Fatalf("%s: %s, want %s", label, reason(r), want)
 		}
 		if r.State.Revision != before.Revision || *r.State.Resume != *before.Resume {
-			t.Fatalf("seq %d changed state: %+v", c.seq, r.State)
+			t.Fatalf("%s changed state: %+v", label, r.State)
 		}
 	}
+	// Positions at or past 30,000 so only the sequence rule can reject them.
+	check("seq 2 ahead in position", contracts.ProgressEvent{Sequence: 2, Kind: tick, PositionMs: 40_000}, "stale")
+	check("old seek, lower sequence", contracts.ProgressEvent{Sequence: 2, Kind: seek, PositionMs: 5_000, FromPositionMs: &from}, "stale")
+	check("seq 2 behind in position", contracts.ProgressEvent{Sequence: 2, Kind: tick, PositionMs: 20_000}, "stale")
+	check("replay 3", contracts.ProgressEvent{Sequence: 3, Kind: tick, PositionMs: 20_000}, "duplicate")
+	check("replay 1", contracts.ProgressEvent{Sequence: 1, Kind: tick, PositionMs: 20_000}, "duplicate")
 }
 
 func TestReplayedBatchInAnyOrder(t *testing.T) {
