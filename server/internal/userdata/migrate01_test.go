@@ -45,7 +45,7 @@ func TestRoundTripKeepsMeaning(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Resume != nil || got.Watched != nil || got.PlayCount != nil || got.LastPlayedAt != nil {
+	if !got.HiddenFromContinueWatching || got.Resume != nil || got.Watched != nil || got.PlayCount != nil || got.LastPlayedAt != nil {
 		t.Fatalf("hidden-only Get = %+v", got)
 	}
 }
@@ -100,14 +100,14 @@ func TestImportFixturesKeepIdentityAndOrigin(t *testing.T) {
 	if a.LastPlayedAt == nil || !a.LastPlayedAt.Equal(e.clock) || a.Resume == nil || a.Resume.PositionMs != 5_000 || !a.Resume.UpdatedAt.Equal(e.clock) {
 		t.Fatalf("itemA after tick = %+v", a)
 	}
-	if a.Watched == nil || a.Watched.Origin != contracts.WatchedImport || !a.Watched.At.Equal(importedAt) || a.PlayCount != nil {
+	if a.Watched == nil || !a.Watched.Value || a.Watched.Origin != contracts.WatchedImport || !a.Watched.At.Equal(importedAt) || a.PlayCount != nil {
 		t.Fatalf("itemA watched/count changed: %+v", a)
 	}
 	b, err := e.st.Get(ctx, "p1", "itemB")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Resume != nil || b.LastPlayedAt == nil || !b.LastPlayedAt.Equal(importedAt) {
+	if b.Watched == nil || b.Watched.Origin != contracts.WatchedImport || b.PlayCount != nil || b.Resume != nil || b.LastPlayedAt == nil || !b.LastPlayedAt.Equal(importedAt) {
 		t.Fatalf("itemB changed: %+v", b)
 	}
 }

@@ -83,7 +83,7 @@ func TestDuplicateAndStale(t *testing.T) {
 			t.Fatalf("%s changed state: %+v", label, r.State)
 		}
 	}
-	// Positions at or past 30,000 so only the sequence rule can reject them.
+	// Each is rejected by the sequence rule or the position rule: a tick at or before the last accepted position, plus a seek (exempt from the position rule, so only its sequence rejects it).
 	check("seq 2 ahead in position", contracts.ProgressEvent{Sequence: 2, Kind: tick, PositionMs: 40_000}, "stale")
 	check("old seek, lower sequence", contracts.ProgressEvent{Sequence: 2, Kind: seek, PositionMs: 5_000, FromPositionMs: &from}, "stale")
 	check("seq 2 behind in position", contracts.ProgressEvent{Sequence: 2, Kind: tick, PositionMs: 20_000}, "stale")

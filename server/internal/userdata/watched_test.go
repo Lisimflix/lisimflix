@@ -166,6 +166,14 @@ func TestContinueWatching(t *testing.T) {
 	if _, err := e.st.Hide(ctx, "p1", "D", 0); err != nil {
 		t.Fatal(err)
 	}
+	// F has an unknown duration (Decision 11): resume is never written, so it is not listed.
+	f := Session{ID: "sF", ItemID: "F", VersionID: "v1", SourceRevision: "r1"}
+	for seq, p := int64(0), int64(0); p <= 60_000; seq, p = seq+1, p+10_000 {
+		if r, err := e.st.Apply(ctx, "p1", f, contracts.ProgressEvent{Sequence: seq, Kind: tick, PositionMs: p}); err != nil || !r.Accepted {
+			t.Fatalf("F tick %d: %+v %v", seq, r, err)
+		}
+	}
+	e.advance(time.Second)
 	if got := e.list(10); !slices.Equal(got, []string{"E", "A"}) {
 		t.Fatalf("list = %v", got)
 	}
