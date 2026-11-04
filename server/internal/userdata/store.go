@@ -27,7 +27,7 @@ func Migrations() storage.Source {
 }
 
 var (
-	// Planned: DATA-1a (SetWatched, Hide).
+	// Planned: DATA-1b (setWatched and hideContinueWatching handlers map it to 409).
 	ErrRevisionConflict = errors.New("userdata: revision conflict")
 	// Planned: DATA-1b (reportProgress handler maps it to 400).
 	ErrInvalid = errors.New("userdata: invalid")
@@ -60,6 +60,24 @@ func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
 // Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
 func (s *Store) Get(ctx context.Context, profileID, itemID string) (contracts.UserItemState, error) {
 	st := contracts.UserItemState{ItemID: itemID}
+	err := scanState(s.db.QueryRowContext(ctx, `SELECT `+stateCols+` FROM userdata_state
+		WHERE profile_id = ? AND item_id = ?`, profileID, itemID), &st)
+	if errors.Is(err, sql.ErrNoRows) {
+		return st, nil
+	}
+	if err != nil {
+		return st, fmt.Errorf("userdata: get: %w", err)
+	}
+	return st, nil
+}
+
+// stateCols is the column list scanState reads.
+const stateCols = `revision, resume_position_ms, resume_duration_ms, resume_version_id,
+	resume_source_revision, resume_updated_at, watched_value, watched_origin, watched_at, play_count,
+	last_played_at, hidden`
+
+// scanState maps one stateCols row onto st; lead receives any columns selected before stateCols.
+func scanState(row interface{ Scan(...any) error }, st *contracts.UserItemState, lead ...any) error {
 	var (
 		rev                          int64
 		pos, dur, resAt              sql.NullInt64
@@ -67,15 +85,9 @@ func (s *Store) Get(ctx context.Context, profileID, itemID string) (contracts.Us
 		wVal, wAt, count, lastPlayed sql.NullInt64
 		hidden                       int64
 	)
-	err := s.db.QueryRowContext(ctx, `SELECT revision, resume_position_ms, resume_duration_ms, resume_version_id,
-		resume_source_revision, resume_updated_at, watched_value, watched_origin, watched_at, play_count,
-		last_played_at, hidden FROM userdata_state WHERE profile_id = ? AND item_id = ?`, profileID, itemID).
-		Scan(&rev, &pos, &dur, &verID, &srcRev, &resAt, &wVal, &wOrigin, &wAt, &count, &lastPlayed, &hidden)
-	if errors.Is(err, sql.ErrNoRows) {
-		return st, nil
-	}
-	if err != nil {
-		return st, fmt.Errorf("userdata: get: %w", err)
+	dest := append(lead, &rev, &pos, &dur, &verID, &srcRev, &resAt, &wVal, &wOrigin, &wAt, &count, &lastPlayed, &hidden)
+	if err := row.Scan(dest...); err != nil {
+		return err
 	}
 	st.Revision = rev
 	// Resume and watched are each written as a whole group (Apply and SetWatched always write every column of a group).
@@ -95,13 +107,11 @@ func (s *Store) Get(ctx context.Context, profileID, itemID string) (contracts.Us
 		t := time.UnixMilli(lastPlayed.Int64).UTC()
 		st.LastPlayedAt = &t
 	}
-	return st, nil
+	return nil
 }
 
 // bump advances the item's revision from expected inside tx. A stale expected
 // is ErrRevisionConflict; expected 0 also covers an item with no row yet.
-//
-// Planned: DATA-1a (SetWatched, Hide).
 func bump(ctx context.Context, tx *sql.Tx, profileID, itemID string, expected int64) (int64, error) {
 	res, err := tx.ExecContext(ctx, `UPDATE userdata_state SET revision = revision + 1
 		WHERE profile_id = ? AND item_id = ? AND revision = ?`, profileID, itemID, expected)
