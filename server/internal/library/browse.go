@@ -274,7 +274,9 @@ type itemOrder struct {
 	args    func(k []any) []any
 }
 
-const itemYear = "COALESCE(i.display_year, i.year)"
+// itemYear is the displayed year, NULL outside the contract's 1800-9999, so a
+// year that can't be served sorts and filters as unknown too.
+const itemYear = "(CASE WHEN COALESCE(i.display_year, i.year) BETWEEN 1800 AND 9999 THEN COALESCE(i.display_year, i.year) END)"
 
 var (
 	// The # group (0) before a–z (1), then the folded sort title.
@@ -355,8 +357,9 @@ const itemJoins = ` FROM library_items i LEFT JOIN library_items p ON p.id = i.p
 	LEFT JOIN library_items gp ON gp.id = p.parent_id`
 
 // itemFiles is the present files of item i and of its descendants (a show's
-// seasons' episodes: two levels at most). A file filter matches when any one
-// of them matches every file condition.
+// seasons' episodes: two levels at most). Each file filter gets its own
+// EXISTS: it matches when any one of them matches it (decision 6), so two
+// filters may be met by different files or episodes.
 const itemFiles = `EXISTS (SELECT 1 FROM library_versions v JOIN library_files f ON f.id = v.file_id
 	WHERE v.item_id IN (SELECT i.id
 		UNION ALL SELECT c.id FROM library_items c WHERE c.parent_id = i.id
@@ -485,11 +488,16 @@ func (s *Store) Items(ctx context.Context, g Grant, q ItemQuery) (contracts.Item
 			if !g.allows(libID) {
 				return ErrNotFound
 			}
-			scope, scopeArgs = []string{"i.parent_id = ?"}, []any{q.ParentID}
-			ord = orderEpisodes
-			if kind == contracts.KindShow {
+			// Only after the grant check, so a hidden movie is the same 404 as an unknown ID.
+			switch kind {
+			case contracts.KindShow:
 				ord = orderSeasons
+			case contracts.KindSeason:
+				ord = orderEpisodes
+			default:
+				return badRequest("parentId must be a show or a season")
 			}
+			scope, scopeArgs = []string{"i.parent_id = ?"}, []any{q.ParentID}
 		}
 
 		// Filters: bound parameters only.
@@ -512,26 +520,27 @@ func (s *Store) Items(ctx context.Context, g Grant, q ItemQuery) (contracts.Item
 			args = append(args, *q.YearTo)
 		}
 		var fileConds []string
-		var fileArgs []any
+		var fileArgs [][]any
 		if q.Resolution != "" {
 			fileConds = append(fileConds, "f.resolution = ?")
-			fileArgs = append(fileArgs, q.Resolution)
+			fileArgs = append(fileArgs, []any{q.Resolution})
 		}
 		if q.HDR != nil {
 			if *q.HDR {
 				fileConds = append(fileConds, "f.hdr = 1")
 			} else {
 				// hdr = 0 without a resolution is a file with no video: not SDR.
-				fileConds = append(fileConds, "f.hdr = 0", "f.resolution IS NOT NULL")
+				fileConds = append(fileConds, "f.hdr = 0 AND f.resolution IS NOT NULL")
 			}
+			fileArgs = append(fileArgs, nil)
 		}
 		if q.AudioLanguage != "" {
 			fileConds = append(fileConds, "EXISTS (SELECT 1 FROM library_file_audio a WHERE a.file_id = f.id AND a.lang = ?)")
-			fileArgs = append(fileArgs, q.AudioLanguage)
+			fileArgs = append(fileArgs, []any{q.AudioLanguage})
 		}
-		if len(fileConds) > 0 {
-			conds = append(conds, itemFiles+" AND "+strings.Join(fileConds, " AND ")+")")
-			args = append(args, fileArgs...)
+		for i, fc := range fileConds {
+			conds = append(conds, itemFiles+" AND "+fc+")")
+			args = append(args, fileArgs[i]...)
 		}
 		where := " WHERE " + strings.Join(conds, " AND ")
 
@@ -547,6 +556,9 @@ func (s *Store) Items(ctx context.Context, g Grant, q ItemQuery) (contracts.Item
 		if keys != nil {
 			if len(keys) == 1 && !ord.valid(keys) {
 				// A long cursor carries only the last item's ID: re-read its keys.
+				// Accepted: if that item's sort values changed since the last page
+				// (SetDisplay), paging resumes from its new position and may repeat
+				// or skip items. Only titles too long for a 512-byte cursor do this.
 				id, ok := keys[0].(string)
 				if !ok {
 					return badRequest("cursor is not valid")
@@ -642,7 +654,7 @@ func scanItem(rows *sql.Rows, nKeys int) (contracts.ItemSummary, []any, error) {
 	if parent.Valid {
 		it.ParentID = &parent.String
 	}
-	if year.Valid && year.Int64 >= 1800 && year.Int64 <= 9999 {
+	if year.Valid { // itemYear is NULL outside 1800-9999
 		it.Year = ptrTo(int(year.Int64))
 	}
 	if idx.Valid && idx.Int64 >= 0 && (it.Kind == contracts.KindSeason || it.Kind == contracts.KindEpisode) {

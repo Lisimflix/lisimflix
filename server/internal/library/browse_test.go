@@ -827,3 +827,80 @@ func TestOfflineRootItemsStayListedUnavailable(t *testing.T) {
 		t.Fatalf("episode %v", got)
 	}
 }
+
+func TestCombinedFiltersMatchFilesIndependently(t *testing.T) {
+	e := newBrowse(t)
+	vid := func(w, h int) []probe.VideoStream {
+		return []probe.VideoStream{{Index: 0, Codec: "hevc", Width: w, Height: h, Default: true}}
+	}
+	aud := func(lang string) []probe.AudioStream { return []probe.AudioStream{{Index: 1, Language: lang}} }
+	lib := e.library("Movies", "movies", []string{"Movies"},
+		"Movies/Mix (2015)/Mix (2015) - 2160p.mkv", "Movies/Mix (2015)/Mix (2015) - 1080p.mkv",
+		"Movies/Plain (2016)/Plain (2016).mkv")
+	e.probe(lib.Roots[0].ID, resProber{
+		"Mix (2015) - 2160p.mkv": {Container: "matroska", Video: vid(3840, 2160), Audio: aud("eng")},
+		"Mix (2015) - 1080p.mkv": {Container: "matroska", Video: vid(1920, 1080), Audio: aud("ger")},
+		"Plain (2016).mkv":       {Container: "matroska", Video: vid(1920, 1080), Audio: aud("eng")},
+	})
+	tv := e.library("TV", "tv", []string{"TV"},
+		"TV/Show (2019)/Season 01/Show - S01E01.mkv", "TV/Show (2019)/Season 02/Show - S02E01.mkv")
+	e.probe(tv.Roots[0].ID, resProber{
+		"Show - S01E01.mkv": {Container: "matroska", Video: vid(3840, 2160), Audio: aud("eng")},
+		"Show - S02E01.mkv": {Container: "matroska", Video: vid(1920, 1080), Audio: aud("ger")},
+	})
+	// Each filter may be met by a different file (or episode).
+	q := ItemQuery{Resolution: "4k", AudioLanguage: "deu"}
+	for libID, want := range map[string][]string{lib.ID: {"Mix"}, tv.ID: {"Show"}} {
+		q.LibraryID = libID
+		p := e.items(grantAll, q)
+		if got := titles(p); !reflect.DeepEqual(got, want) || *p.Total != 1 {
+			t.Errorf("4k + deu: %v total %v, want %v", got, *p.Total, want)
+		}
+	}
+	if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID, Resolution: "4k", HDR: ptr(false), AudioLanguage: "eng"})); !reflect.DeepEqual(got, []string{"Mix"}) {
+		t.Errorf("4k + sdr + eng: %v", got)
+	}
+}
+
+func TestParentMustBeShowOrSeason(t *testing.T) {
+	e := newBrowse(t)
+	movies := e.library("Movies", "movies", []string{"Movies"}, "Movies/A (2001)/A (2001).mkv")
+	e.library("TV", "tv", []string{"TV"}, "TV/Show (2019)/Season 01/Show - S01E01.mkv")
+	ctx := context.Background()
+	for name, id := range map[string]string{"movie": e.itemID("A"), "episode": e.itemID("Episode 1")} {
+		if _, err := e.s.Items(ctx, grantAll, ItemQuery{ParentID: id}); !errors.Is(err, ErrBadRequest) {
+			t.Errorf("%s parent: err = %v, want ErrBadRequest", name, err)
+		}
+	}
+	// A movie the caller may not see is the same 404 as an unknown ID.
+	other := Grant{LibraryIDs: []string{"lib-other"}}
+	_, hidden := e.s.Items(ctx, other, ItemQuery{ParentID: e.itemID("A")})
+	_, unknown := e.s.Items(ctx, grantAll, ItemQuery{ParentID: "mov-unknown"})
+	if hidden != ErrNotFound || unknown != ErrNotFound {
+		t.Fatalf("hidden %v, unknown %v (library %s)", hidden, unknown, movies.ID)
+	}
+}
+
+func TestYearOutsideRangeIsNull(t *testing.T) {
+	e := newBrowse(t)
+	lib := e.library("Movies", "movies", []string{"Movies"}, "Movies/Old (1950)/Old (1950).mkv", "Movies/New (2020)/New (2020).mkv",
+		"Movies/None/None.mkv")
+	if _, err := e.s.db.Exec(`UPDATE library_items SET year = 1500 WHERE title = 'Old'`); err != nil {
+		t.Fatal(err)
+	}
+	// 1500 reads as no year: served null, sorted with the NULLs, never matched by a year filter.
+	p := e.items(grantAll, ItemQuery{LibraryID: lib.ID, Sort: "year", SortGiven: true})
+	nullFirst := []string{"None", "Old"}
+	slices.SortFunc(nullFirst, func(a, b string) int { return strings.Compare(e.itemID(a), e.itemID(b)) })
+	if got := titles(p); !reflect.DeepEqual(got, append([]string{"New"}, nullFirst...)) {
+		t.Fatalf("year sort %v", got)
+	}
+	for _, x := range p.Items {
+		if x.Title == "Old" && x.Year != nil {
+			t.Fatalf("Old year %v", *x.Year)
+		}
+	}
+	if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID, YearTo: ptr(2000)})); len(got) != 0 {
+		t.Fatalf("yearTo 2000: %v", got)
+	}
+}
