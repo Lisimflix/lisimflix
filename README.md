@@ -7,6 +7,8 @@ replacement that anyone can run on their own Linux/Docker host.
 movie at its original quality, with no re-encoding, in Chrome and Firefox on Linux and macOS
 (Windows follows in a later milestone). The M1 server, web player and container are on `main`,
 and playback passes on all four targets ([results](docs/testing/m1-results.md), #19).
+The browse app (home, libraries, detail, play, resume and progress) is built and runs against
+fixtures until LIB-2c serves the catalogue; until then the web app falls back to M1.
 
 Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
 anime, and the server keeps it scanned and probed. Nothing browses libraries yet (LIB-2c, UI-2).
@@ -26,7 +28,7 @@ only: plain HTTP, one viewer and one movie.
 | `docs/design/` | Approved visual references (UI-2 mockups and logo) |
 | `deploy/` | Container compose file and run guide |
 | `server/` | Go server |
-| `web/` | React + Vite web app |
+| `web/` | React + Vite web app (`web/src/{app,browse,ui,player}`) |
 | `testdata/` | Synthetic fixtures (no real media) |
 
 ## Checks
@@ -40,7 +42,7 @@ make check
 ```
 
 `make check` runs gofmt, vet and Go tests (with `-race`), regenerates the API types, then runs the web
-contract tests, lint, typecheck and build. GitHub Actions runs the same target on every PR.
+contract tests, unit tests, lint, typecheck and build. GitHub Actions runs the same target on every PR.
 It fails if `web/src/api/schema.d.ts` is stale, so commit the regenerated file after
 changing `docs/contracts/openapi.json`.
 

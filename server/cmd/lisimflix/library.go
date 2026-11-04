@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -88,9 +89,17 @@ func cmdLibrary(args []string, stdout io.Writer) error {
 		for _, f := range folders {
 			rel := strings.TrimPrefix(f, "./")
 			// A symlinked library folder would be scanned through its link but
-			// could also be added a second time by its target's name.
-			if info, err := media.Lstat(rel); err == nil && info.Mode()&fs.ModeSymlink != 0 {
-				return fmt.Errorf("folder %q is a symlink; add the folder it points to instead", f)
+			// could also be added a second time by its target's name. Every
+			// part of the path is checked, not only the last (#140).
+			parts := strings.Split(path.Clean(rel), "/")
+			for i := range parts {
+				p := strings.Join(parts[:i+1], "/")
+				if info, err := media.Lstat(p); err == nil && info.Mode()&fs.ModeSymlink != 0 {
+					if i == len(parts)-1 {
+						return fmt.Errorf("folder %q is a symlink; add the folder it points to instead", f)
+					}
+					return fmt.Errorf("folder %q is inside %q, a symlink; add the folder it points to instead", f, p)
+				}
 			}
 			if info, err := media.Stat(rel); err != nil || !info.IsDir() {
 				return fmt.Errorf("folder %q isn't a folder inside the media root", f)

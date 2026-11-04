@@ -1,6 +1,10 @@
 package contracts
 
-import "time"
+import (
+	"encoding/json"
+	"reflect"
+	"time"
+)
 
 // Metadata provenance wire types (CTR-2, spec §3.7): where each field came
 // from and whether it is locked. Admin-only.
@@ -24,6 +28,13 @@ type ItemMetadata struct {
 	ExternalIDs []MetadataExternalID `json:"externalIds"`
 }
 
+// MarshalJSON encodes nil ExternalIDs as [] because the contract requires an array.
+func (m ItemMetadata) MarshalJSON() ([]byte, error) {
+	type plain ItemMetadata // no methods: avoids recursion
+	m.ExternalIDs = nonNil(m.ExternalIDs)
+	return json.Marshal(plain(m))
+}
+
 type MetadataFields struct {
 	Title         TextField     `json:"title"`
 	SortTitle     TextField     `json:"sortTitle"`
@@ -41,6 +52,20 @@ type Field[T any] struct {
 	Value  T           `json:"value"`
 	Source *Provenance `json:"source"`
 	Locked bool        `json:"locked"`
+}
+
+// MarshalJSON encodes a nil list value (TextListField) as [] because the
+// contract requires an array; other values encode as they are.
+func (f Field[T]) MarshalJSON() ([]byte, error) {
+	if v := reflect.ValueOf(&f.Value).Elem(); v.Kind() == reflect.Slice && v.IsNil() {
+		v.Set(reflect.MakeSlice(v.Type(), 0, 0))
+	}
+	// An anonymous struct, as a generic function can't declare a method-free copy of Field[T].
+	return json.Marshal(struct {
+		Value  T           `json:"value"`
+		Source *Provenance `json:"source"`
+		Locked bool        `json:"locked"`
+	}{f.Value, f.Source, f.Locked})
 }
 
 type (

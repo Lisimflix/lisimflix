@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"slices"
@@ -82,6 +83,13 @@ func (m *Matcher) MatchItem(ctx context.Context, itemID string) (string, error) 
 			return m.Store.setStatus(ctx, itemID, info.rev, contracts.MatchConflict,
 				fmt.Sprintf("the locked %s ID %s isn't a %s at %s", ns, id, info.kind, prov))
 		}
+	}
+	// Any locked ID is final: one the provider can't look up is a conflict, not
+	// a search (an unchanged item would stay due and come back every batch).
+	if len(info.locked) > 0 {
+		ns := slices.Sorted(maps.Keys(info.locked))[0]
+		return m.Store.setStatus(ctx, itemID, info.rev, contracts.MatchConflict,
+			fmt.Sprintf("the locked %s ID %s can't be looked up at %s", ns, info.locked[ns], prov))
 	}
 
 	// 2. ID hints from names and NFO files.
@@ -207,6 +215,9 @@ func (m *Matcher) lookup(ctx context.Context, itemID string, info itemInfo, ns, 
 	if errors.Is(err, errStale) {
 		return OutcomeRetry, m.Store.retryLater(ctx, itemID, 0, 0, err.Error())
 	}
+	if errors.Is(err, ErrInvalid) { // a bad record is the provider's failure: back off, keep what's stored
+		return m.failed(ctx, itemID, info, err)
+	}
 	return out, err
 }
 
@@ -238,19 +249,20 @@ func (m *Matcher) RunDue(ctx context.Context, limit int) (Batch, error) {
 	if limit <= 0 {
 		return b, nil
 	}
-	rows, err := m.Store.db.QueryContext(ctx, `SELECT item_id, attempts FROM metadata_items WHERE next_attempt_at <= ?
+	rows, err := m.Store.db.QueryContext(ctx, `SELECT item_id, revision, attempts FROM metadata_items WHERE next_attempt_at <= ?
 		ORDER BY next_attempt_at, item_id LIMIT ?`, ms(m.Store.now()), limit)
 	if err != nil {
 		return b, err
 	}
 	type dueItem struct {
 		id       string
+		rev      int64
 		attempts int
 	}
 	var due []dueItem
 	for rows.Next() {
 		var d dueItem
-		if err := rows.Scan(&d.id, &d.attempts); err != nil {
+		if err := rows.Scan(&d.id, &d.rev, &d.attempts); err != nil {
 			rows.Close()
 			return b, err
 		}
@@ -275,8 +287,9 @@ func (m *Matcher) RunDue(ctx context.Context, limit int) (Batch, error) {
 			}
 			b.Failed = append(b.Failed, ItemError{ItemID: id, Err: err.Error()})
 			if !errors.Is(err, ErrInvalid) && !errors.Is(err, ErrItemNotFound) {
-				// Best effort, so the item isn't first in every batch.
-				_ = m.Store.retryLater(ctx, id, 0, d.attempts+1, err.Error())
+				// Best effort, so the item isn't first in every batch; an
+				// edit since the item was read wins and keeps it due.
+				_ = m.Store.retryLater(ctx, id, d.rev, d.attempts+1, err.Error())
 			}
 			continue
 		}

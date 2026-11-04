@@ -26,6 +26,15 @@ func TestParseNFO(t *testing.T) {
 			map[string]string{}},
 		{"not an NFO", "garbage \x00\x01", map[string]string{}},
 		{"entities aren't expanded", `<!DOCTYPE m [<!ENTITY x "603">]><movie><tmdbid>&x;</tmdbid></movie>`, map[string]string{}},
+		// #141: leading zeros are dropped, as in name hints.
+		{"zero-padded IDs", `<movie><tmdbid>0949</tmdbid><uniqueid type="tvdb">0081189</uniqueid><uniqueid type="anidb">000</uniqueid></movie>`,
+			map[string]string{"tmdb": "949", "tvdb": "81189"}},
+		// #136: URL fallback IDs are validated too, and other encodings parse.
+		{"over-long IMDb URL", "https://www.imdb.com/title/tt12345678901/", map[string]string{}},
+		{"UTF-8 BOM", "\uFEFF<movie><tmdbid>949</tmdbid></movie>", map[string]string{"tmdb": "949"}},
+		{"ISO-8859-1", "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?>\n<movie><title>Am\xe9lie</title><tmdbid>194</tmdbid></movie>",
+			map[string]string{"tmdb": "194"}},
+		{"unsupported encoding", `<?xml version="1.0" encoding="Shift_JIS"?><movie><tmdbid>194</tmdbid></movie>`, map[string]string{}},
 	} {
 		if got := parseNFO([]byte(c.doc)); !maps.Equal(got, c.want) {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
@@ -36,9 +45,14 @@ func TestParseNFO(t *testing.T) {
 func TestReadNFOs(t *testing.T) {
 	dir := t.TempDir()
 	write := func(rel, body string) {
+		t.Helper()
 		p := filepath.Join(dir, rel)
-		os.MkdirAll(filepath.Dir(p), 0o755)
-		os.WriteFile(p, []byte(body), 0o644)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	write("Heat (1995)/Heat (1995).nfo", `<movie><uniqueid type="tmdb">949</uniqueid></movie>`)
 	write("Heat (1995)/movie.nfo", `<movie><uniqueid type="tmdb">950</uniqueid><uniqueid type="imdb">tt0113277</uniqueid></movie>`)
@@ -64,6 +78,16 @@ func TestReadNFOs(t *testing.T) {
 	defer inner.Close()
 	if ids, _ := readNFOs(inner, []string{"../Heat (1995)/movie.nfo"}); len(ids) != 0 {
 		t.Fatalf("read outside the root: %v", ids)
+	}
+	// Nor can a symlink inside it (#136).
+	if err := os.Symlink(filepath.Join("..", "Heat (1995)", "movie.nfo"), filepath.Join(dir, "Big", "linked.nfo")); err != nil {
+		t.Skip("no symlinks here:", err)
+	}
+	if ids, _ := readNFOs(root, []string{"Big/linked.nfo"}); ids["tmdb"] != "950" {
+		t.Fatalf("a symlink inside the root wasn't followed: %v", ids)
+	}
+	if ids, _ := readNFOs(inner, []string{"linked.nfo"}); len(ids) != 0 {
+		t.Fatalf("a symlink read outside the root: %v", ids)
 	}
 }
 

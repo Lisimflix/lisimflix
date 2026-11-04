@@ -229,6 +229,33 @@ func TestFileChangedSinceTheScanIsProbedOnce(t *testing.T) {
 	}
 }
 
+// #139 point 2: a file whose size changed but whose mtime didn't is probed
+// once, not on every ProbeDue turn until a scan. The catalogue still holds
+// the revision the probe was queued from, so the result is the newest.
+func TestSizeOnlyChangeIsProbedOnce(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
+	const rel = "A (2001)/A (2001).mkv"
+	var mtime int64
+	s.db.QueryRow(`SELECT mtime_ns FROM library_files`).Scan(&mtime)
+	m.write("Movies/"+rel, 99) // new size...
+	when := time.Unix(0, mtime)
+	if err := os.Chtimes(filepath.Join(m.dir, "Movies", rel), when, when); err != nil { // ...same mtime
+		t.Fatal(err)
+	}
+	p := &scriptedProber{}
+	if run := probeDue(t, sc, root, p); run.Stored != 1 || run.Stale != 0 {
+		t.Fatalf("first %+v", run)
+	}
+	if run := probeDue(t, sc, root, p); run.Queued != 0 || len(p.calls) != 1 {
+		t.Fatalf("probed again before a scan: %+v %v", run, p.calls)
+	}
+	var size int64
+	s.db.QueryRow(`SELECT size FROM library_files`).Scan(&size)
+	if size != 99 {
+		t.Fatalf("catalogue size %d, want the probed revision's 99", size)
+	}
+}
+
 // #109 point 3: workers <= 0 means the default, not "probe nothing".
 func TestProbeDueWithoutWorkersUsesTheDefault(t *testing.T) {
 	_, _, _, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
