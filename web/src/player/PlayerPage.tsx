@@ -30,11 +30,12 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
     else navigate(detail, { replace: true });
   };
 
-  // Back to the detail page, which refetches the item; kind picks what it shows.
-  const leave = (kind: "unavailable" | "changed" | "error", message: string) => {
+  // Back to the detail page, which refetches the item; kind picks what it shows. Without a notice for a 401: the shell
+  // signs out and says why, and a notice set now would outlive the sign-out (#145).
+  const leave = (kind?: "unavailable" | "changed" | "error", message?: string) => {
     if (gone.current) return;
     gone.current = true;
-    setNotice({ itemId, versionId, kind, message });
+    if (kind && message) setNotice({ itemId, versionId, kind, message });
     exit();
   };
 
@@ -54,12 +55,12 @@ export function PlayerPage({ client, itemId, versionId, startMs, onStop }: {
     return () => { ++generation.current; gone.current = true; };
   }, [client, itemId, versionId, tries]);
 
-  // Progress is best effort: 404 (DATA-1 not live) and the rest are ignored, except an ended sign-in or changed file.
+  // Progress is best effort: 404 (DATA-1 not live) and the rest are ignored, except a changed file. A 401 is the shell's: it signs out and says why (#145).
   function onProgress(event: ProgressEvent) {
     if (state.name !== "playing") return;
     return client.progress(state.session.id, event).catch((err: unknown) => {
       if (!(err instanceof ApiError)) return;
-      if (err.status === 401) leave("error", "Your sign-in has ended.");
+      if (err.status === 401) leave();
       else if (err.status === 409 && err.code === "source_changed") leave("changed", CHANGED);
     });
   }

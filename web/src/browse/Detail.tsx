@@ -136,10 +136,14 @@ function DetailView({ client, detail, notice, refetch }: { client: Client; detai
           {notice && notice.kind !== "unavailable" && <p role="alert">{notice.message}</p>}
           {choice.kind === "confirm" && (
             // Escape closes a modal dialog and returns focus to the button that opened it.
-            <dialog ref={confirm} aria-label="Resume from another version">
-              <p>Your resume point is from another version. Resume at {formatClock(choice.positionMs)} anyway?</p>
+            <dialog ref={confirm} aria-label="Resume point may not match">
+              <p>
+                {state?.resume?.versionId === version?.id ? "This file changed after your resume point." : "Your resume point is from another version."}{" "}
+                Resume at {formatClock(choice.positionMs)} anyway?
+              </p>
               <button type="button" onClick={() => navigate(playHref(choice.positionMs))}>Resume anyway</button>
               <button type="button" onClick={() => navigate(playHref())}>Play from start</button>
+              <button type="button" onClick={() => confirm.current?.close()}>Cancel</button>
             </dialog>
           )}
           {playable && versions.length === 0 && <p>No file available for this item</p>}

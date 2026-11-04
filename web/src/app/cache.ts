@@ -12,7 +12,8 @@ export function cached<T>(key: string, load: () => Promise<T>): Promise<T> {
   if (!hit) {
     hit = settled.then(load);
     store.set(key, hit);
-    hit.catch(() => store.delete(key));
+    const own = hit;
+    hit.catch(() => store.get(key) === own && store.delete(key)); // not a newer entry stored after invalidate()
   }
   return hit;
 }

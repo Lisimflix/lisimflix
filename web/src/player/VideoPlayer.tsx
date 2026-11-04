@@ -81,7 +81,8 @@ export function VideoPlayer({ client, session, onEnd, onStop, startMs, onProgres
       client.heartbeat(session.id, sequence, abort.signal).catch((err: unknown) => {
         // A network blip is retried by the next tick; the server allows six missed beats.
         if (done || !(err instanceof ApiError) || err.status === 0 || err.status >= 500) return;
-        finish.current(err.status === 401 ? "Your sign-in has ended." : "Playback has ended. Press Play to start again.");
+        // A 401 ends without a message: the shell signs out and says why (#145).
+        finish.current(err.status === 401 ? undefined : "Playback has ended. Press Play to start again.");
       });
     }, session.heartbeatIntervalSeconds * 1000);
 
