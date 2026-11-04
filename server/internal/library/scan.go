@@ -34,6 +34,9 @@ type Run struct {
 	ID, Status, Reason                                string
 	Scope, Cause                                      string // "." for the whole root
 	Seen, Added, Changed, Returned, Missing, Unplaced int
+	// Changed counts files whose size or mtime differs from what the catalogue
+	// last recorded. A probe can record a newer revision first (#109), so a
+	// file changed since the previous scan isn't always counted (#139).
 }
 
 // Scanner reconciles the catalogue with the files under each root.
