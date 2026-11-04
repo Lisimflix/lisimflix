@@ -190,3 +190,31 @@ func TestShowDetailHasNoVersions(t *testing.T) {
 		t.Fatalf("episode %+v %+v", ep.Item, ep.Versions)
 	}
 }
+
+// A corrupt stored probe makes that version bare, not the whole item a 500.
+func TestItemDetailCorruptProbeServesBareVersion(t *testing.T) {
+	e := newBrowse(t)
+	filmLibrary(e)
+	id := e.itemID("Film")
+	good := e.detail(grantAll, id)
+	if len(good.Versions) != 2 {
+		t.Fatalf("versions %+v", good.Versions)
+	}
+	bad := good.Versions[0].FileID
+	if _, err := e.s.db.Exec(`UPDATE library_files SET probe_json = '{not json' WHERE id = ?`, bad); err != nil {
+		t.Fatal(err)
+	}
+	d := e.detail(grantAll, id)
+	if len(d.Versions) != 2 {
+		t.Fatalf("versions %+v", d.Versions)
+	}
+	for _, v := range d.Versions {
+		if v.FileID == bad {
+			if v.Container != "" || len(v.Video)+len(v.Audio)+len(v.Subtitles) != 0 {
+				t.Errorf("corrupt version not bare: %+v", v)
+			}
+		} else if v.Container == "" || len(v.Video) == 0 {
+			t.Errorf("other version damaged: %+v", v)
+		}
+	}
+}

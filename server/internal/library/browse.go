@@ -60,7 +60,7 @@ func (s *Store) Libraries(ctx context.Context, g Grant, cursor string, limit int
 		if after, err = decodeCursor(cursor, librariesQuery); err != nil {
 			return contracts.LibraryList{}, err
 		}
-		if len(after) != 2 {
+		if len(after) != 1 && len(after) != 2 {
 			return contracts.LibraryList{}, fmt.Errorf("%w: cursor is not valid", ErrBadRequest)
 		}
 	}
@@ -79,10 +79,25 @@ func (s *Store) Libraries(ctx context.Context, g Grant, cursor string, limit int
 			}
 		}
 		if after != nil {
-			name, ok1 := after[0].(string)
-			id, ok2 := after[1].(string)
-			if !ok1 || !ok2 {
-				return fmt.Errorf("%w: cursor is not valid", ErrBadRequest)
+			var name, id string
+			if len(after) == 1 { // an ID-only cursor: the name was too long to carry
+				var ok bool
+				if id, ok = after[0].(string); !ok {
+					return badRequest("cursor is not valid")
+				}
+				if err := tx.QueryRowContext(ctx, `SELECT name FROM library_libraries WHERE id = ?`, id).Scan(&name); err != nil {
+					if errors.Is(err, sql.ErrNoRows) {
+						return badRequest("cursor is not valid")
+					}
+					return err
+				}
+			} else {
+				var ok1, ok2 bool
+				name, ok1 = after[0].(string)
+				id, ok2 = after[1].(string)
+				if !ok1 || !ok2 {
+					return badRequest("cursor is not valid")
+				}
 			}
 			conds = append(conds, "(name > ? OR (name = ? AND id > ?))")
 			args = append(args, name, name, id)
@@ -112,6 +127,9 @@ func (s *Store) Libraries(ctx context.Context, g Grant, cursor string, limit int
 			out.Items = out.Items[:limit]
 			last := out.Items[limit-1]
 			c := encodeCursor(librariesQuery, last.Name, last.ID)
+			if len(c) > maxCursor {
+				c = encodeCursor(librariesQuery, last.ID)
+			}
 			out.NextCursor = &c
 		}
 		for i := range out.Items {

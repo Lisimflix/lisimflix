@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	"path"
 	"strings"
 
@@ -47,7 +46,7 @@ func (s *Store) Item(ctx context.Context, g Grant, itemID string) (contracts.Ite
 		}
 		d.Genres = append(d.Genres, genres...)
 		if it.Kind == contracts.KindMovie || it.Kind == contracts.KindEpisode {
-			d.Versions, err = itemVersions(ctx, tx, g, itemID)
+			d.Versions, err = s.itemVersions(ctx, tx, g, itemID)
 		}
 		return err
 	})
@@ -63,7 +62,7 @@ func (s *Store) Item(ctx context.Context, g Grant, itemID string) (contracts.Ite
 // the stored probe (none before the first probe); fileName is the file's bare
 // name for admins and null for everyone else. Segment stays null until LIB-3
 // locates shared-file episodes here.
-func itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID string) ([]contracts.MediaVersion, error) {
+func (s *Store) itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID string) ([]contracts.MediaVersion, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT v.id, v.file_id, v.label, CASE WHEN f.duration_ms > 0 THEN f.duration_ms END,
 		f.size, f.mtime_ns, f.path, f.probe_json, (f.state = 'present' AND r.state != 'offline')
 		FROM library_versions v JOIN library_files f ON f.id = v.file_id JOIN library_roots r ON r.id = f.root_id
@@ -93,10 +92,12 @@ func itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID string) ([]co
 		if probeJSON.Valid {
 			var r probe.Result
 			if err := json.Unmarshal([]byte(probeJSON.String), &r); err != nil {
-				return nil, fmt.Errorf("library: file %s probe: %w", v.FileID, err)
+				// One bad probe shouldn't fail the whole item: serve the version bare.
+				s.log.Error("library.probe_corrupt", "file", v.FileID, "err", err)
+			} else {
+				v.Container = r.Container
+				v.Video, v.Audio, v.Subtitles = streams(r)
 			}
-			v.Container = r.Container
-			v.Video, v.Audio, v.Subtitles = streams(r)
 		}
 		if g.Admin {
 			v.FileName = fileName(rel)

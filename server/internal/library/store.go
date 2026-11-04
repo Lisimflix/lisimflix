@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path"
 	"strings"
 	"time"
@@ -59,9 +60,12 @@ type Root struct {
 type Store struct {
 	db  *storage.DB
 	now func() time.Time
+	log *slog.Logger // catalogue reads that hit bad stored data; discards until the API sets it
 }
 
-func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
+func NewStore(db *storage.DB) *Store {
+	return &Store{db: db, now: time.Now, log: slog.New(slog.DiscardHandler)}
+}
 
 func newID(prefix string) string { return prefix + "-" + rand.Text() }
 

@@ -904,3 +904,25 @@ func TestYearOutsideRangeIsNull(t *testing.T) {
 		t.Fatalf("yearTo 2000: %v", got)
 	}
 }
+
+func TestLibraryCursorFitsWithLongQuotedName(t *testing.T) {
+	e := newBrowse(t)
+	long := strings.Repeat(`"`, 200)
+	e.library(long, "movies", []string{"A"}, "A/X (2001)/X (2001).mkv")
+	e.library("Zoo", "movies", []string{"Z"}, "Z/Y (2002)/Y (2002).mkv")
+	ctx := context.Background()
+	p1, err := e.s.Libraries(ctx, grantAll, "", 1)
+	if err != nil || p1.NextCursor == nil || p1.Items[0].Name != long {
+		t.Fatalf("page 1: %+v %v", p1, err)
+	}
+	if n := len(*p1.NextCursor); n > maxCursor {
+		t.Fatalf("cursor is %d bytes", n)
+	}
+	p2, err := e.s.Libraries(ctx, grantAll, *p1.NextCursor, 1)
+	if err != nil || len(p2.Items) != 1 || p2.Items[0].Name != "Zoo" {
+		t.Fatalf("page 2: %+v %v", p2, err)
+	}
+	if _, err := e.s.Libraries(ctx, grantAll, encodeCursor(librariesQuery, "lib-gone"), 1); !errorsIs(err, ErrBadRequest) {
+		t.Fatalf("unknown id cursor: %v", err)
+	}
+}

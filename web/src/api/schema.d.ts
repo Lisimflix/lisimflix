@@ -568,7 +568,7 @@ export interface components {
             directors: string[];
             studios: string[];
             externalIds: components["schemas"]["ExternalId"][];
-            /** @description Playable versions. Empty for shows and seasons, and for a movie or episode with no available file. */
+            /** @description Playable versions. Empty for shows and seasons. A movie or episode lists every version; `available` says which can play now. */
             versions: components["schemas"]["MediaVersion"][];
         };
         CommunityRating: {

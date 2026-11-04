@@ -118,7 +118,7 @@ func hdrName(h probe.HDRType) string {
 
 func subKind(codec string) string {
 	switch codec {
-	case "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle":
+	case "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub", "dvb_teletext":
 		return contracts.SubtitleImage
 	case "ass", "ssa":
 		return contracts.SubtitleASS

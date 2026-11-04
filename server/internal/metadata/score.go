@@ -1,9 +1,10 @@
 package metadata
 
 import (
-	"github.com/Lisimflix/lisimflix/server/internal/textfold"
 	"sort"
 	"strings"
+
+	"github.com/Lisimflix/lisimflix/server/internal/textfold"
 )
 
 // Auto-match thresholds. A search result is applied without review only when

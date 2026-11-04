@@ -124,9 +124,9 @@ func TestStreamsMap(t *testing.T) {
 }
 
 func TestStreamsKindFromCodec(t *testing.T) {
-	r := probe.Result{Subtitles: []probe.SubtitleStream{{Codec: "dvd_subtitle"}, {Codec: "dvb_subtitle"}, {Codec: "ssa"}, {Codec: "mov_text"}}}
+	r := probe.Result{Subtitles: []probe.SubtitleStream{{Codec: "dvd_subtitle"}, {Codec: "dvb_subtitle"}, {Codec: "ssa"}, {Codec: "mov_text"}, {Codec: "xsub"}, {Codec: "dvb_teletext"}}}
 	_, _, s := streams(r)
-	want := []string{"image", "image", "ass", "text"}
+	want := []string{"image", "image", "ass", "text", "image", "image"}
 	for i, w := range want {
 		if s[i].Kind != w {
 			t.Errorf("%d: %q want %q", i, s[i].Kind, w)
