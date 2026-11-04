@@ -2,6 +2,7 @@ package userdata
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"testing"
 	"time"
@@ -81,7 +82,7 @@ func TestBump(t *testing.T) {
 		t.Fatalf("revision = %d, want 2", st.Revision)
 	}
 	for _, stale := range []int64{0, 1, 5} {
-		if _, err := step(stale); err != ErrRevisionConflict {
+		if _, err := step(stale); !errors.Is(err, ErrRevisionConflict) {
 			t.Fatalf("stale %d: err = %v, want ErrRevisionConflict", stale, err)
 		}
 	}

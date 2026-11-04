@@ -17,7 +17,7 @@ import (
 var migrationsFS embed.FS
 
 // Migrations is the progress schema, for storage.Migrate.
-// Planned: DATA-1a (serve registers the userdata migrations).
+// Planned: DATA-1b (serve registers the userdata migrations).
 func Migrations() storage.Source {
 	sub, err := fs.Sub(migrationsFS, "migrations")
 	if err != nil {
@@ -44,15 +44,20 @@ type Session struct {
 }
 
 // Store keeps per-profile progress in the shared database.
+//
+// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
 type Store struct {
 	db  *storage.DB
 	now func() time.Time
 }
 
+// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
 func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
 
 // Get returns the profile's state for the item, or the zero state (revision 0)
 // when nothing is recorded.
+//
+// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
 func (s *Store) Get(ctx context.Context, profileID, itemID string) (contracts.UserItemState, error) {
 	st := contracts.UserItemState{ItemID: itemID}
 	var (
@@ -100,20 +105,20 @@ func bump(ctx context.Context, tx *sql.Tx, profileID, itemID string, expected in
 	res, err := tx.ExecContext(ctx, `UPDATE userdata_state SET revision = revision + 1
 		WHERE profile_id = ? AND item_id = ? AND revision = ?`, profileID, itemID, expected)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("userdata: bump: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("userdata: bump: %w", err)
 	}
 	if n == 0 && expected == 0 {
 		res, err = tx.ExecContext(ctx, `INSERT INTO userdata_state (profile_id, item_id, revision) VALUES (?, ?, 1)
 			ON CONFLICT DO NOTHING`, profileID, itemID)
 		if err != nil {
-			return 0, err
+			return 0, fmt.Errorf("userdata: bump: %w", err)
 		}
 		if n, err = res.RowsAffected(); err != nil {
-			return 0, err
+			return 0, fmt.Errorf("userdata: bump: %w", err)
 		}
 	}
 	if n == 0 {

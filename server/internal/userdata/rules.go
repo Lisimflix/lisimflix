@@ -5,6 +5,8 @@ package userdata
 import "slices"
 
 // Positions and durations are milliseconds.
+//
+// Planned: DATA-1a (Apply, SetWatched).
 const (
 	// WatchedPercent is the share of the duration that must be covered for
 	// an item to count as watched.
@@ -17,6 +19,8 @@ const (
 )
 
 // Span is a half-open playback range [StartMs, EndMs).
+//
+// Planned: DATA-1a (Apply, SetWatched).
 type Span struct{ StartMs, EndMs int64 }
 
 // Merge returns spans sorted, non-overlapping, with touching spans joined and
