@@ -25,14 +25,14 @@ var (
 
 // benv is a catalogue with a media tree, a scanner and a scripted prober.
 type benv struct {
-	t  *testing.T
+	t  testing.TB
 	s  *Store
 	c  *clock
 	m  *media
 	sc *Scanner
 }
 
-func newBrowse(t *testing.T) *benv {
+func newBrowse(t testing.TB) *benv {
 	t.Helper()
 	s, c := newStore(t)
 	m := newMedia(t)

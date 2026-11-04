@@ -133,3 +133,14 @@ func TestStreamsKindFromCodec(t *testing.T) {
 		}
 	}
 }
+
+// A stream language is served only when it fits the contract's
+// ^(?!und$)[a-z]{3}$; anything else is null rather than an invalid value.
+func TestLangPtrFitsContractPattern(t *testing.T) {
+	for tag, want := range map[string]string{"eng": "eng", "ger": "ger", "": "", "und": "", "en": "", "english": "", "ENG": "", "e1g": ""} {
+		got := langPtr(tag)
+		if (got == nil) != (want == "") || (got != nil && *got != want) {
+			t.Errorf("langPtr(%q) = %v, want %q", tag, got, want)
+		}
+	}
+}

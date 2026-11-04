@@ -93,8 +93,10 @@ func strPtr(s string) *string {
 	return &s
 }
 
+// langPtr is a stream's language as tagged, or nil unless the tag fits the
+// contract's ^(?!und$)[a-z]{3}$: untagged, "und", "en" and "english" are null.
 func langPtr(tag string) *string {
-	if tag == "" || strings.EqualFold(tag, "und") {
+	if tag == "und" || !threeLetters.MatchString(tag) {
 		return nil
 	}
 	return &tag
@@ -125,7 +127,6 @@ func subKind(codec string) string {
 }
 
 // streams maps a probe result to the contract's stream lists.
-// Planned: LIB-2c (Task 3 stores file facts; getItem maps streams).
 func streams(r probe.Result) (video []contracts.VideoStream, audio []contracts.AudioStream, subs []contracts.SubtitleStream) {
 	for _, v := range r.Video {
 		video = append(video, contracts.VideoStream{Index: v.Index, Codec: v.Codec, Width: v.Width, Height: v.Height, HDR: hdrName(v.HDR), Default: v.Default})
