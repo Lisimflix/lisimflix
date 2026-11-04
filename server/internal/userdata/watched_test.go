@@ -248,8 +248,13 @@ func TestMarkOrderingUsesEventIDsNotTime(t *testing.T) {
 	if r := e.play(a, tick, 1, 10_000); reason(r) != "stale" {
 		t.Fatalf("second tick = %s", reason(r))
 	}
-	if r := e.play(sess("b", "r1"), tick, 0, 0); !r.Accepted {
+	b := sess("b", "r1")
+	if r := e.play(b, tick, 0, 0); !r.Accepted {
 		t.Fatalf("new session = %s", reason(r))
+	}
+	// B's second event is the one that tells ids from times: B now has rows, and on a frozen clock a time compare would call it late.
+	if r := e.play(b, tick, 1, 10_000); !r.Accepted {
+		t.Fatalf("new session second tick = %s", reason(r))
 	}
 }
 
