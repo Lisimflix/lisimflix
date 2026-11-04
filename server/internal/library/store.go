@@ -153,8 +153,9 @@ func (s *Store) Library(ctx context.Context, id string) (Library, error) {
 	return lib, nil
 }
 
-// Libraries returns every library with its roots, by name.
-func (s *Store) Libraries(ctx context.Context) ([]Library, error) {
+// AllLibraries returns every library with its roots, by name (the admin CLI;
+// viewers go through Libraries, which applies a Grant).
+func (s *Store) AllLibraries(ctx context.Context) ([]Library, error) {
 	ids, err := queryStrings(ctx, s.db, `SELECT id FROM library_libraries ORDER BY name, id`)
 	if err != nil {
 		return nil, err

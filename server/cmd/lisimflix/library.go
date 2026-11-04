@@ -95,7 +95,7 @@ func cmdLibrary(args []string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "added %s (%s)\n", lib.ID, lib.Name)
 		return nil
 	case "list":
-		libs, err := st.Libraries(ctx)
+		libs, err := st.AllLibraries(ctx)
 		if err != nil {
 			return err
 		}
