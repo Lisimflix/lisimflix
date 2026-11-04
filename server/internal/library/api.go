@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
+	"github.com/Lisimflix/lisimflix/server/internal/obs"
 )
 
 // API serves the catalogue operations of CTR-2 (listLibraries,
@@ -23,15 +24,20 @@ type API struct {
 	log    *slog.Logger
 }
 
-// NewAPI serves st's catalogue, filtered by access.
+// NewAPI serves st's catalogue, filtered by access. Unexpected errors are
+// logged to log; a nil log discards.
 // Planned: LIB-2c (serve mounts it).
-func NewAPI(st *Store, access Access) *API {
-	return &API{st: st, access: access, log: slog.Default()}
+func NewAPI(st *Store, access Access, log *slog.Logger) *API {
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	return &API{st: st, access: access, log: log}
 }
 
 // Handler serves the catalogue routes with full paths. Requests must carry a
-// contracts.Principal (set by auth.Require); without one they get 401. Every
-// other path under it is a JSON 404.
+// contracts.Principal (set by auth.Require); without one they get 401. Its
+// catch-all answers every other path, for any method, with a JSON 404, so mount
+// it only under /api/v1/ (the catalogue's /api/v1/libraries and /api/v1/items).
 func (a *API) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/v1/libraries", a.withGrant(a.libraries))
@@ -125,8 +131,7 @@ func (a *API) fail(w http.ResponseWriter, r *http.Request, err error) {
 		contracts.WriteError(w, r, contracts.CodeNotFound, "Not found.")
 	default:
 		contracts.WriteError(w, r, contracts.CodeInternalError, "Internal error.")
-		a.log.ErrorContext(r.Context(), "library.api_error", "request_id", w.Header().Get("X-Request-Id"),
-			"method", r.Method, "path", r.URL.Path, "err", err.Error())
+		obs.Log(r.Context(), a.log).Error("library.api_error", "method", r.Method, "path", r.URL.Path, "err", err.Error())
 	}
 }
 

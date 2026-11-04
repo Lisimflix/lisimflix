@@ -738,7 +738,7 @@
           "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1 },
           "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes." },
           "segment": { "oneOf": [{ "$ref": "#/components/schemas/Segment" }, { "type": "null" }] },
-          "container": { "type": "string", "minLength": 1, "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm" },
+          "container": { "type": "string", "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm; \"\" until the file is first probed" },
           "video": { "type": "array", "items": { "$ref": "#/components/schemas/VideoStream" } },
           "audio": { "type": "array", "items": { "$ref": "#/components/schemas/AudioStream" } },
           "subtitles": { "type": "array", "items": { "$ref": "#/components/schemas/SubtitleStream" } },

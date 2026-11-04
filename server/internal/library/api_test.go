@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
+	"github.com/Lisimflix/lisimflix/server/internal/obs"
 	"github.com/Lisimflix/lisimflix/server/internal/probe"
 )
 
@@ -42,6 +43,7 @@ func newAPIEnv(t *testing.T) *aenv {
 	movies := filmLibrary(e)
 	tv := e.library("TV", "tv", []string{"TV"},
 		"TV/Show (2019)/Season 01/Show - S01E01.mkv", "TV/Show (2019)/Season 01/Show - S01E02.mkv")
+	var buf bytes.Buffer
 	api := NewAPI(e.s, func(p contracts.Principal) Grant {
 		switch p.AccountID {
 		case adminP.AccountID:
@@ -50,20 +52,23 @@ func newAPIEnv(t *testing.T) *aenv {
 			return Grant{LibraryIDs: []string{tv.ID}}
 		}
 		return Grant{}
-	})
-	var buf bytes.Buffer
-	api.log = slog.New(slog.NewTextHandler(&buf, nil))
+	}, slog.New(slog.NewTextHandler(&buf, nil)))
 	return &aenv{benv: e, api: api, h: api.Handler(), movies: movies, tv: tv, logOutput: &buf}
 }
 
+// get serves one request as app's observe middleware would: a request ID in
+// the context and the X-Request-Id header, which WriteError reuses.
 func (a *aenv) get(p *contracts.Principal, target string) *httptest.ResponseRecorder {
 	a.t.Helper()
 	r := httptest.NewRequest(http.MethodGet, target, nil)
+	id := obs.NewRequestID()
+	ctx := obs.WithRequestID(r.Context(), id)
 	if p != nil {
-		r = r.WithContext(contracts.WithPrincipal(r.Context(), *p))
+		ctx = contracts.WithPrincipal(ctx, *p)
 	}
 	w := httptest.NewRecorder()
-	a.h.ServeHTTP(w, r)
+	w.Header().Set("X-Request-Id", id)
+	a.h.ServeHTTP(w, r.WithContext(ctx))
 	return w
 }
 
@@ -340,7 +345,7 @@ func BenchmarkAPIRoutes(b *testing.B) {
 			b.Fatal(err)
 		}
 	}
-	api := NewAPI(e.s, func(contracts.Principal) Grant { return Grant{All: true, Admin: true} })
+	api := NewAPI(e.s, func(contracts.Principal) Grant { return Grant{All: true, Admin: true} }, nil)
 	h := api.Handler()
 	get := func(tb testing.TB, target string) []byte {
 		r := httptest.NewRequest(http.MethodGet, target, nil)

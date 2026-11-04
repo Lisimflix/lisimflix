@@ -587,7 +587,7 @@ export interface components {
             /** @description Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes. */
             sourceRevision: string;
             segment: components["schemas"]["Segment"] | null;
-            /** @description ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm */
+            /** @description ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm; "" until the file is first probed */
             container: string;
             video: components["schemas"]["VideoStream"][];
             audio: components["schemas"]["AudioStream"][];
