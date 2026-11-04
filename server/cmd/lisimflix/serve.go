@@ -89,6 +89,14 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	if db != nil {
 		// LIB-2c: catalogue files play, and the M1 movie still does.
 		store = library.NewStore(db)
+		// Items from before the sort keys (a LIB-2b database) get them
+		// before the catalogue is served: listItems pages on them. It is
+		// one fast pass; file facts are filled in the background below.
+		if n, err := store.BackfillSortKeys(ctx); err != nil {
+			log.Error("library.backfill_sort_keys", "items", n, "err", err.Error())
+		} else if n > 0 {
+			log.Info("library.backfill_sort_keys", "items", n)
+		}
 		access := library.M1Access(v)
 		resolver = playback.Chain(library.NewResolver(store, access), single)
 		catalogue = library.NewAPI(store, access, log).Handler()
@@ -138,16 +146,17 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		s.stopLibrary = cancel
 		go func() {
 			defer close(s.libraryDone)
-			// LIB-2c: rows from before the derived columns get them once,
-			// before any scan writes more.
+			// LIB-2c: probed files from before the derived columns get their
+			// facts once, before any scan writes more (sort keys were filled
+			// above, so the item half finds nothing left).
 			items, files, err := store.BackfillDerived(lctx)
-			if err != nil {
+			switch {
+			case lctx.Err() != nil:
+				return // shutting down; the rest is filled next start
+			case err != nil:
 				log.Error("library.backfill", "items", items, "files", files, "err", err.Error())
-			} else if items > 0 || files > 0 {
+			case items > 0 || files > 0:
 				log.Info("library.backfill", "items", items, "files", files)
-			}
-			if lctx.Err() != nil {
-				return
 			}
 			if err := s.scans.Run(lctx); err != nil {
 				log.Error("library.scheduler", "err", err.Error())

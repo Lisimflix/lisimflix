@@ -43,7 +43,6 @@ const (
 )
 
 // Scan states (LibraryScan.state).
-// Planned: LIB-2b and LIB-2c (Library.scan / Library.availability producers).
 const (
 	ScanIdle     = "idle"
 	ScanScanning = "scanning"
@@ -51,7 +50,6 @@ const (
 
 // Library availability (Library.availability): all, some or none of its
 // source folders are readable.
-// Planned: LIB-2b and LIB-2c (Library.scan / Library.availability producers).
 const (
 	AvailabilityAvailable = "available"
 	AvailabilityPartial   = "partial"
@@ -103,7 +101,6 @@ type Library struct {
 // LibraryScan is first-scan progress; FilesTotal is null while still counting. When State
 // is idle, FilesSeen is 0 and FilesTotal is null; when both are known,
 // FilesSeen <= FilesTotal.
-// Planned: LIB-2b (scan counters) and LIB-2c (listLibraries).
 type LibraryScan struct {
 	State      string `json:"state"`
 	FilesSeen  int64  `json:"filesSeen"`

@@ -101,19 +101,28 @@ func (s *Store) SetDisplay(ctx context.Context, itemID string, d Display) error 
 	return tx.Commit()
 }
 
-// BackfillDerived fills the derived columns of rows that predate them: items
-// without a sort key and probed files without file facts, 500 rows per
-// transaction. It reports how many of each it filled.
-func (s *Store) BackfillDerived(ctx context.Context) (items, files int, err error) {
+// BackfillSortKeys fills the sort key and group of items that predate them,
+// 500 per transaction, and reports how many it filled. Serve runs it before
+// serving the catalogue: listItems pages on these keys, and a NULL key would
+// sort first and break the next page's cursor.
+func (s *Store) BackfillSortKeys(ctx context.Context) (int, error) {
+	items := 0
 	for {
 		n, err := s.backfillItems(ctx)
 		items += n
 		if err != nil || n < backfillBatch {
-			if err != nil {
-				return items, files, err
-			}
-			break
+			return items, err
 		}
+	}
+}
+
+// BackfillDerived fills the derived columns of rows that predate them: items
+// without a sort key and probed files without file facts, 500 rows per
+// transaction. It reports how many of each it filled.
+func (s *Store) BackfillDerived(ctx context.Context) (items, files int, err error) {
+	items, err = s.BackfillSortKeys(ctx)
+	if err != nil {
+		return items, files, err
 	}
 	for {
 		n, err := s.backfillFiles(ctx)
