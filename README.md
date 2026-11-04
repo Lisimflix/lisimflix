@@ -5,7 +5,8 @@ replacement that anyone can run on their own Linux/Docker host.
 
 **Status:** early development. The first milestone (M1) is playing one 1080p H.264 MP4
 movie at its original quality, with no re-encoding, in Chrome and Firefox on Linux and macOS
-(Windows follows in a later milestone). The M1 server, web player and container are on `main`,
+(Windows is tested from M2 onward; milestones M2 to M5 are in
+[spec §9.0](docs/superpowers/specs/2026-10-24-lisimflix-design.md)). The M1 server, web player and container are on `main`,
 and playback passes on all four targets ([results](docs/testing/m1-results.md), #19).
 The browse app (home, libraries, detail, play, resume and progress) is built and runs against
 fixtures until LIB-2c serves the catalogue; until then the web app falls back to M1.
