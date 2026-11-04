@@ -3,6 +3,7 @@ package library
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,13 +102,11 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		if err != nil {
 			return err
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
-			probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
-			o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, string(js), rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime)
+		stored, err := s.storeProbe(ctx, rootID, o, string(js))
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		if !stored {
 			run.Stale++
 			return nil
 		}
@@ -147,6 +146,30 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, quiet time
 		run.Failed++
 	}
 	return nil
+}
+
+// storeProbe saves a probe result with the file's derived columns and audio
+// languages in one short transaction, and reports false if the result is stale.
+func (s *Store) storeProbe(ctx context.Context, rootID string, o Outcome, js string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var fileID string
+	err = tx.QueryRowContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
+		probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits+` RETURNING id`,
+		o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, js, rootID, o.Path, o.Rev.Size, o.Rev.ModTime, o.Rev.ModTime).Scan(&fileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := storeFacts(ctx, tx, fileID, deriveFile(o.Probe)); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // retryTimeout defers a file whose probe timed out, unless it has run out of

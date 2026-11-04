@@ -10,7 +10,6 @@ import (
 )
 
 // fileFacts are the facet values derived once, when a probe is stored.
-// Planned: LIB-2c (Task 3 stores file facts; getItem maps streams).
 type fileFacts struct {
 	Resolution string // "", "sd", "720p", "1080p", "4k"; "" when there is no video
 	HDR        bool
@@ -45,7 +44,6 @@ func defaultVideo(r probe.Result) (probe.VideoStream, bool) {
 	return probe.VideoStream{}, false
 }
 
-// Planned: LIB-2c (Task 3 stores file facts; getItem maps streams).
 func deriveFile(r probe.Result) fileFacts {
 	f := fileFacts{DurationMs: r.DurationMs}
 	if v, ok := defaultVideo(r); ok {
@@ -77,7 +75,6 @@ var threeLetters = regexp.MustCompile(`^[a-z]{3}$`)
 
 // langT lower-cases an ISO 639-2 tag and maps /B codes to /T. It reports false
 // for untagged, "und" and anything that isn't three letters.
-// Planned: LIB-2c (Task 3 stores file facts; getItem maps streams).
 func langT(tag string) (string, bool) {
 	tag = strings.ToLower(tag)
 	if tag == "und" || !threeLetters.MatchString(tag) {
