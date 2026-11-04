@@ -39,3 +39,14 @@ func TestCursorRefusals(t *testing.T) {
 		}
 	}
 }
+
+func TestCursorDoesNotEscapeHTML(t *testing.T) {
+	c := encodeCursor("q", "<a&b>", "id")
+	raw, err := base64.RawURLEncoding.DecodeString(c)
+	if err != nil || !strings.Contains(string(raw), `"<a&b>"`) || strings.HasSuffix(string(raw), "\n") {
+		t.Fatalf("raw %q %v", raw, err)
+	}
+	if got, err := decodeCursor(c, "q"); err != nil || !reflect.DeepEqual(got, []any{"<a&b>", "id"}) {
+		t.Fatalf("keys %v %v", got, err)
+	}
+}

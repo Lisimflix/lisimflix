@@ -31,11 +31,14 @@ func encodeCursor(q string, keys ...any) string {
 	if keys == nil {
 		keys = []any{}
 	}
-	b, err := json.Marshal(cursorBody{V: 1, Q: queryHash(q), K: keys})
-	if err != nil {
+	// No HTML escaping: < > & would take six bytes each, and a cursor has 512.
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(cursorBody{V: 1, Q: queryHash(q), K: keys}); err != nil {
 		panic(err) // keys are strings, integers and nil
 	}
-	return base64.RawURLEncoding.EncodeToString(b)
+	return base64.RawURLEncoding.EncodeToString(bytes.TrimSuffix(b.Bytes(), []byte("\n")))
 }
 
 // decodeCursor returns the keys of a cursor made for query q. Integers come
