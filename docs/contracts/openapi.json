@@ -712,7 +712,7 @@
           "directors": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "studios": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
-          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons. A movie or episode lists every version; `available` says which can play now." }
+          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired; `available` says which can play now." }
         },
         "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
         "then": { "properties": { "versions": { "maxItems": 0 } } }
