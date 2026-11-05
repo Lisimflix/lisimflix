@@ -3,6 +3,7 @@ package library
 import (
 	"cmp"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -136,13 +137,11 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, queued Rev
 		if err != nil {
 			return err
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
-			probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
-			append([]any{o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, string(js)}, fitsArgs(rootID, o, queued)...)...)
+		stored, err := s.storeProbe(ctx, rootID, o, queued, string(js))
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		if !stored {
 			run.Stale++
 			return nil
 		}
@@ -169,19 +168,66 @@ func (s *Store) record(ctx context.Context, rootID string, o Outcome, queued Rev
 		if len(msg) > maxProbeError {
 			msg = msg[:maxProbeError]
 		}
-		res, err := s.db.ExecContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
-			probe_error = ?, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits,
-			append([]any{o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg}, fitsArgs(rootID, o, queued)...)...)
+		stored, err := s.storeFailure(ctx, rootID, o, queued, msg)
 		if err != nil {
 			return err
 		}
-		if n, _ := res.RowsAffected(); n == 0 {
+		if !stored {
 			run.Stale++
 			return nil
 		}
 		run.Failed++
 	}
 	return nil
+}
+
+// storeProbe saves a probe result with the file's derived columns and audio
+// languages in one short transaction, and reports false if the result is stale.
+func (s *Store) storeProbe(ctx context.Context, rootID string, o Outcome, queued Revision, js string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var fileID string
+	err = tx.QueryRowContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = ?,
+		probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits+` RETURNING id`,
+		append([]any{o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, js}, fitsArgs(rootID, o, queued)...)...).Scan(&fileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := storeFacts(ctx, tx, fileID, deriveFile(o.Probe)); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+// storeFailure keeps a probe error and clears the file's derived facts, which
+// described an earlier revision, in one short transaction. It reports false
+// (writing nothing) if the result is stale.
+func (s *Store) storeFailure(ctx context.Context, rootID string, o Outcome, queued Revision, msg string) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var fileID string
+	err = tx.QueryRowContext(ctx, `UPDATE library_files SET size = ?, mtime_ns = ?, probe_size = ?, probe_mtime_ns = ?, probe_json = NULL,
+		probe_error = ?, probe_after = NULL, probe_timeouts = 0 WHERE `+resultFits+` RETURNING id`,
+		append([]any{o.Rev.Size, o.Rev.ModTime, o.Rev.Size, o.Rev.ModTime, msg}, fitsArgs(rootID, o, queued)...)...).Scan(&fileID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if err := clearFacts(ctx, tx, fileID); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
 }
 
 // retryTimeout defers a file whose probe timed out, unless it has run out of
@@ -208,9 +254,14 @@ func (s *Store) retryTimeout(ctx context.Context, rootID string, o Outcome, queu
 
 // RetryProbe clears a file's probe so the next ProbeDue probes it again: the
 // admin's explicit retry after a failure (spec §3.6).
-// Planned: LIB-2c (the admin retry action).
+// Planned: LIB-2d (the admin retry action).
 func (s *Store) RetryProbe(ctx context.Context, fileID string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE library_files SET probe_size = NULL, probe_mtime_ns = NULL, probe_json = NULL,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE library_files SET probe_size = NULL, probe_mtime_ns = NULL, probe_json = NULL,
 		probe_error = NULL, probe_after = NULL, probe_timeouts = 0 WHERE id = ?`, fileID)
 	if err != nil {
 		return err
@@ -218,5 +269,8 @@ func (s *Store) RetryProbe(ctx context.Context, fileID string) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if err := clearFacts(ctx, tx, fileID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

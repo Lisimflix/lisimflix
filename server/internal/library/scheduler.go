@@ -145,7 +145,7 @@ func (s *Scheduler) Run(ctx context.Context) error {
 
 // Reload re-reads the libraries' roots: new ones are watched and scanned,
 // removed ones dropped. Run calls it every Recheck.
-// Planned: LIB-2c (the libraries API calls it after a change).
+// Planned: LIB-2d (the libraries admin API calls it after a change).
 func (s *Scheduler) Reload(ctx context.Context) error { return s.reload(ctx, CauseAdded) }
 
 func (s *Scheduler) reload(ctx context.Context, cause string) error {
@@ -190,7 +190,7 @@ func (s *Scheduler) reload(ctx context.Context, cause string) error {
 
 // ScanNow queues a whole-root scan of every root of the library (spec §3.6
 // Scan now). A scan already running finishes, and the new one follows it.
-// Planned: LIB-2c (the Scan now action).
+// Planned: LIB-2d (the Scan now action).
 func (s *Scheduler) ScanNow(libraryID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -210,7 +210,7 @@ func (s *Scheduler) ScanNow(libraryID string) error {
 
 // Cancel stops the library's running scan and probes and drops its queued
 // work. Completed work is kept (spec §3.6).
-// Planned: LIB-2c (the Cancel action).
+// Planned: LIB-2d (the Cancel action).
 func (s *Scheduler) Cancel(libraryID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -237,7 +237,7 @@ func (s *Scheduler) Cancel(libraryID string) error {
 // Pause stops starting scans and probes, and stops running ones; their work
 // is queued again for Resume (spec §11.2: operators can pause maintenance).
 // Watcher hints keep queuing meanwhile.
-// Planned: LIB-2c (the admin pause control).
+// Planned: LIB-2d (the admin pause control).
 func (s *Scheduler) Pause() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -251,7 +251,7 @@ func (s *Scheduler) Pause() {
 }
 
 // Resume undoes Pause.
-// Planned: LIB-2c (the admin pause control).
+// Planned: LIB-2d (the admin pause control).
 func (s *Scheduler) Resume() {
 	s.mu.Lock()
 	s.paused = false
@@ -261,7 +261,7 @@ func (s *Scheduler) Resume() {
 }
 
 // Status reports every root.
-// Planned: LIB-2c (the scan status API).
+// Planned: LIB-2d (the scan status API).
 func (s *Scheduler) Status(ctx context.Context) ([]RootStatus, error) {
 	type mem struct{ activity, watch string }
 	s.mu.Lock()

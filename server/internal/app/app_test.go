@@ -69,6 +69,7 @@ type env struct {
 	t     *testing.T
 	srv   *httptest.Server
 	play  *fakePlayback
+	cat   *fakePlayback // the catalogue handler; nil when built without one
 	ready error
 	mu    sync.Mutex
 }
@@ -80,6 +81,12 @@ func newEnv(t *testing.T, origin string) *env {
 
 func newEnvWith(t *testing.T, origin string, log *slog.Logger) *env {
 	t.Helper()
+	return build(t, origin, log, &fakePlayback{})
+}
+
+// build composes the app; a nil cat builds it without a catalogue (storage down).
+func build(t *testing.T, origin string, log *slog.Logger, cat *fakePlayback) *env {
+	t.Helper()
 	cfg := m1config.Config{
 		PublicOrigin: origin, CSRFKey: bytes.Repeat([]byte{3}, 32), MediaRoot: "/media/SECRET-ROOT",
 		Viewer: m1config.Viewer{AccountID: "acct-1", ProfileID: "prof-1", Username: "viewer", PasswordHash: viewerHash},
@@ -88,8 +95,12 @@ func newEnvWith(t *testing.T, origin string, log *slog.Logger) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, play: &fakePlayback{}}
-	h, err := New(cfg, am, e.play, web, func(context.Context) error {
+	e := &env{t: t, play: &fakePlayback{}, cat: cat}
+	var catalogue http.Handler
+	if cat != nil {
+		catalogue = cat
+	}
+	h, err := New(cfg, am, e.play, catalogue, web, func(context.Context) error {
 		e.mu.Lock()
 		defer e.mu.Unlock()
 		return e.ready
@@ -198,6 +209,50 @@ func TestProtectedAPIRoutesRequireLogin(t *testing.T) {
 	}
 	if p := e.play.seen; len(p) != 1 || p[0].AccountID != "acct-1" || p[0].AuthSessionID == "" {
 		t.Fatalf("playback saw %+v", p)
+	}
+}
+
+func TestCatalogueRoutesMounted(t *testing.T) {
+	routes := []string{"/api/v1/libraries", "/api/v1/libraries/lib-1/facets", "/api/v1/items", "/api/v1/items/item-1"}
+	e := newEnv(t, lanOrigin)
+	b := e.browser()
+	for _, p := range routes {
+		if resp, out := b.do("GET", p, "", nil); resp.StatusCode != 401 || code(t, out) != contracts.CodeUnauthenticated {
+			t.Errorf("GET %s anonymous = %d %s", p, resp.StatusCode, out)
+		}
+	}
+	if len(e.cat.seen) != 0 {
+		t.Fatal("catalogue handler reached without a session")
+	}
+	b.signIn()
+	for _, p := range routes {
+		if resp, out := b.do("GET", p, "", nil); resp.StatusCode != 200 || resp.Header.Get("Cache-Control") != "no-store" {
+			t.Errorf("GET %s = %d %s", p, resp.StatusCode, out)
+		}
+	}
+	if p := e.cat.seen; len(p) != len(routes) || p[0].AccountID != "acct-1" {
+		t.Fatalf("catalogue saw %+v", p)
+	}
+	// Other API routes don't reach the catalogue.
+	for _, p := range []string{"/api/v1/movies", "/api/v1/librariesx", "/api/v1/itemsx", "/api/v1/nope"} {
+		b.do("GET", p, "", nil)
+	}
+	if len(e.cat.seen) != len(routes) || len(e.play.seen) != 1 {
+		t.Fatalf("catalogue saw %d, playback %d", len(e.cat.seen), len(e.play.seen))
+	}
+
+	// Storage down: no catalogue, so the routes answer 404 not_found and
+	// the browse app falls back to the M1 movie (UI-2 decision 10).
+	down := build(t, lanOrigin, nil, nil)
+	db := down.browser()
+	db.signIn()
+	for _, p := range routes {
+		if resp, out := db.do("GET", p, "", nil); resp.StatusCode != 404 || code(t, out) != contracts.CodeNotFound {
+			t.Errorf("no catalogue: GET %s = %d %s", p, resp.StatusCode, out)
+		}
+	}
+	if resp, _ := db.do("GET", "/api/v1/movies", "", nil); resp.StatusCode != 200 {
+		t.Fatalf("no catalogue: movies = %d", resp.StatusCode)
 	}
 }
 
@@ -331,16 +386,16 @@ func TestNewRejectsInconsistentInputs(t *testing.T) {
 	plainAM, _ := auth.NewManager(cfg.Viewer, false, func(string) {})
 	ready := func(context.Context) error { return nil }
 	play := &fakePlayback{}
-	if _, err := New(cfg, secureAM, play, web, ready, nil); err == nil {
+	if _, err := New(cfg, secureAM, play, play, web, ready, nil); err == nil {
 		t.Error("accepted Secure cookies on an http origin")
 	}
 	for name, fn := range map[string]func() error{
-		"nil auth":     func() error { _, err := New(cfg, nil, play, web, ready, nil); return err },
-		"nil playback": func() error { _, err := New(cfg, plainAM, nil, web, ready, nil); return err },
-		"nil web":      func() error { _, err := New(cfg, plainAM, play, nil, ready, nil); return err },
-		"nil ready":    func() error { _, err := New(cfg, plainAM, play, web, nil, nil); return err },
+		"nil auth":     func() error { _, err := New(cfg, nil, play, play, web, ready, nil); return err },
+		"nil playback": func() error { _, err := New(cfg, plainAM, nil, play, web, ready, nil); return err },
+		"nil web":      func() error { _, err := New(cfg, plainAM, play, play, nil, ready, nil); return err },
+		"nil ready":    func() error { _, err := New(cfg, plainAM, play, play, web, nil, nil); return err },
 		"no index": func() error {
-			_, err := New(cfg, plainAM, play, fstest.MapFS{"a.js": {Data: []byte("x")}}, ready, nil)
+			_, err := New(cfg, plainAM, play, play, fstest.MapFS{"a.js": {Data: []byte("x")}}, ready, nil)
 			return err
 		},
 	} {

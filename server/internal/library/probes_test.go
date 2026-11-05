@@ -38,7 +38,7 @@ func (f *scriptedProber) Probe(_ context.Context, _ *os.Root, rel string) (probe
 
 const quiet = 30 * time.Second
 
-func probeDue(t *testing.T, sc *Scanner, root string, p Prober) ProbeRun {
+func probeDue(t testing.TB, sc *Scanner, root string, p Prober) ProbeRun {
 	t.Helper()
 	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet, 0)
 	if err != nil {
