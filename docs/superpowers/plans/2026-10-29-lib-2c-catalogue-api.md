@@ -73,7 +73,7 @@
      - `gre→ell`, `ice→isl`, `mac→mkd`, `mao→mri`, `may→msa`
      - `per→fas`, `rum→ron`, `slo→slk`, `tib→bod`, `wel→cym`
    - Untagged and `und` aren't stored.
-   - An item matches a filter if **any** of its present files matches. A show or season matches if any of its episodes does.
+   - A movie or episode matches when **one** of its present files meets every selected filter (`resolution=4k&audioLanguage=deu` needs a 4k German file, not a 4k English file plus a 1080p German one). A show or season matches when each filter is met by some episode's file.
 7. **`listItems` details the contract leaves to the producer:**
    - **What a `libraryId` listing contains:** movies for a `movies` library, shows for `tv` and `anime` (the top-level items, `parent_id IS NULL`).
    - **Seasons under a show (`parentId`):** in `idx` order with specials (`0`) last, then by ID.
@@ -109,7 +109,7 @@
       - `segment` is null (LIB-3 locates shared-file episodes);
       - `container` is the stored container, or `""` before the first probe;
       - `fileName` is the path's last element for admins, and null for everyone else.
-    - **When a version is listed:** shows and seasons have no versions. A movie or episode lists every version, available or not. `MediaVersion.available` and `ItemSummary.available` carry the state; the contract's "Empty … for a movie or episode with no available file" is read as "no versions to play", and the client shows File offline from `available`.
+    - **When a version is listed:** shows and seasons have no versions. A movie or episode lists every live version (its file isn't retired), available or not. `MediaVersion.available` and `ItemSummary.available` carry the state; the contract's "Empty … for a movie or episode with no available file" is read as "no versions to play", and the client shows File offline from `available`.
     - **`externalIds`** stays empty until META-1c: name hints aren't validated, so they aren't served as IDs.
 11. **Catalogue playback, and keeping M1 playing.**
     - **What `library.Resolver` resolves:** `Resolve(p, itemID, versionID)` returns the version's file as a `playback.Source`. The fields are:
@@ -233,7 +233,7 @@ func TestBackfillFillsOldRows(t *testing.T)           // NULL the derived column
 ```
 
 - [ ] **Step 2:** Run `go -C server test -run 'SortKeys|FileFacts|SetDisplay|Backfill' ./internal/library/`. Expected: FAIL.
-- [ ] **Step 3:** Implement. `sort_key` is `textfold.Title(COALESCE(display_sort_title, sort_title))`, computed in Go. The parsed `sort_title` stays as LIB-2a wrote it.
+- [ ] **Step 3:** Implement. `sort_key` is `textfold.Sort(COALESCE(display_sort_title, sort_title))`, computed in Go: the parsed `sort_title` already lost its leading article once, so `Sort` keeps what is left ("The A-Team" sorts under A). The parsed `sort_title` stays as LIB-2a wrote it.
 - [ ] **Step 4:** Run `go -C server test -race ./internal/library/...`. Expected: PASS, including LIB-2a/2b's tests.
 - [ ] **Step 5:** Commit `feat(library): sort keys, display values and file facts for browsing (LIB-2c)`.
 
