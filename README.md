@@ -30,6 +30,7 @@ private network only, over plain HTTP.
 | `server/` | Go server |
 | `web/` | React + Vite web app (`web/src/{app,browse,ui,player}`) |
 | `testdata/` | Synthetic fixtures (no real media) |
+| `.claude/skills/` | Claude Code skills for this repo (`repo-check`: status of every open PR and issue) |
 
 ## Checks
 
