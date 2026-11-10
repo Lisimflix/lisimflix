@@ -380,7 +380,10 @@ func (s *Scheduler) hooks() watchHooks {
 // A scope that is, or passes through, a symlinked folder is refused with
 // ErrInvalid: a scoped scan would follow the link but whole-root scans don't
 // walk symlinked folders, so its files would flip between present and
-// missing (#127). Components that don't exist are fine (deleted files).
+// missing (#127). A symlinked file as the last part is fine: whole-root
+// scans follow those too. A scope whole-root scans never reach (see
+// Skipped), such as a Sample or @eaDir folder, is ErrSkipped. Components
+// that don't exist are fine (deleted files).
 func (s *Scheduler) Hint(rootID, scope, cause string) error {
 	scope = path.Clean(scope)
 	if !fs.ValidPath(scope) {
@@ -399,7 +402,7 @@ func (s *Scheduler) Hint(rootID, scope, cause string) error {
 	if !ok {
 		return ErrNotFound
 	}
-	if err := s.checkNoSymlink(rootPath, scope); err != nil {
+	if err := s.checkScope(rootPath, scope); err != nil {
 		return err
 	}
 	s.mu.Lock()
@@ -412,9 +415,9 @@ func (s *Scheduler) Hint(rootID, scope, cause string) error {
 	return nil
 }
 
-// checkNoSymlink Lstats every prefix of scope inside the root folder. Errors
+// checkScope Lstats every prefix of scope inside the root folder. Errors
 // other than a symlink are not refusals: the scan reports them its own way.
-func (s *Scheduler) checkNoSymlink(rootPath, scope string) error {
+func (s *Scheduler) checkScope(rootPath, scope string) error {
 	if scope == "." {
 		return nil
 	}
@@ -430,7 +433,15 @@ func (s *Scheduler) checkNoSymlink(rootPath, scope string) error {
 		if err != nil {
 			return nil // missing or unreadable: nothing further to check
 		}
+		last := i == len(parts)-1
 		if info.Mode()&fs.ModeSymlink != 0 {
+			// Discover follows a symlinked file that stays inside the root;
+			// an escaping or dangling one it leaves out, as the scan will.
+			if last {
+				if target, err := root.Stat(comp); err != nil || !target.IsDir() {
+					return nil
+				}
+			}
 			return fmt.Errorf("%w: scope %q goes through the symlink %q", ErrInvalid, scope, comp)
 		}
 	}

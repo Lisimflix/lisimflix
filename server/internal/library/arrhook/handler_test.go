@@ -29,12 +29,17 @@ type hints struct {
 	failAt, n int
 	// errAt makes the given calls (1-based) fail with their own error.
 	errAt map[int]error
+	// onHint, if set, runs on every call.
+	onHint func()
 }
 
 func (h *hints) Hint(rootID, scope, cause string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.n++
+	if h.onHint != nil {
+		h.onHint()
+	}
 	if err := h.errAt[h.n]; err != nil {
 		return err
 	}
@@ -339,6 +344,33 @@ func TestImportUsesLibraryCause(t *testing.T) {
 	}
 }
 
+// The receipt is recorded even when the sender hangs up after the scans
+// were queued: every authenticated notification gets one.
+func TestReceiptSurvivesDisconnect(t *testing.T) {
+	f := newHook(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	f.hints.onHint = cancel // the sender goes away while scans are queued
+	req := httptest.NewRequest(http.MethodPost, Path, bytes.NewReader(fixture(t, "sonarr_download.json"))).WithContext(ctx)
+	req.RemoteAddr = "192.0.2.1:5000"
+	req.Header.Set("User-Agent", sonarrUA)
+	req.SetBasicAuth(f.src.ID, f.token)
+	f.h.ServeHTTP(httptest.NewRecorder(), req)
+	if r := f.lastReceipt(t); r.Result != ResultQueued {
+		t.Fatalf("receipt %+v", r)
+	}
+}
+
+// M counts every scope that wasn't left out, including those after the
+// one that failed: A queued, B refused, C skipped gives "1 of 2".
+func TestRefusalCountLeavesLaterSkipsOut(t *testing.T) {
+	f := newHook(t)
+	f.hints.errAt = map[int]error{2: fmt.Errorf("%w: symlink", library.ErrInvalid)}
+	f.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/x"},"episodeFile":{"path":"/tv/x/a.mkv"},"deletedFiles":[{"path":"/tv/y/b.mkv"},{"path":"/tv/z/Sample/c.mkv"}]}`))
+	if r := f.lastReceipt(t); !strings.Contains(r.Reason, "1 of 2") {
+		t.Fatalf("receipt %+v, want \"1 of 2\"", r)
+	}
+}
+
 // Sender-controlled text is bounded before it reaches the receipt row or the log.
 func TestUntrustedTextIsCapped(t *testing.T) {
 	f := newHook(t)
@@ -440,10 +472,7 @@ func TestSkippedPathIsLeftOut(t *testing.T) {
 // queued, so a left-out path isn't in M, and the receipt says it was left out.
 func TestRefusalCountLeavesSkippedOut(t *testing.T) {
 	f := newHook(t)
-	f.hints.errAt = map[int]error{
-		2: fmt.Errorf("%w: sample", library.ErrSkipped),
-		3: fmt.Errorf("%w: symlink", library.ErrInvalid),
-	}
+	f.hints.errAt = map[int]error{2: fmt.Errorf("%w: symlink", library.ErrInvalid)}
 	rec := f.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/a"},"episodeFile":{"path":"/tv/a/1.mkv"},` +
 		`"deletedFiles":[{"path":"/tv/b/sample/2.mkv"},{"path":"/tv/c/3.mkv"}]}`))
 	if rec.Code != http.StatusBadRequest {

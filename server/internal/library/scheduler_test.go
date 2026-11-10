@@ -392,6 +392,52 @@ func TestSchedulerHintRefusesSymlinkedScopes(t *testing.T) {
 	}
 }
 
+// A symlinked *file* inside the root is indexed by whole-root scans
+// (Discover follows it), so an import of it is queued, not refused. A link
+// to a folder as the last part is still refused.
+func TestSchedulerHintAllowsSymlinkedFile(t *testing.T) {
+	opts := fastOpts
+	opts.NoWatch = true
+	f := startScheduler(t, "movies", opts, &scriptedProber{}, "Real (2001)/Real (2001).mkv")
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed'`) == 1 })
+	movies := filepath.Join(f.m.dir, "Movies")
+	if err := os.Mkdir(filepath.Join(movies, "Other (2002)"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../Real (2001)/Real (2001).mkv", filepath.Join(movies, "Other (2002)", "Other (2002).mkv")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../Real (2001)", filepath.Join(movies, "Other (2002)", "Extra")); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.sch.Hint(f.root, "Other (2002)/Other (2002).mkv", CauseImport); err != nil {
+		t.Fatalf("symlinked file: %v, want queued", err)
+	}
+	if err := f.sch.Hint(f.root, "Other (2002)/Extra", CauseImport); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("symlinked folder as last part: %v, want ErrInvalid", err)
+	}
+}
+
+// A folder scope that whole-root scans skip (Sample, @eaDir, #recycle) is
+// ErrSkipped, so it's never walked by a scoped scan. A video file with such
+// a name isn't a folder and isn't refused for it.
+func TestSchedulerHintSkipsSkippedFolderScope(t *testing.T) {
+	opts := fastOpts
+	opts.NoWatch = true
+	f := startScheduler(t, "movies", opts, &scriptedProber{}, "A (2001)/A (2001).mkv")
+	eventually(t, "startup scan", func() bool { return f.runs(t, `status = 'completed'`) == 1 })
+	for _, d := range []string{"A (2001)/Sample", "A (2001)/@eaDir", "A (2001)/#recycle"} {
+		f.m.write("Movies/"+d+"/x.mkv", 10)
+		if err := f.sch.Hint(f.root, d, CauseImport); !errors.Is(err, ErrSkipped) {
+			t.Errorf("folder scope %q: %v, want ErrSkipped", d, err)
+		}
+	}
+	f.m.write("Movies/B (2002)/sample.mkv", 10)
+	if err := f.sch.Hint(f.root, "B (2002)/sample.mkv", CauseImport); err != nil {
+		t.Errorf("file named sample: %v, want queued", err)
+	}
+}
+
 // #106: a scoped scan (an import or a watched change) runs before scheduled
 // whole-root scans of other roots, and a scope for a root whose only pending
 // work is a scheduled whole-root scan isn't folded into it.

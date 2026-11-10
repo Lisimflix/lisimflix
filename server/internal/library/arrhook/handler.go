@@ -1,6 +1,7 @@
 package arrhook
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -183,15 +184,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		scopes = append(scopes, s)
 	}
-	all := group(scopes)
-	var done []Scope // queued so far
+	// Paths the library never scans are left out before anything is
+	// queued, so a refusal's "N of M" counts exactly the scans that could
+	// be queued (#175).
+	var all []Scope
 	skipped := 0
+	for _, s := range group(scopes) {
+		if library.Skipped(s.Path) {
+			skipped++
+			continue
+		}
+		all = append(all, s)
+	}
+	var done []Scope // queued so far
 	for _, s := range all {
 		err := h.hint.Hint(s.RootID, s.Path, library.CauseImport)
 		if errors.Is(err, library.ErrSkipped) {
-			// A path the library never scans (hidden files or folders,
-			// @-folders, sample(s), recycle and system folders) has nothing
-			// to scan; the rest still counts (#159).
+			// Left out by the scheduler after all (it checks the same rule);
+			// the rest still counts (#159).
 			skipped++
 			continue
 		}
@@ -202,7 +212,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if len(done) > 0 {
 				// M counts only scans that could be queued: a left-out path
 				// is never one (#175).
-				queued += fmt.Sprintf("%d of %d scans queued before: ", len(done), len(all)-skipped)
+				queued += fmt.Sprintf("%d of %d scans queued before: ", len(done), len(all))
 			}
 			if errors.Is(err, library.ErrInvalid) {
 				// A scope the library won't scan (e.g. through a symlinked
@@ -253,7 +263,9 @@ func cmpEvent(e string) string {
 // scans themselves run later, as runs with cause "import".
 func (h *Handler) finish(w http.ResponseWriter, r *http.Request, log *slog.Logger, src Source, rec Receipt, status int) {
 	rec.Reason = truncate(rec.Reason, maxReason)
-	if err := h.store.record(r.Context(), rec); err != nil {
+	// Recorded even if the sender has hung up: every authenticated
+	// notification gets a receipt.
+	if err := h.store.record(context.WithoutCancel(r.Context()), rec); err != nil {
 		log.Error("library.hook", "source_id", src.ID, "err", err.Error())
 	}
 	level := slog.LevelInfo

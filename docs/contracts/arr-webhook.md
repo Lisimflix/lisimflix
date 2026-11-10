@@ -15,7 +15,8 @@ the browser Origin and CSRF checks. It does get the same security headers and `X
 
 HTTP Basic. The username is the source ID and the password is the token, both printed once by
 `lisimflix hook add`. Only the token's SHA-256 is stored. A revoked source stops working on its
-next request.
+next request. Its name can be added again (to rotate the token): the new source replaces the
+revoked one, along with its receipts.
 
 ## User-Agent and supported versions
 
@@ -51,14 +52,18 @@ queued. If any can't be mapped (unmapped, an escape, another library, relative),
 notification is rejected with 400 and nothing is queued. Files of one notification that share a
 folder become one scan of that folder; duplicates and scopes inside another scope are dropped.
 
-A scope the scheduler then refuses (a symlinked folder: 400; the library not ready: 503) can leave
-earlier scopes of the same notification queued. The receipt lists exactly the scopes that were
-queued, and its reason contains "N of M scans queued before:" (M doesn't count left-out paths).
+A scope the scheduler then refuses (a symlinked folder, or a symlink to one: 400; the library not
+ready: 503) can leave earlier scopes of the same notification queued. A symlinked file is not
+refused: whole-root scans follow symlinked files that stay inside the library folder. The receipt
+lists exactly the scopes that were queued, and its reason contains "N of M scans queued before:"
+(M doesn't count left-out paths).
 
 A path the library never scans (a hidden file or folder, an `@`-folder such as `@eaDir`, a
-`sample`/`samples` folder, a recycle folder, `lost+found` or `System Volume Information`) is left
-out rather than rejected: the rest of the notification is queued, and the receipt's reason says
+`sample`/`samples` folder, a recycle folder, `lost+found` or `System Volume Information`, whether
+the path is inside such a folder or is the folder itself) is left out before anything is queued,
+rather than rejected: the rest of the notification is queued, and the receipt's reason says
 "N path(s) left out (never scanned)". If every path is like that, the answer is 200 `ignored`.
+Every authenticated notification gets a receipt, even if the sender hangs up before the answer.
 
 ## Responses
 

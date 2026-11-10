@@ -78,6 +78,38 @@ func TestAddAndAuthenticate(t *testing.T) {
 	}
 }
 
+// A revoked name can be added again (token rotation): the new source
+// replaces the revoked one, whose token stays refused. A live name can't.
+func TestAddReusesARevokedName(t *testing.T) {
+	st, _, _ := newStore(t)
+	ctx := context.Background()
+	ok := []Mapping{{"/tv", "TV"}}
+	old, oldToken, err := st.Add(ctx, "sonarr", Sonarr, []string{"TV"}, ok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.Add(ctx, "sonarr", Sonarr, []string{"TV"}, ok); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("live name: %v, want ErrInvalid", err)
+	}
+	if err := st.Revoke(ctx, "sonarr"); err != nil {
+		t.Fatal(err)
+	}
+	src, token, err := st.Add(ctx, "sonarr", Sonarr, []string{"TV"}, ok)
+	if err != nil {
+		t.Fatalf("revoked name: %v, want it reusable", err)
+	}
+	if _, err := st.Authenticate(ctx, src.ID, token); err != nil {
+		t.Fatalf("new token: %v", err)
+	}
+	if _, err := st.Authenticate(ctx, old.ID, oldToken); !errors.Is(err, ErrUnauthorized) {
+		t.Fatalf("old token: %v, want ErrUnauthorized", err)
+	}
+	all, err := st.Sources(ctx)
+	if err != nil || len(all) != 1 || all[0].ID != src.ID || all[0].Revoked {
+		t.Fatalf("sources %+v %v", all, err)
+	}
+}
+
 func TestAddChecksInput(t *testing.T) {
 	st, _, _ := newStore(t)
 	ctx := context.Background()

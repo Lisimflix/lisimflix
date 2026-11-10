@@ -95,7 +95,7 @@
     - The counter maps are bounded at 4,096 entries; when full of live entries, new peers are refused rather than the map growing.
 11. **The `hook` command until UI-6:**
     - `add --name --kind sonarr|radarr --folder F --map R=L` prints the exact Sonarr/Radarr settings, including the token once.
-    - `list`, `revoke --name`, `receipts --name [--n 20]`.
+    - `list`, `revoke --name`, `receipts --name [--n 20]`. `add` with a revoked source's name replaces it (token rotation, #159 review).
     - It shares `openForCLI` with LIB-2b's `library` command, which this plan factors out of it.
 12. **Log event** `library.hook`:
     - INFO for `queued`/`test`/`ignored`; WARN for `rejected`, `unauthenticated` and `rate_limited`.
@@ -987,7 +987,7 @@ Expected: FAIL to build: `undefined: Handler`, `undefined: NewHandler`, `undefin
 5. The receipt (`"rcpt-" + rand.Text()`, the request ID). `checkAgent` gives the app. Read the body through `http.MaxBytesReader(maxBodyBytes)` (an error → reject). Then `parse`.
 6. Version error → reject. Parse error → reject. `kindTest` → 200 `test`. `kindIgnore` → 200 `ignored` ("event doesn't change files").
 7. `resolve` each path; the first error rejects the whole notification with `"path <p>: <err>"` (Decision 6).
-8. `group`, then `Hint(root, path, CauseImport)` for each. `library.ErrSkipped` (a path the library never scans) leaves that path out and carries on; `library.ErrInvalid` (e.g. a symlinked folder) → 400, receipt `rejected`; any other error → 503, receipt `rejected` with reason "library not ready: …". A refusal after earlier scopes were queued starts the reason "N of M scans queued before:", where M leaves out skipped paths.
+8. `group`, then leave out every scope `library.Skipped` reports (a path the library never scans, including a skipped folder itself), then `Hint(root, path, library.CauseImport)` for each of the rest. `library.ErrSkipped` from `Hint` also leaves that path out and carries on; `library.ErrInvalid` (e.g. a symlinked folder) → 400, receipt `rejected`; any other error → 503, receipt `rejected` with reason "library not ready: …". A refusal after earlier scopes were queued starts the reason "N of M scans queued before:", where M leaves out every skipped path. The receipt is written with `context.WithoutCancel`, so a sender that hangs up still gets one.
 9. Every path skipped → 200 `ignored`. Otherwise 202 `queued`; when paths were left out, the reason says "N path(s) left out (never scanned)" (#175).
 
 `finish`: record the receipt (an error is logged, not fatal), log `library.hook` (Decision 12), then answer:

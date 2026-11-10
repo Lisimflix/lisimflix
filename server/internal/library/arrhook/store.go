@@ -102,7 +102,8 @@ type Store struct {
 func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
 
 // Add creates a source and returns it with its token, shown once: only the
-// token's hash is stored.
+// token's hash is stored. A name in use by a live source is refused; a
+// revoked source of that name is replaced.
 func (s *Store) Add(ctx context.Context, name, kind string, roots []string, maps []Mapping) (Source, string, error) {
 	switch {
 	case !nameRe.MatchString(name):
@@ -137,6 +138,11 @@ func (s *Store) Add(ctx context.Context, name, kind string, roots []string, maps
 	}
 	defer tx.Rollback()
 
+	// A revoked source's name can be added again (to rotate a token): the
+	// new source replaces it, and its roots, mappings and receipts go with it.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM arrhook_sources WHERE name = ? AND revoked_at IS NOT NULL`, name); err != nil {
+		return Source{}, "", err
+	}
 	var taken int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM arrhook_sources WHERE name = ?`, name).Scan(&taken); err != nil {
 		return Source{}, "", err
