@@ -392,6 +392,11 @@ func (s *Store) applyFiles(ctx context.Context, root Root, libType, runID string
 		default:
 			if size != f.Rev.Size || mtime != f.Rev.ModTime {
 				run.Changed++
+				// The old probe's facts describe the previous file: filters
+				// mustn't match them until the new one is probed (#168).
+				if err := clearFacts(ctx, tx, id); err != nil {
+					return err
+				}
 			}
 			if state != "present" {
 				run.Returned++

@@ -1,7 +1,9 @@
 package library
 
 import (
+	"database/sql"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
@@ -135,12 +137,109 @@ func TestStreamsKindFromCodec(t *testing.T) {
 }
 
 // A stream language is served only when it fits the contract's
-// ^(?!und$)[a-z]{3}$; anything else is null rather than an invalid value.
+// ^(?!und$)[a-z]{3}$, as the /T code the filters use (#170); anything else is
+// null rather than an invalid value.
 func TestLangPtrFitsContractPattern(t *testing.T) {
-	for tag, want := range map[string]string{"eng": "eng", "ger": "ger", "": "", "und": "", "en": "", "english": "", "ENG": "", "e1g": ""} {
+	for tag, want := range map[string]string{"eng": "eng", "ger": "deu", "": "", "und": "", "UND": "", "en": "", "english": "", "ENG": "eng", "e1g": ""} {
 		got := langPtr(tag)
 		if (got == nil) != (want == "") || (got != nil && *got != want) {
 			t.Errorf("langPtr(%q) = %v, want %q", tag, got, want)
+		}
+	}
+}
+
+// #168: every ISO 639-2/B code maps to its /T code, in either case, and a
+// /T code passes through unchanged.
+func TestLangTMapsEveryBibliographicCode(t *testing.T) {
+	pairs := map[string]string{
+		"alb": "sqi", "arm": "hye", "baq": "eus", "bur": "mya", "chi": "zho",
+		"cze": "ces", "dut": "nld", "fre": "fra", "geo": "kat", "ger": "deu",
+		"gre": "ell", "ice": "isl", "mac": "mkd", "mao": "mri", "may": "msa",
+		"per": "fas", "rum": "ron", "slo": "slk", "tib": "bod", "wel": "cym",
+	}
+	if len(pairs) != len(bToT) {
+		t.Fatalf("bToT has %d pairs, the table %d", len(bToT), len(pairs))
+	}
+	for b, want := range pairs {
+		for _, in := range []string{b, strings.ToUpper(b)} {
+			if got, ok := langT(in); !ok || got != want {
+				t.Errorf("langT(%q) = %q,%v want %q", in, got, ok, want)
+			}
+		}
+		if got, ok := langT(want); !ok || got != want {
+			t.Errorf("langT(%q) = %q,%v want it unchanged", want, got, ok)
+		}
+	}
+}
+
+// #170: stream languages use the same /T codes as the audio facet and filter,
+// so the UI never shows "ger" and "deu" for one language; an upper-case tag
+// is read, not dropped.
+func TestStreamLanguagesMatchFacetCodes(t *testing.T) {
+	r := probe.Result{
+		Audio: []probe.AudioStream{
+			{Index: 1, Codec: "aac", Channels: 2, Language: "ger"},
+			{Index: 2, Codec: "aac", Channels: 2, Language: "ENG"},
+			{Index: 3, Codec: "aac", Channels: 2, Language: "und"},
+		},
+		Subtitles: []probe.SubtitleStream{{Index: 4, Codec: "subrip", Language: "fre"}, {Index: 5, Codec: "subrip", Language: "en"}},
+	}
+	_, a, s := streams(r)
+	facets := deriveFile(r).AudioLangs
+	if !reflect.DeepEqual(facets, []string{"deu", "eng"}) {
+		t.Fatalf("facets %v", facets)
+	}
+	for i, want := range []string{"deu", "eng"} {
+		if a[i].Language == nil || *a[i].Language != want {
+			t.Errorf("audio %d language %v want %q", i, a[i].Language, want)
+		}
+	}
+	if a[2].Language != nil || s[0].Language == nil || *s[0].Language != "fra" || s[1].Language != nil {
+		t.Errorf("audio 3 %v, subs %v %v", a[2].Language, s[0].Language, s[1].Language)
+	}
+}
+
+// #168: a stream the contract can't carry (no codec, no size, no channels) is
+// left out rather than breaking the response schema; the others keep their
+// original indexes.
+func TestStreamsOutsideContractBoundsAreLeftOut(t *testing.T) {
+	r := probe.Result{
+		Video: []probe.VideoStream{
+			{Index: 0, Codec: "", Width: 1920, Height: 1080},
+			{Index: 1, Codec: "mjpeg", Width: 0, Height: 0},
+			{Index: 2, Codec: "h264", Width: 1920, Height: 0},
+			{Index: 3, Codec: "h264", Width: 1920, Height: 1080},
+		},
+		Audio: []probe.AudioStream{
+			{Index: 4, Codec: "aac", Channels: 0},
+			{Index: 5, Codec: "", Channels: 2},
+			{Index: 6, Codec: "aac", Channels: 2},
+		},
+		Subtitles: []probe.SubtitleStream{{Index: 7, Codec: ""}, {Index: 8, Codec: "subrip"}},
+	}
+	v, a, s := streams(r)
+	if len(v) != 1 || v[0].Index != 3 || len(a) != 1 || a[0].Index != 6 || len(s) != 1 || s[0].Index != 8 {
+		t.Fatalf("video %+v audio %+v subs %+v", v, a, s)
+	}
+}
+
+// #168: MediaVersion.label is 1-100 characters; an empty stored label is
+// null and a longer one is cut on a character boundary.
+func TestVersionLabelFitsContract(t *testing.T) {
+	long := strings.Repeat("é", 120)
+	cases := []struct {
+		in   sql.NullString
+		want *string
+	}{
+		{sql.NullString{}, nil},
+		{sql.NullString{Valid: true}, nil},
+		{sql.NullString{String: "Director's Cut", Valid: true}, strPtr("Director's Cut")},
+		{sql.NullString{String: long, Valid: true}, strPtr(strings.Repeat("é", 100))},
+	}
+	for _, c := range cases {
+		got := versionLabel(c.in)
+		if (got == nil) != (c.want == nil) || got != nil && *got != *c.want {
+			t.Errorf("versionLabel(%q) = %v want %v", c.in.String, got, c.want)
 		}
 	}
 }

@@ -217,3 +217,54 @@ func TestRetryProbeClearsFileFacts(t *testing.T) {
 	}
 	assertNoFacts(t, s)
 }
+
+// #168: a scan that sees a file change clears the facts its old probe gave,
+// so filters can't match the old file until the new one is probed.
+func TestScanOfChangedFileClearsFileFacts(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "Heat (1995)/Heat (1995).mkv")
+	probeDue(t, sc, root, factsProber{})
+	if r := fileFactsOf(t, s); r.Res == nil || len(r.Audio) != 2 {
+		t.Fatalf("facts not set: %+v", r)
+	}
+	scan(t, sc, root) // unchanged: the facts stay
+	if r := fileFactsOf(t, s); r.Res == nil || len(r.Audio) != 2 {
+		t.Fatalf("an unchanged scan cleared the facts: %+v", r)
+	}
+	m.write("Movies/Heat (1995)/Heat (1995).mkv", 20)
+	scan(t, sc, root)
+	assertNoFacts(t, s)
+}
+
+// #168: the start-up backfill derives facts only from a probe of the file's
+// current revision, so it can't bring back facts a change cleared.
+func TestBackfillSkipsProbeOfOlderRevision(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "Heat (1995)/Heat (1995).mkv")
+	probeDue(t, sc, root, factsProber{})
+	m.write("Movies/Heat (1995)/Heat (1995).mkv", 20)
+	scan(t, sc, root)
+	if _, f, err := s.BackfillDerived(context.Background()); err != nil || f != 0 {
+		t.Fatalf("backfill files %d, err %v", f, err)
+	}
+	assertNoFacts(t, s)
+}
+
+// #168: a probe of the changed file that times out or is deferred leaves no
+// facts from the old revision behind.
+func TestTimedOutOrDeferredProbeKeepsNoOldFacts(t *testing.T) {
+	const rel = "Heat (1995)/Heat (1995).mkv"
+	for name, p := range map[string]func(m *media) Prober{
+		"timeout":  func(*media) Prober { return &scriptedProber{fail: map[string]error{rel: probe.ErrTimeout}} },
+		"deferred": func(m *media) Prober { return &scriptedProber{during: func(r string) { m.write("Movies/"+r, 99) }} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, m, sc, root := setupMovies(t, rel)
+			probeDue(t, sc, root, factsProber{})
+			m.write("Movies/"+rel, 20)
+			scan(t, sc, root)
+			if run := probeDue(t, sc, root, p(m)); run.TimedOut+run.Deferred != 1 {
+				t.Fatalf("%+v", run)
+			}
+			assertNoFacts(t, s)
+		})
+	}
+}

@@ -280,7 +280,7 @@ type AudioStream struct {
 	Codec    string  `json:"codec"`
 	Profile  *string `json:"profile"` // e.g. "Dolby TrueHD + Dolby Atmos", "DTS-HD MA"; null when ffprobe reports none
 	Channels int     `json:"channels"`
-	Language *string `json:"language"` // ISO 639-2 as tagged; null when untagged or "und"
+	Language *string `json:"language"` // ISO 639-2/T as the filters use it (/B tags mapped); null when untagged, "und" or not three letters
 	Title    *string `json:"title"`
 	Default  bool    `json:"default"`
 	Forced   bool    `json:"forced"`

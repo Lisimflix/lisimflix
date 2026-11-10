@@ -625,7 +625,7 @@ export interface components {
             /** @description ffprobe profile, e.g. LC, Dolby TrueHD + Dolby Atmos, DTS-HD MA. Null when none is reported. */
             profile: string | null;
             channels: number;
-            /** @description ISO 639-2 as tagged; null when untagged or und */
+            /** @description ISO 639-2/T, the code the audioLanguage filter and facets use (/B tags are mapped, e.g. ger to deu; case is folded); null when untagged, und or not a three-letter code */
             language: string | null;
             title: string | null;
             default: boolean;
@@ -636,6 +636,7 @@ export interface components {
             codec: string;
             /** @enum {string} */
             kind: "text" | "image" | "ass";
+            /** @description ISO 639-2/T, mapped as for audio streams; null when untagged, und or not a three-letter code */
             language: string | null;
             title: string | null;
             default: boolean;

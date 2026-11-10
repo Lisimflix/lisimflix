@@ -93,13 +93,14 @@ func strPtr(s string) *string {
 	return &s
 }
 
-// langPtr is a stream's language as tagged, or nil unless the tag fits the
-// contract's ^(?!und$)[a-z]{3}$: untagged, "und", "en" and "english" are null.
+// langPtr is a stream's language as the /T code the facets and filters use
+// (#170), or nil when untagged, "und" or not three letters ("en", "english").
 func langPtr(tag string) *string {
-	if tag == "und" || !threeLetters.MatchString(tag) {
+	t, ok := langT(tag)
+	if !ok {
 		return nil
 	}
-	return &tag
+	return &t
 }
 
 func hdrName(h probe.HDRType) string {
@@ -126,16 +127,28 @@ func subKind(codec string) string {
 	return contracts.SubtitleText
 }
 
-// streams maps a probe result to the contract's stream lists.
+// streams maps a probe result to the contract's stream lists. A stream the
+// contract can't carry (no codec, a video stream without a size, an audio
+// stream without channels) is left out rather than breaking the response
+// schema; the rest keep their original indexes (#168).
 func streams(r probe.Result) (video []contracts.VideoStream, audio []contracts.AudioStream, subs []contracts.SubtitleStream) {
 	for _, v := range r.Video {
+		if v.Codec == "" || v.Width < 1 || v.Height < 1 {
+			continue
+		}
 		video = append(video, contracts.VideoStream{Index: v.Index, Codec: v.Codec, Width: v.Width, Height: v.Height, HDR: hdrName(v.HDR), Default: v.Default})
 	}
 	for _, a := range r.Audio {
+		if a.Codec == "" || a.Channels < 1 {
+			continue
+		}
 		audio = append(audio, contracts.AudioStream{Index: a.Index, Codec: a.Codec, Profile: strPtr(a.Profile), Channels: a.Channels,
 			Language: langPtr(a.Language), Title: strPtr(a.Title), Default: a.Default, Forced: a.Forced})
 	}
 	for _, s := range r.Subtitles {
+		if s.Codec == "" {
+			continue
+		}
 		subs = append(subs, contracts.SubtitleStream{Index: s.Index, Codec: s.Codec, Kind: subKind(s.Codec), Language: langPtr(s.Language),
 			Title: strPtr(s.Title), Default: s.Default, Forced: s.Forced, HearingImpaired: s.HearingImpaired})
 	}

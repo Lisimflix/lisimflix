@@ -60,7 +60,16 @@ type Root struct {
 type Store struct {
 	db  *storage.DB
 	now func() time.Time
-	log *slog.Logger // catalogue reads that hit bad stored data; discards until the API sets it
+	log *slog.Logger // catalogue reads that hit bad stored data; discards until SetLogger
+}
+
+// SetLogger sets where the store logs catalogue reads that hit bad stored
+// data; nil discards. Call it before the store is shared.
+func (s *Store) SetLogger(l *slog.Logger) {
+	if l == nil {
+		l = slog.New(slog.DiscardHandler)
+	}
+	s.log = l
 }
 
 func NewStore(db *storage.DB) *Store {

@@ -81,9 +81,7 @@ func (s *Store) itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID st
 		if err := rows.Scan(&v.ID, &v.FileID, &label, &duration, &size, &mtime, &rel, &probeJSON, &v.Available); err != nil {
 			return nil, err
 		}
-		if label.Valid {
-			v.Label = &label.String
-		}
+		v.Label = versionLabel(label)
 		if duration.Valid {
 			v.DurationMs = &duration.Int64
 		}
@@ -115,4 +113,20 @@ func fileName(rel string) *string {
 		return nil
 	}
 	return &name
+}
+
+// maxLabel is the contract's MediaVersion.label limit, in characters.
+const maxLabel = 100
+
+// versionLabel is a stored label as the contract allows it: null when absent
+// or empty, else at most maxLabel characters (#168).
+func versionLabel(l sql.NullString) *string {
+	if !l.Valid || l.String == "" {
+		return nil
+	}
+	label := l.String
+	if r := []rune(label); len(r) > maxLabel {
+		label = string(r[:maxLabel])
+	}
+	return &label
 }
