@@ -27,12 +27,17 @@ type hints struct {
 	err   error
 	// failAt, when > 0, makes only that call (1-based) fail with err.
 	failAt, n int
+	// errAt makes the given calls (1-based) fail with their own error.
+	errAt map[int]error
 }
 
 func (h *hints) Hint(rootID, scope, cause string) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.n++
+	if err := h.errAt[h.n]; err != nil {
+		return err
+	}
 	if h.err != nil && (h.failAt == 0 || h.failAt == h.n) {
 		return h.err
 	}
@@ -383,7 +388,8 @@ func TestSkippedPathIsLeftOut(t *testing.T) {
 	if a := decode(t, rec); rec.Code != http.StatusAccepted || a.Result != ResultQueued {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
-	if r := f.lastReceipt(t); r.Result != ResultQueued || len(r.Scopes) != 1 || len(f.hints.list()) != 1 {
+	if r := f.lastReceipt(t); r.Result != ResultQueued || len(r.Scopes) != 1 || len(f.hints.list()) != 1 ||
+		r.Reason != "1 path left out (never scanned)" {
 		t.Fatalf("receipt %+v, queued %q", r, f.hints.list())
 	}
 	// Only skipped paths: nothing to scan, not a failure.
@@ -394,6 +400,26 @@ func TestSkippedPathIsLeftOut(t *testing.T) {
 		t.Fatalf("only skipped: %d %s", rec.Code, rec.Body)
 	}
 	if r := f2.lastReceipt(t); r.Result != ResultIgnored || len(r.Scopes) != 0 || r.Reason == "" {
+		t.Fatalf("receipt %+v", r)
+	}
+}
+
+// #175: "N of M scans queued before" counts only the scans that could be
+// queued, so a left-out path isn't in M, and the receipt says it was left out.
+func TestRefusalCountLeavesSkippedOut(t *testing.T) {
+	f := newHook(t)
+	f.hints.errAt = map[int]error{
+		2: fmt.Errorf("%w: sample", library.ErrSkipped),
+		3: fmt.Errorf("%w: symlink", library.ErrInvalid),
+	}
+	rec := f.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/a"},"episodeFile":{"path":"/tv/a/1.mkv"},` +
+		`"deletedFiles":[{"path":"/tv/b/sample/2.mkv"},{"path":"/tv/c/3.mkv"}]}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	r := f.lastReceipt(t)
+	if r.Result != ResultRejected || len(r.Scopes) != 1 ||
+		!strings.HasPrefix(r.Reason, "1 path left out (never scanned); 1 of 2 scans queued before: ") {
 		t.Fatalf("receipt %+v", r)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -191,17 +192,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, s := range all {
 		err := h.hint.Hint(s.RootID, s.Path, CauseImport)
 		if errors.Is(err, library.ErrSkipped) {
-			// A path the library never scans (hidden, sample or recycle
-			// folders) has nothing to scan; the rest still counts (#159).
+			// A path the library never scans (hidden files or folders,
+			// @-folders, sample(s), recycle and system folders) has nothing
+			// to scan; the rest still counts (#159).
 			skipped++
 			continue
 		}
 		if err != nil {
 			// The receipt lists only what was queued before the refusal.
 			rec.Scopes = done
-			queued := ""
+			queued := leftOut(skipped)
 			if len(done) > 0 {
-				queued = fmt.Sprintf("%d of %d scans queued before: ", len(done), len(all))
+				// M counts only scans that could be queued: a left-out path
+				// is never one (#175).
+				queued += fmt.Sprintf("%d of %d scans queued before: ", len(done), len(all)-skipped)
 			}
 			if errors.Is(err, library.ErrInvalid) {
 				// A scope the library won't scan (e.g. through a symlinked
@@ -219,12 +223,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	rec.Scopes = done
 	if len(done) == 0 && skipped > 0 {
-		rec.Result, rec.Reason = ResultIgnored, "only paths the library never scans (hidden, sample or recycle folders)"
+		rec.Result, rec.Reason = ResultIgnored, "only paths the library never scans (hidden files or folders, @-folders, samples, recycle or system folders)"
 		h.finish(w, r, log, src, rec, http.StatusOK)
 		return
 	}
 	rec.Result = ResultQueued
+	// The receipt says when part of the import was left out (#175).
+	rec.Reason = strings.TrimSuffix(leftOut(skipped), "; ")
 	h.finish(w, r, log, src, rec, http.StatusAccepted)
+}
+
+// leftOut is the receipt's note for n paths the library never scans, with a
+// trailing "; " so more can follow; "" when n is 0.
+func leftOut(n int) string {
+	switch n {
+	case 0:
+		return ""
+	case 1:
+		return "1 path left out (never scanned); "
+	}
+	return fmt.Sprintf("%d paths left out (never scanned); ", n)
 }
 
 func cmpEvent(e string) string {

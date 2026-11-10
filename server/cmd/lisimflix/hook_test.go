@@ -13,8 +13,6 @@ import (
 	"github.com/Lisimflix/lisimflix/server/internal/library"
 )
 
-// LIB-4 wiring: a Radarr source added with the CLI notifies serve, without
-// browser headers, and the imported file is scanned with cause "import".
 // hookEnv is a serve fixture with a movies library "Films" holding Alien and
 // a radarr source for it, after the library's first scan.
 type hookEnv struct {
@@ -80,10 +78,11 @@ func (e hookEnv) notify(t *testing.T, pw, body string) int {
 	return resp.StatusCode
 }
 
+// LIB-4 wiring: a Radarr source added with the CLI notifies serve, without
+// browser headers, and the imported file is scanned with cause "import".
 func TestServeImportNotification(t *testing.T) {
 	e := newHookEnv(t)
-	f, films, run1, status := e.f, e.films, e.run1, e.status
-	_ = f
+	films, run1, status := e.films, e.run1, e.status
 	os.MkdirAll(filepath.Join(films, "Heat (1995)"), 0o755)
 	os.WriteFile(filepath.Join(films, "Heat (1995)", "Heat (1995).mkv"), []byte("x"), 0o644)
 	heat := `{"eventType":"Download","movie":{"title":"Heat","year":1995,"folderPath":"/movies/Heat (1995)"},` +

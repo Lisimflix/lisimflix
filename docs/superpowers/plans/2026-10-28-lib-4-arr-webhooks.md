@@ -987,8 +987,8 @@ Expected: FAIL to build: `undefined: Handler`, `undefined: NewHandler`, `undefin
 5. The receipt (`"rcpt-" + rand.Text()`, the request ID). `checkAgent` gives the app. Read the body through `http.MaxBytesReader(maxBodyBytes)` (an error → reject). Then `parse`.
 6. Version error → reject. Parse error → reject. `kindTest` → 200 `test`. `kindIgnore` → 200 `ignored` ("event doesn't change files").
 7. `resolve` each path; the first error rejects the whole notification with `"path <p>: <err>"` (Decision 6).
-8. `group`, then `Hint(root, path, CauseImport)` for each. An error → 503, receipt `rejected` with reason "library not ready: …".
-9. 202 `queued`.
+8. `group`, then `Hint(root, path, CauseImport)` for each. `library.ErrSkipped` (a path the library never scans) leaves that path out and carries on; `library.ErrInvalid` (e.g. a symlinked folder) → 400, receipt `rejected`; any other error → 503, receipt `rejected` with reason "library not ready: …". A refusal after earlier scopes were queued starts the reason "N of M scans queued before:", where M leaves out skipped paths.
+9. Every path skipped → 200 `ignored`. Otherwise 202 `queued`; when paths were left out, the reason says "N path(s) left out (never scanned)" (#175).
 
 `finish`: record the receipt (an error is logged, not fatal), log `library.hook` (Decision 12), then answer:
 - 400 / 503 through `contracts.WriteError` with "Notification rejected: <reason>" or "The library isn't ready yet; the next scan will catch up.";

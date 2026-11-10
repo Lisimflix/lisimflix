@@ -53,11 +53,12 @@ folder become one scan of that folder; duplicates and scopes inside another scop
 
 A scope the scheduler then refuses (a symlinked folder: 400; the library not ready: 503) can leave
 earlier scopes of the same notification queued. The receipt lists exactly the scopes that were
-queued, and its reason starts "N of M scans queued before:".
+queued, and its reason contains "N of M scans queued before:" (M doesn't count left-out paths).
 
-A path the library never scans (inside a hidden, `sample` or recycle folder) is left out rather
-than rejected: the rest of the notification is queued. If every path is like that, the answer is
-200 `ignored`.
+A path the library never scans (a hidden file or folder, an `@`-folder such as `@eaDir`, a
+`sample`/`samples` folder, a recycle folder, `lost+found` or `System Volume Information`) is left
+out rather than rejected: the rest of the notification is queued, and the receipt's reason says
+"N path(s) left out (never scanned)". If every path is like that, the answer is 200 `ignored`.
 
 ## Responses
 

@@ -422,7 +422,10 @@ func TestNewRejectsInconsistentInputs(t *testing.T) {
 			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/hooks/x", http.NotFoundHandler()}, Mount{"/hooks/x", http.NotFoundHandler()})
 			return err
 		},
-		"mount without handler": func() error { _, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/hooks/x", nil}); return err },
+		"mount without handler": func() error {
+			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/hooks/x", nil})
+			return err
+		},
 	} {
 		if fn() == nil {
 			t.Errorf("%s: accepted", name)
