@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -271,11 +272,15 @@ func TestAPIErrors(t *testing.T) {
 	}
 }
 
-// benchProber gives each benchmark file streams by its name's number.
+// benchProber gives each benchmark file streams from its path: the
+// resolution from the path's length, the audio language from a hash of it,
+// so every resolution comes with every language.
 type benchProber struct{}
 
 func (benchProber) Probe(_ context.Context, _ *os.Root, rel string) (probe.Result, error) {
 	n := len(rel)
+	hash := fnv.New32a()
+	hash.Write([]byte(rel))
 	w, h, hdr := 1920, 1080, probe.SDR
 	switch n % 3 {
 	case 0:
@@ -283,7 +288,7 @@ func (benchProber) Probe(_ context.Context, _ *os.Root, rel string) (probe.Resul
 	case 1:
 		w, h = 1280, 720
 	}
-	lang := []string{"eng", "jpn", "fre"}[n%3]
+	lang := []string{"eng", "jpn", "fre"}[hash.Sum32()%3]
 	return probe.Result{Container: "matroska,webm", DurationMs: int64(1000 + n),
 		Video:     []probe.VideoStream{{Index: 0, Codec: "hevc", Width: w, Height: h, HDR: hdr, Default: true}},
 		Audio:     []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 2, Language: lang, Default: true}},

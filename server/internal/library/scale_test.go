@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,7 +14,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -24,12 +24,13 @@ import (
 // (1,000 with two versions, 200 with three) and 1,000 shows (999 with 3
 // seasons of 10 episodes, one with 30 seasons). It times every catalogue
 // route server-side (the handler, no network) at idle, during a full rescan
-// and during a probe turn, and reports p50/p95. Run it by hand:
+// and during a probe turn, and reports nearest-rank p50/p95 with the sample
+// count. Run it by hand:
 //
-//	go -C server test -tags scale -run TestCatalogueAtScale -v -timeout 30m ./internal/library/
+//	go -C server test -tags scale -run TestCatalogueAtScale -v -timeout 40m ./internal/library/
 //
-// It asserts only correctness (every response 200, no Resolve error
-// under load); the numbers go in docs/testing/.
+// It asserts only correctness (every response 200, combined filters return
+// items, no Resolve error under load); the numbers go in docs/testing/.
 func TestCatalogueAtScale(t *testing.T) {
 	e := newBrowse(t)
 	ctx := context.Background()
@@ -148,6 +149,33 @@ func TestCatalogueAtScale(t *testing.T) {
 	must(e.s.db.QueryRow(`SELECT parent_id FROM library_items WHERE kind = 'season' GROUP BY parent_id HAVING COUNT(*) = 30`).Scan(&bigShow))
 	must(e.s.db.QueryRow(`SELECT id FROM library_items WHERE kind = 'season' AND parent_id = ? LIMIT 1`, bigShow).Scan(&aSeason))
 
+	// Combined filters time a query that returns items: a resolution and a
+	// language that one file has, picked from each library's own facts.
+	combo := func(libID, res string) string {
+		var lang string
+		must(e.s.db.QueryRow(`SELECT a.lang FROM library_files f
+			JOIN library_file_audio a ON a.file_id = f.id
+			JOIN library_versions v ON v.file_id = f.id JOIN library_items i ON i.id = v.item_id
+			WHERE i.library_id = ? AND f.state = 'present' AND f.resolution = ? AND a.lang != 'eng'
+			GROUP BY a.lang ORDER BY COUNT(*) LIMIT 1`, libID, res).Scan(&lang))
+		return "&resolution=" + res + "&audioLanguage=" + lang
+	}
+	var tvRes string
+	must(e.s.db.QueryRow(`SELECT f.resolution FROM library_files f JOIN library_versions v ON v.file_id = f.id
+		JOIN library_items i ON i.id = v.item_id WHERE i.library_id = ? LIMIT 1`, tv.ID).Scan(&tvRes))
+	movieCombo, tvCombo := m+combo(movies.ID, "4k"), tvItems+combo(tv.ID, tvRes)
+	for _, target := range []string{movieCombo, tvCombo} {
+		var p contracts.ItemPage
+		body, _ := get(target)
+		if err := json.Unmarshal(body, &p); err != nil {
+			t.Fatal(err)
+		}
+		if len(p.Items) == 0 {
+			t.Fatalf("GET %s returned no items: the combined filter would time an empty result", target)
+		}
+		t.Logf("combined filter %s: %d items on the first page", target, len(p.Items))
+	}
+
 	routes := []struct{ name, target string }{
 		{"libraries", "/api/v1/libraries"},
 		{"facets/movies", "/api/v1/libraries/" + movies.ID + "/facets"},
@@ -163,41 +191,36 @@ func TestCatalogueAtScale(t *testing.T) {
 		{"items/hdr", m + "&hdr=true"},
 		{"items/sdr", m + "&hdr=false"},
 		{"items/audio", m + "&audioLanguage=jpn"},
-		{"items/res+audio", m + "&resolution=4k&audioLanguage=jpn"},
+		{"items/res+audio", movieCombo},
 		{"items/tv-title", tvItems},
 		{"items/tv-resolution", tvItems + "&resolution=720p"},
-		{"items/tv-res+audio", tvItems + "&resolution=4k&audioLanguage=fra"},
+		{"items/tv-res+audio", tvCombo},
 		{"items/30-seasons", "/api/v1/items?parentId=" + bigShow},
 		{"items/episodes", "/api/v1/items?parentId=" + aSeason},
 		{"getItem/3-version-movie", "/api/v1/items/" + threeFiles},
 		{"getItem/30-season-show", "/api/v1/items/" + bigShow},
 	}
 
-	// measure runs every route (and Resolve) round after round until stop
-	// closes and at least min rounds are done; it returns durations by name.
-	measure := func(min int, stop <-chan struct{}) (map[string][]time.Duration, int) {
-		out := map[string][]time.Duration{}
-		resolveErrs := 0
-		for round := 0; ; round++ {
-			if round >= min {
-				select {
-				case <-stop:
-					return out, resolveErrs
-				default:
-				}
-			}
-			for _, rt := range routes {
-				_, d := get(rt.target)
-				out[rt.name] = append(out[rt.name], d)
-			}
-			start := time.Now()
-			if _, err := res.Resolve(*adminP, threeFiles, threeVersion); err != nil {
-				resolveErrs++
-			}
-			out["Resolve"] = append(out["Resolve"], time.Since(start))
+	// round runs every route and Resolve once, adding each duration to out;
+	// it returns when the round started.
+	type samples map[string][]time.Duration
+	resolveErrs := 0
+	round := func(out samples) time.Time {
+		began := time.Now()
+		for _, rt := range routes {
+			_, d := get(rt.target)
+			out[rt.name] = append(out[rt.name], d)
 		}
+		start := time.Now()
+		if _, err := res.Resolve(*adminP, threeFiles, threeVersion); err != nil {
+			resolveErrs++
+		}
+		out["Resolve"] = append(out["Resolve"], time.Since(start))
+		return began
 	}
-	report := func(phase string, d map[string][]time.Duration, resolveErrs int) {
+	// report prints nearest-rank p50/p95 (the ceil(q·n)-th smallest sample)
+	// with n, so a p95 from fewer than 20 samples is visibly the max.
+	report := func(phase string, d samples) {
 		names := make([]string, 0, len(d))
 		for n := range d {
 			names = append(names, n)
@@ -208,48 +231,73 @@ func TestCatalogueAtScale(t *testing.T) {
 		for _, n := range names {
 			v := slices.Clone(d[n])
 			slices.Sort(v)
-			p := func(q float64) time.Duration { return v[min(len(v)-1, int(q*float64(len(v))))] }
+			p := func(q float64) time.Duration { return v[max(0, int(math.Ceil(q*float64(len(v))))-1)] }
 			fmt.Fprintf(&b, "%-26s %6d %10v %10v %10v\n", n, len(v), p(0.50).Round(10*time.Microsecond), p(0.95).Round(10*time.Microsecond), v[len(v)-1].Round(10*time.Microsecond))
 		}
 		t.Log(b.String())
 		if resolveErrs > 0 {
 			t.Errorf("%s: %d Resolve errors (the M1 fallback would not run)", phase, resolveErrs)
 		}
+		resolveErrs = 0
 	}
 
-	closed := make(chan struct{})
-	close(closed)
 	get(m) // warm the page cache
-	d, re := measure(30, closed)
-	report("idle", d, re)
+	idle := samples{}
+	for range 30 {
+		round(idle)
+	}
+	report("idle", idle)
+
+	// underLoad repeats prep and load until every route has minLoaded
+	// samples taken while the load ran. Rounds run back to back during each
+	// load; a round still running when the load ends is dropped whole, so no
+	// idle time is counted as load.
+	const minLoaded = 20
+	underLoad := func(phase string, prep, load func()) {
+		kept, runs := samples{}, 0
+		var took time.Duration
+		for len(kept["Resolve"]) < minLoaded {
+			prep()
+			done := make(chan time.Time, 1)
+			start := time.Now()
+			go func() { load(); done <- time.Now() }()
+			var ended time.Time
+			for ended.IsZero() {
+				r := samples{}
+				round(r)
+				select {
+				case ended = <-done: // this round overlapped the end: drop it
+				default:
+					for n, v := range r {
+						kept[n] = append(kept[n], v...)
+					}
+				}
+			}
+			took += ended.Sub(start)
+			runs++
+		}
+		t.Logf("%s: %d runs, %v per run", phase, runs, (took / time.Duration(runs)).Round(time.Millisecond))
+		report(phase, kept)
+	}
 
 	// During a full rescan of both roots (every file's row is rewritten).
-	underLoad := func(phase string, load func()) {
-		stop := make(chan struct{})
-		var wg sync.WaitGroup
-		start := time.Now()
-		wg.Go(func() { load(); close(stop) })
-		d, re := measure(5, stop)
-		wg.Wait()
-		t.Logf("%s load took %v", phase, time.Since(start).Round(time.Millisecond))
-		report(phase, d, re)
-	}
-	underLoad("full rescan", func() {
+	underLoad("full rescan", func() {}, func() {
 		for _, r := range roots {
 			if _, err := e.sc.ScanRoot(ctx, r); err != nil {
 				t.Error(err)
 			}
 		}
 	})
-	// During a probe turn: every file's probe is stale, so every file's
-	// result and facts are written again.
-	if _, err := e.s.db.Exec(`UPDATE library_files SET probe_size = NULL`); err != nil {
-		t.Fatal(err)
-	}
 	if os.Getenv("SCALE_EXPLAIN") != "" {
 		explainSlow(t, e.s, tv.ID)
 	}
+	// During a probe turn: every file's probe is made stale first, so every
+	// file's result and facts are written again.
 	underLoad("probe turn", func() {
+		if _, err := e.s.db.Exec(`UPDATE library_files SET probe_size = NULL`); err != nil {
+			t.Fatal(err)
+		}
+	}, func() {
 		for _, r := range roots {
 			if _, err := e.sc.ProbeDue(ctx, r, benchProber{}, 4, 0, 0); err != nil {
 				t.Error(err)
