@@ -29,6 +29,24 @@ type Resolver interface {
 // ErrNotFound is the Resolver's answer for an unknown or forbidden item/version.
 var ErrNotFound = errors.New("playback: no such item or version")
 
+// Chain tries each resolver in turn: the first answer that isn't ErrNotFound
+// wins, so any other error is returned at once. Serve chains the catalogue
+// before Single, so the M1 movie keeps playing (LIB-2c decision 11). With no
+// resolver, or when every one answers ErrNotFound, it answers ErrNotFound.
+func Chain(rs ...Resolver) Resolver { return chain(rs) }
+
+type chain []Resolver
+
+func (c chain) Resolve(p contracts.Principal, itemID, versionID string) (Source, error) {
+	for _, r := range c {
+		src, err := r.Resolve(p, itemID, versionID)
+		if !errors.Is(err, ErrNotFound) {
+			return src, err
+		}
+	}
+	return Source{}, ErrNotFound
+}
+
 // M1 resolves M1's one configured movie: itemID == versionID == fileID ==
 // movie.ID, so source revisions are the ones init wrote. Build it with Single.
 type M1 struct {
@@ -38,7 +56,7 @@ type M1 struct {
 }
 
 // Single returns the M1 resolver for one movie.
-// Planned: LIB-2c (a catalogue Resolver replaces Single).
+// Planned: removal in LIB-2c's M1-retirement follow-up (#77): the catalogue serves every item.
 func Single(movie contracts.Movie, relativePath string, authorize func(contracts.Principal, string) bool) *M1 {
 	return &M1{movie: movie, rel: relativePath, authorize: authorize}
 }

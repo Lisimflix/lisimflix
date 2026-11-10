@@ -262,7 +262,7 @@ type Duplicate struct {
 }
 
 // Duplicates lists the library's flagged pairs.
-// Planned: LIB-2c (the admin duplicates screen).
+// Planned: LIB-2d (the admin duplicates screen).
 func (s *Store) Duplicates(ctx context.Context, libID string) ([]Duplicate, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT d.id, d.item_id, d.other_id, i.title FROM library_duplicates d
 		JOIN library_items i ON i.id = d.item_id WHERE i.library_id = ? AND d.state = 'flagged' ORDER BY i.sort_title, d.id`, libID)
@@ -285,7 +285,7 @@ func (s *Store) Duplicates(ctx context.Context, libID string) ([]Duplicate, erro
 // other folder's item into the existing one (one item, both folders'
 // versions); otherwise both stay separate. Either way the folders keep their
 // mapping, so the pair isn't flagged again.
-// Planned: LIB-2c (the admin duplicates screen).
+// Planned: LIB-2d (the admin duplicates screen).
 func (s *Store) Decide(ctx context.Context, dupID string, merge bool) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

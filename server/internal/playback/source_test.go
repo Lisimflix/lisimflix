@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -193,5 +195,49 @@ func TestRevisionIsStable(t *testing.T) {
 	info2, _ := os.Stat(p)
 	if Revision("mov-1", info2) == r {
 		t.Fatal("Revision ignores the size")
+	}
+}
+
+// resolverFunc adapts a function to Resolver and counts its calls.
+type resolverFunc struct {
+	calls int
+	fn    func(itemID, versionID string) (Source, error)
+}
+
+func (r *resolverFunc) Resolve(_ contracts.Principal, itemID, versionID string) (Source, error) {
+	r.calls++
+	return r.fn(itemID, versionID)
+}
+
+func TestChainFallsThrough(t *testing.T) {
+	want := Source{ItemID: "i", VersionID: "v", FileID: "f", RelativePath: "b.mp4", SourceRevision: "r"}
+	notFound := &resolverFunc{fn: func(string, string) (Source, error) { return Source{}, ErrNotFound }}
+	b := &resolverFunc{fn: func(string, string) (Source, error) { return want, nil }}
+	if got, err := Chain(notFound, b).Resolve(contracts.Principal{}, "i", "v"); err != nil || got != want || b.calls != 1 {
+		t.Fatalf("fall through: %+v %v (b called %d)", got, err, b.calls)
+	}
+	// A wrapped ErrNotFound falls through too.
+	wrapped := &resolverFunc{fn: func(string, string) (Source, error) { return Source{}, fmt.Errorf("x: %w", ErrNotFound) }}
+	if got, err := Chain(wrapped, b).Resolve(contracts.Principal{}, "i", "v"); err != nil || got != want {
+		t.Fatalf("wrapped: %+v %v", got, err)
+	}
+
+	boom := errors.New("database is locked")
+	failing := &resolverFunc{fn: func(string, string) (Source, error) { return Source{}, boom }}
+	b.calls = 0
+	if _, err := Chain(failing, b).Resolve(contracts.Principal{}, "i", "v"); !errors.Is(err, boom) || b.calls != 0 {
+		t.Fatalf("other error: %v (b called %d)", err, b.calls)
+	}
+
+	a := &resolverFunc{fn: func(string, string) (Source, error) { return Source{ItemID: "a"}, nil }}
+	b.calls = 0
+	if got, err := Chain(a, b).Resolve(contracts.Principal{}, "i", "v"); err != nil || got.ItemID != "a" || b.calls != 0 {
+		t.Fatalf("first answer wins: %+v %v (b called %d)", got, err, b.calls)
+	}
+	if _, err := Chain(notFound).Resolve(contracts.Principal{}, "i", "v"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("all not found: %v", err)
+	}
+	if _, err := Chain().Resolve(contracts.Principal{}, "i", "v"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("empty chain: %v", err)
 	}
 }

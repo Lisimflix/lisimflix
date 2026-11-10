@@ -37,6 +37,7 @@ const message = (err: unknown) => (err instanceof ApiError ? err.message : "Some
 
 export function App({ client }: { client: Client }) {
   const [view, setView] = useState<View>({ name: "loading" });
+  const [signingIn, setSigningIn] = useState(false); // one sign-in request at a time
   // The player's last stop request; logout waits for it so the stop isn't sent after the session ends.
   const stopping = useRef<Promise<unknown>>(Promise.resolve());
   const loggingOut = useRef(false);
@@ -70,13 +71,17 @@ export function App({ client }: { client: Client }) {
 
   async function onLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (signingIn) return;
     const form = new FormData(event.currentTarget);
+    setSigningIn(true);
     try {
       const state = await client.login(String(form.get("username")), String(form.get("password")));
       if (state.authenticated && state.viewer) { signIns.current++; await enter(); }
       else setView({ name: "login", error: "Sign-in failed." });
     } catch (err) {
       setView({ name: "login", error: message(err) });
+    } finally {
+      setSigningIn(false);
     }
   }
 
@@ -95,7 +100,14 @@ export function App({ client }: { client: Client }) {
   }
 
   if (view.name === "loading") return <main aria-busy="true"><p>Loading…</p></main>;
-  if (view.name === "error") return <main><p role="alert">{view.message}</p></main>;
+  if (view.name === "error") {
+    return (
+      <main>
+        <p role="alert">{view.message}</p>
+        <button type="button" onClick={() => { setView({ name: "loading" }); void enter(); }}>Try again</button>
+      </main>
+    );
+  }
   if (view.name === "login") {
     return (
       <main>
@@ -109,7 +121,7 @@ export function App({ client }: { client: Client }) {
             Password
             <input name="password" type="password" autoComplete="current-password" required maxLength={1024} />
           </label>
-          <button type="submit">Sign in</button>
+          <button type="submit" disabled={signingIn}>Sign in</button>
           {view.error && <p role="alert">{view.error}</p>}
         </form>
       </main>

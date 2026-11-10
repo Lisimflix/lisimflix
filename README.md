@@ -5,16 +5,17 @@ replacement that anyone can run on their own Linux/Docker host.
 
 **Status:** early development. The first milestone (M1) is playing one 1080p H.264 MP4
 movie at its original quality, with no re-encoding, in Chrome and Firefox on Linux and macOS
-(Windows follows in a later milestone). The M1 server, web player and container are on `main`,
+(Windows is tested from M2 onward; milestones M2 to M5 are in
+[spec §9.0](docs/superpowers/specs/2026-10-24-lisimflix-design.md)). The M1 server, web player and container are on `main`,
 and playback passes on all four targets ([results](docs/testing/m1-results.md), #19).
-The browse app (home, libraries, detail, play, resume and progress) is built and runs against
-fixtures until LIB-2c serves the catalogue; until then the web app falls back to M1.
+The browse app (UI-2) now browses and plays real libraries through the catalogue API (LIB-2c),
+falling back to the M1 movie when storage is down.
 
 Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
-anime, and the server keeps it scanned and probed. Nothing browses libraries yet (LIB-2c, UI-2).
+anime, and the server keeps it scanned and probed for the browse app. The admin screens follow (LIB-2d).
 
-To run it, see [`deploy/README.md`](deploy/README.md). M1 is for a trusted private network
-only: plain HTTP, one viewer and one movie.
+To run it, see [`deploy/README.md`](deploy/README.md). M1 is for one viewer on a trusted
+private network only, over plain HTTP.
 
 ## Layout
 
@@ -29,6 +30,7 @@ only: plain HTTP, one viewer and one movie.
 | `server/` | Go server |
 | `web/` | React + Vite web app (`web/src/{app,browse,ui,player}`) |
 | `testdata/` | Synthetic fixtures (no real media) |
+| `.claude/skills/` | Claude Code skills for this repo (`repo-check`: status of every open PR and issue) |
 
 ## Checks
 

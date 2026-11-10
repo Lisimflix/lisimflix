@@ -34,6 +34,9 @@ type Run struct {
 	ID, Status, Reason                                string
 	Scope, Cause                                      string // "." for the whole root
 	Seen, Added, Changed, Returned, Missing, Unplaced int
+	// Changed counts files whose size or mtime differs from what the catalogue
+	// last recorded. A probe can record a newer revision first (#109), so a
+	// file changed since the previous scan isn't always counted (#139).
 }
 
 // Scanner reconciles the catalogue with the files under each root.
@@ -511,9 +514,11 @@ type item struct {
 // item returns the ID of the library's item with it.key, creating it if
 // needed. An existing item keeps its title: later edits (META-1) win.
 func (s *Store) item(ctx context.Context, tx *sql.Tx, libID string, it item) (string, error) {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO library_items(id, library_id, kind, parent_id, scan_key, title, sort_title, year, idx, air_date, absolute, created_at)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(library_id, scan_key) DO NOTHING`,
-		newID(idPrefix[it.kind]), libID, it.kind, it.parent, it.key, it.title, naming.SortTitle(it.title), it.year, it.idx, it.airDate, it.absolute, ms(s.now())); err != nil {
+	sortTitle := naming.SortTitle(it.title)
+	key, group := sortKey(sortTitle)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO library_items(id, library_id, kind, parent_id, scan_key, title, sort_title, sort_key, sort_group, year, idx, air_date, absolute, created_at)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(library_id, scan_key) DO NOTHING`,
+		newID(idPrefix[it.kind]), libID, it.kind, it.parent, it.key, it.title, sortTitle, key, group, it.year, it.idx, it.airDate, it.absolute, ms(s.now())); err != nil {
 		return "", err
 	}
 	var id string

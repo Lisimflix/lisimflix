@@ -3,14 +3,23 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Lisimflix/lisimflix/server/internal/contracts"
 	"github.com/Lisimflix/lisimflix/server/internal/library"
 	"github.com/Lisimflix/lisimflix/server/internal/probe"
+	"github.com/Lisimflix/lisimflix/server/internal/storage"
 )
 
 // fakeProber stands in for ffprobe, which unit tests don't have.
@@ -106,5 +115,138 @@ func TestLibraryAddRefusesSymlinkedFolder(t *testing.T) {
 	var out bytes.Buffer
 	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Films"}, nil, &out, &out); code == 0 || !strings.Contains(out.String(), "symlink") {
 		t.Fatalf("symlinked folder accepted (%d): %s", code, out.String())
+	}
+}
+
+// LIB-2c: on a database upgraded from LIB-2b, items have no sort keys until
+// the backfill. Serve fills them before it serves the catalogue, so the first
+// listItems already pages in title order with working cursors.
+func TestServeFillsSortKeysBeforeServing(t *testing.T) {
+	fastLibrary(t)
+	f := newFixture(t)
+	media := filepath.Join(f.dir, "media")
+	for _, title := range []string{"Cobra (1986)", "Alien (1979)", "Brazil (1985)"} {
+		os.MkdirAll(filepath.Join(media, "Films", title), 0o755)
+		os.WriteFile(filepath.Join(media, "Films", title, title+".mkv"), []byte("x"), 0o644)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Films"},
+		nil, &out, &out); code != 0 {
+		t.Fatalf("library add: %s", out.String())
+	}
+	waitFor(t, "the scan", func() bool {
+		st, err := f.s.scans.Status(context.Background())
+		return err == nil && len(st) == 1 && st[0].LastRun != nil && st[0].LastRun.Status == library.RunCompleted && st[0].Files.Present == 3
+	})
+
+	// Stop serve and clear the keys, as a LIB-2b database has them.
+	addr := f.ts.Listener.Addr().String()
+	f.ts.Close()
+	if err := f.s.shutdown(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	db, err := storage.Open(context.Background(), filepath.Join(filepath.Dir(f.cfgPath), "lisimflix.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE library_items SET sort_key = NULL, sort_group = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+
+	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.shutdown(context.Background(), nil)
+	var unkeyed int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM library_items WHERE sort_key IS NULL OR sort_group IS NULL`).Scan(&unkeyed); err != nil || unkeyed != 0 {
+		t.Fatalf("%d items without sort keys once compose returned (%v)", unkeyed, err)
+	}
+
+	// Serve again on the configured origin and page one item at a time.
+	ts := httptest.NewUnstartedServer(s.handler)
+	ts.Listener.Close()
+	if ts.Listener, err = net.Listen("tcp", addr); err != nil {
+		t.Fatal(err)
+	}
+	ts.Start()
+	f.ts = ts // the fixture's cleanup closes it
+	b := f.browser()
+	b.signIn()
+	get := func(path string, v any) {
+		t.Helper()
+		resp, body := b.do("GET", path, "", nil)
+		if resp.StatusCode != 200 || json.Unmarshal(body, v) != nil {
+			t.Fatalf("GET %s = %d %s", path, resp.StatusCode, body)
+		}
+	}
+	var libs contracts.LibraryList
+	get("/api/v1/libraries", &libs)
+	var titles []string
+	cursor := ""
+	for range 5 {
+		var page contracts.ItemPage
+		q := url.Values{"libraryId": {libs.Items[0].ID}, "limit": {"1"}}
+		if cursor != "" {
+			q.Set("cursor", cursor)
+		}
+		get("/api/v1/items?"+q.Encode(), &page)
+		for _, it := range page.Items {
+			titles = append(titles, it.Title)
+		}
+		if page.NextCursor == nil {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+	if !reflect.DeepEqual(titles, []string{"Alien", "Brazil", "Cobra"}) {
+		t.Fatalf("titles %v", titles)
+	}
+}
+
+// #140 note 3: a symlink anywhere in the folder's path is refused, not only
+// the last part (Media/Movies with Media a link to the media root's Store).
+func TestLibraryAddRefusesSymlinkedParent(t *testing.T) {
+	f := newFixture(t)
+	media := filepath.Join(f.dir, "media")
+	if err := os.MkdirAll(filepath.Join(media, "Store", "Movies"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("Store", filepath.Join(media, "Media")); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Media/Movies"}, nil, &out, &out); code == 0 || !strings.Contains(out.String(), "symlink") {
+		t.Fatalf("folder under a symlinked parent accepted (%d): %s", code, out.String())
+	}
+	out.Reset()
+	if code := run([]string{"library", "add", "--config", f.cfgPath, "--name", "Films", "--type", "movies", "--folder", "Store/Movies"}, nil, &out, &out); code != 0 {
+		t.Fatalf("the real folder was refused (%d): %s", code, out.String())
+	}
+}
+
+// LIB-2c review: if the sort-key backfill fails, serve leaves the catalogue
+// routes out (they 404, so the browse app falls back to M1) and logs why,
+// rather than serving listings that page wrongly.
+func TestServeWithoutCatalogueWhenSortKeyBackfillFails(t *testing.T) {
+	f := newFixture(t)
+	f.s.shutdown(context.Background(), nil)
+	orig := backfillSortKeys
+	t.Cleanup(func() { backfillSortKeys = orig })
+	backfillSortKeys = func(*library.Store, context.Context) (int, error) { return 0, errors.New("disk I/O error") }
+	var logs bytes.Buffer
+	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.shutdown(context.Background(), nil)
+	rec := httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/libraries", nil))
+	if rec.Code != 404 {
+		t.Fatalf("libraries after a failed backfill = %d, want 404", rec.Code)
+	}
+	if !strings.Contains(logs.String(), `"msg":"library.backfill_sort_keys"`) || !strings.Contains(logs.String(), "disk I/O error") {
+		t.Fatalf("no backfill error logged: %s", logs.String())
 	}
 }

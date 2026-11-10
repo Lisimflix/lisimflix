@@ -38,7 +38,7 @@ func (f *scriptedProber) Probe(_ context.Context, _ *os.Root, rel string) (probe
 
 const quiet = 30 * time.Second
 
-func probeDue(t *testing.T, sc *Scanner, root string, p Prober) ProbeRun {
+func probeDue(t testing.TB, sc *Scanner, root string, p Prober) ProbeRun {
 	t.Helper()
 	run, err := sc.ProbeDue(context.Background(), root, p, 2, quiet, 0)
 	if err != nil {
@@ -215,6 +215,33 @@ func TestProbeDueLimit(t *testing.T) {
 func TestFileChangedSinceTheScanIsProbedOnce(t *testing.T) {
 	s, _, m, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
 	m.write("Movies/A (2001)/A (2001).mkv", 99) // changed, and quiet (an hour old), with no scan since
+	p := &scriptedProber{}
+	if run := probeDue(t, sc, root, p); run.Stored != 1 || run.Stale != 0 {
+		t.Fatalf("first %+v", run)
+	}
+	if run := probeDue(t, sc, root, p); run.Queued != 0 || len(p.calls) != 1 {
+		t.Fatalf("probed again before a scan: %+v %v", run, p.calls)
+	}
+	var size int64
+	s.db.QueryRow(`SELECT size FROM library_files`).Scan(&size)
+	if size != 99 {
+		t.Fatalf("catalogue size %d, want the probed revision's 99", size)
+	}
+}
+
+// #139 point 2: a file whose size changed but whose mtime didn't is probed
+// once, not on every ProbeDue turn until a scan. The catalogue still holds
+// the revision the probe was queued from, so the result is the newest.
+func TestSizeOnlyChangeIsProbedOnce(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
+	const rel = "A (2001)/A (2001).mkv"
+	var mtime int64
+	s.db.QueryRow(`SELECT mtime_ns FROM library_files`).Scan(&mtime)
+	m.write("Movies/"+rel, 99) // new size...
+	when := time.Unix(0, mtime)
+	if err := os.Chtimes(filepath.Join(m.dir, "Movies", rel), when, when); err != nil { // ...same mtime
+		t.Fatal(err)
+	}
 	p := &scriptedProber{}
 	if run := probeDue(t, sc, root, p); run.Stored != 1 || run.Stale != 0 {
 		t.Fatalf("first %+v", run)

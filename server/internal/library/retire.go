@@ -23,7 +23,7 @@ const candidateCond = `f.state = 'missing' AND EXISTS (SELECT 1 FROM library_sca
 
 // RetirementCandidates lists the root's files that meet the retirement rule,
 // for the admin preview. Nothing is retired automatically.
-// Planned: LIB-2c (the admin retirement preview).
+// Planned: LIB-2d (the admin retirement preview).
 func (s *Store) RetirementCandidates(ctx context.Context, rootID string) ([]Candidate, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT f.id, f.path, f.missing_since FROM library_files f
 		WHERE f.root_id = ? AND `+candidateCond+` ORDER BY f.path`, rootID, RetireAfter.Milliseconds())
@@ -47,7 +47,7 @@ func (s *Store) RetirementCandidates(ctx context.Context, rootID string) ([]Cand
 // Retire retires the given files of the root that are still candidates and
 // returns how many it retired. Their items and versions stay, with any user
 // data; a retired file that comes back is present again on the next scan.
-// Planned: LIB-2c (the admin confirms the preview).
+// Planned: LIB-2d (the admin confirms the preview).
 func (s *Store) Retire(ctx context.Context, rootID string, fileIDs []string) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
