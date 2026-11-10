@@ -15,7 +15,18 @@ import (
 
 // LIB-4 wiring: a Radarr source added with the CLI notifies serve, without
 // browser headers, and the imported file is scanned with cause "import".
-func TestServeImportNotification(t *testing.T) {
+// hookEnv is a serve fixture with a movies library "Films" holding Alien and
+// a radarr source for it, after the library's first scan.
+type hookEnv struct {
+	f          *fixture
+	films      string
+	user, pass string
+	run1       func(args ...string) string
+	status     func() library.RootStatus
+}
+
+func newHookEnv(t *testing.T) hookEnv {
+	t.Helper()
 	fastLibrary(t)
 	libraryOptions.NoWatch = true // only the notification can find the new film
 	f := newFixture(t)
@@ -51,23 +62,33 @@ func TestServeImportNotification(t *testing.T) {
 	}
 	waitFor(t, "library picked up", func() bool { s := status(); return s.LastRun != nil && s.LastRun.Status == library.RunCompleted })
 
+	return hookEnv{f: f, films: films, user: user[1], pass: pass[1], run1: run1, status: status}
+}
+
+// notify posts a Radarr webhook body with the given password.
+func (e hookEnv) notify(t *testing.T, pw, body string) int {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, e.f.ts.URL+"/hooks/v1/arr", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "Radarr/6.4.4.10685 (alpine 3.22.2)")
+	req.SetBasicAuth(e.user, pw)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	return resp.StatusCode
+}
+
+func TestServeImportNotification(t *testing.T) {
+	e := newHookEnv(t)
+	f, films, run1, status := e.f, e.films, e.run1, e.status
+	_ = f
 	os.MkdirAll(filepath.Join(films, "Heat (1995)"), 0o755)
 	os.WriteFile(filepath.Join(films, "Heat (1995)", "Heat (1995).mkv"), []byte("x"), 0o644)
-	notify := func(pw string) int {
-		req, _ := http.NewRequest(http.MethodPost, f.ts.URL+"/hooks/v1/arr", strings.NewReader(
-			`{"eventType":"Download","movie":{"title":"Heat","year":1995,"folderPath":"/movies/Heat (1995)"},`+
-				`"movieFile":{"relativePath":"Heat (1995).mkv","path":"/movies/Heat (1995)/Heat (1995).mkv"},"isUpgrade":false}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("User-Agent", "Radarr/6.4.4.10685 (alpine 3.22.2)")
-		req.SetBasicAuth(user[1], pw)
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resp.Body.Close()
-		return resp.StatusCode
-	}
-	if code := notify(pass[1]); code != http.StatusAccepted {
+	heat := `{"eventType":"Download","movie":{"title":"Heat","year":1995,"folderPath":"/movies/Heat (1995)"},` +
+		`"movieFile":{"relativePath":"Heat (1995).mkv","path":"/movies/Heat (1995)/Heat (1995).mkv"},"isUpgrade":false}`
+	if code := e.notify(t, e.pass, heat); code != http.StatusAccepted {
 		t.Fatalf("notification: %d", code)
 	}
 	waitFor(t, "import scan", func() bool {
@@ -78,7 +99,7 @@ func TestServeImportNotification(t *testing.T) {
 		t.Fatalf("receipts:\n%s", out)
 	}
 	run1("hook", "revoke", "--name", "radarr")
-	if code := notify(pass[1]); code != http.StatusUnauthorized {
+	if code := e.notify(t, e.pass, heat); code != http.StatusUnauthorized {
 		t.Fatalf("after revoke: %d", code)
 	}
 	if out := run1("hook", "list"); !strings.Contains(out, "revoked") {
@@ -89,5 +110,29 @@ func TestServeImportNotification(t *testing.T) {
 func TestPrintable(t *testing.T) {
 	if got := printable("a\x1b[31mred\t\nb\u200bc é"); got != "a?[31mred??b?c é" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// #159 review (#175): through the real scheduler, a path the library never
+// scans (a Sample folder) is left out, the rest of the import is queued, and
+// the receipt says what was left out.
+func TestServeImportLeavesSkippedPathsOut(t *testing.T) {
+	e := newHookEnv(t)
+	os.MkdirAll(filepath.Join(e.films, "Heat (1995)", "Sample"), 0o755)
+	os.WriteFile(filepath.Join(e.films, "Heat (1995)", "Heat (1995).mkv"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(e.films, "Heat (1995)", "Sample", "heat-sample.mkv"), []byte("x"), 0o644)
+	body := `{"eventType":"Download","movie":{"title":"Heat","year":1995,"folderPath":"/movies/Heat (1995)"},` +
+		`"movieFile":{"relativePath":"Heat (1995).mkv","path":"/movies/Heat (1995)/Heat (1995).mkv"},` +
+		`"deletedFiles":[{"path":"/movies/Heat (1995)/Sample/heat-sample.mkv"}],"isUpgrade":true}`
+	if code := e.notify(t, e.pass, body); code != http.StatusAccepted {
+		t.Fatalf("notification: %d", code)
+	}
+	waitFor(t, "import scan", func() bool {
+		s := e.status()
+		return s.LastRun != nil && s.LastRun.Cause == library.CauseImport && s.LastRun.Status == library.RunCompleted && s.Files.Present == 2
+	})
+	out := e.run1("hook", "receipts", "--name", "radarr")
+	if !strings.Contains(out, "queued") || !strings.Contains(out, "1 path left out") || strings.Contains(out, "Sample") {
+		t.Fatalf("receipts:\n%s", out)
 	}
 }
