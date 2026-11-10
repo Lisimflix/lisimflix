@@ -1094,6 +1094,30 @@ administrator chooses its own cut-over after G3 evidence. New installations have
 Plex/Jellyfin prerequisite. A failure in a mandatory playback journey pauses that
 installation's cut-over and blocks release claims for the affected support profile.
 
+### 9.0 Milestones
+
+Milestones are delivery slices inside the gates above, so owners can say what is next and
+when a build is ready to test. IDs refer to the feature catalogue (§9.4). A milestone is
+testable when every listed ID is merged and its exit test passes. An ID with no plan yet is
+the next planning target for that milestone.
+
+**Windows.** M1 targeted Chrome and Firefox on Linux and macOS, with Windows deferred. From
+M2 onward every milestone's exit test also covers Chrome and Firefox on Windows.
+
+| Milestone | Gate | Scope | Exit test |
+|---|---|---|---|
+| M1 — one movie plays | G0 | One browser-compatible movie at original quality, no re-encoding | Done: four targets pass ([results](../../testing/m1-results.md)) |
+| M2 — library and interface | G1 (first part) | LIB-2, LIB-4, META-1, UI-2, DATA-1, DATA-2 | On every target: browse a real scanned library (Movies, TV, Anime), play a title, resume where it stopped, see progress and watchlist saved; a Sonarr/Radarr scan adds a new item |
+| M3 — full local slice | G1 (rest) | PLY-1 to PLY-4, SUB-1, UI-3, ACC-1, ACC-2, OPS-3, OPS-4, plus any remaining G1 P0 items | G1 exit evidence: a second tester deploys fresh and restores a backup; required playback cases work with permissions enforced |
+| M4 — compatibility | G2 | LIB-3, META-2, PLY-5, UI-4, UI-5, UI-6 | G2 exit evidence: mandatory matrix passes on two independent installations |
+| M5 — invited remote trial | G3 | ACC-3, PLY-8, OPS-5, remaining UI-6 | G3 exit evidence: security and failure tests pass; 14-day trials meet §13 targets |
+| Later | G4 | PLY-6, PLY-7, META-3, DATA-3 to DATA-5, UI-7, ACC-4, EXT-1 to EXT-6 | Each feature gets its own approved contract and acceptance evidence |
+
+**Planning status of M2 (2026-11-04, `main` at `4acab3e`).** Merged: LIB-2a, LIB-2b, META-1a,
+UI-2 (fixture-backed), DATA-1a (store only). In review: LIB-2c (#169), LIB-4 (#159).
+Next planning targets, no plan yet: DATA-1b (HTTP, serve wiring, playback hookup), DATA-2
+(preferences and watchlist), META-1b and later matching work.
+
 ### 9.1 Feature placement ledger
 
 | Feature from original vision | Proposed placement / boundary |

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path"
 	"strings"
 	"time"
@@ -62,9 +63,12 @@ type Root struct {
 type Store struct {
 	db  *storage.DB
 	now func() time.Time
+	log *slog.Logger // catalogue reads that hit bad stored data; discards until the API sets it
 }
 
-func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
+func NewStore(db *storage.DB) *Store {
+	return &Store{db: db, now: time.Now, log: slog.New(slog.DiscardHandler)}
+}
 
 func newID(prefix string) string { return prefix + "-" + rand.Text() }
 
@@ -156,8 +160,9 @@ func (s *Store) Library(ctx context.Context, id string) (Library, error) {
 	return lib, nil
 }
 
-// Libraries returns every library with its roots, by name.
-func (s *Store) Libraries(ctx context.Context) ([]Library, error) {
+// AllLibraries returns every library with its roots, by name (the admin CLI;
+// viewers go through Libraries, which applies a Grant).
+func (s *Store) AllLibraries(ctx context.Context) ([]Library, error) {
 	ids, err := queryStrings(ctx, s.db, `SELECT id FROM library_libraries ORDER BY name, id`)
 	if err != nil {
 		return nil, err

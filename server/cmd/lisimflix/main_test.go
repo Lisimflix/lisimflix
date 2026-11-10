@@ -390,6 +390,13 @@ func TestSchemaTooNewIsNotReady(t *testing.T) {
 	if rec.Code != 503 {
 		t.Fatalf("ready = %d, want 503", rec.Code)
 	}
+	// LIB-2c decision 12: without storage the catalogue routes aren't
+	// registered, so they 404 (not 401) and the browse app falls back to M1.
+	rec = httptest.NewRecorder()
+	s.handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/libraries", nil))
+	if rec.Code != 404 {
+		t.Fatalf("libraries without storage = %d, want 404", rec.Code)
+	}
 }
 
 // #99: with the movie deleted after init, serve still starts; readiness and

@@ -28,6 +28,10 @@ var newProber = func() library.Prober {
 	return probe.Runner{Path: orDefault(os.Getenv("LISIMFLIX_FFPROBE"), defaultFFprobe)}
 }
 
+// backfillSortKeys fills missing item sort keys before serve mounts the
+// catalogue. Tests replace it to make it fail.
+var backfillSortKeys = (*library.Store).BackfillSortKeys
+
 // libraryOptions are the scheduler's settings: the spec defaults. Tests
 // shorten them.
 var libraryOptions = library.SchedulerOptions{}
@@ -52,7 +56,7 @@ func openForCLI(ctx context.Context, cfgPath, dbPath, backups string) (m1config.
 	return cfg, d, err
 }
 
-// cmdLibrary adds and lists libraries until the admin screens (LIB-2c)
+// cmdLibrary adds and lists libraries until the admin screens (LIB-2d)
 // exist. A running server picks up a new library within a minute.
 func cmdLibrary(args []string, stdout io.Writer) error {
 	if len(args) == 0 {
@@ -112,7 +116,7 @@ func cmdLibrary(args []string, stdout io.Writer) error {
 		fmt.Fprintf(stdout, "added %s (%s)\n", lib.ID, lib.Name)
 		return nil
 	case "list":
-		libs, err := st.Libraries(ctx)
+		libs, err := st.AllLibraries(ctx)
 		if err != nil {
 			return err
 		}

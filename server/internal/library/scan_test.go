@@ -13,11 +13,11 @@ import (
 
 // media is a temporary media root with library folders under it.
 type media struct {
-	t   *testing.T
+	t   testing.TB
 	dir string
 }
 
-func newMedia(t *testing.T) *media { return &media{t: t, dir: t.TempDir()} }
+func newMedia(t testing.TB) *media { return &media{t: t, dir: t.TempDir()} }
 
 // write creates rel with size bytes and an mtime an hour old, so it is past
 // the quiet period.
@@ -46,7 +46,7 @@ func (m *media) scanner(s *Store) *Scanner {
 	return &Scanner{Store: s, Media: r}
 }
 
-func scan(t *testing.T, sc *Scanner, rootID string) Run {
+func scan(t testing.TB, sc *Scanner, rootID string) Run {
 	t.Helper()
 	run, err := sc.ScanRoot(context.Background(), rootID)
 	if err != nil {

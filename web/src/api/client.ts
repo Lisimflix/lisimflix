@@ -30,7 +30,7 @@ export class ApiError extends Error {
   }
 }
 
-// Kept until LIB-2c retires M1App.
+// Kept until LIB-2c's M1-retirement follow-up (#77) retires M1App.
 export type M1Client = Client;
 
 export interface Client {

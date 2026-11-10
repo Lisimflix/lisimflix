@@ -216,7 +216,7 @@
     "/api/v1/libraries": {
       "get": {
         "operationId": "listLibraries",
-        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "x-lisimflix": { "owner": "LIB-2", "status": "implemented" },
         "summary": "Libraries the current profile may see",
         "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
@@ -230,7 +230,7 @@
     "/api/v1/libraries/{libraryId}/facets": {
       "get": {
         "operationId": "getLibraryFacets",
-        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "x-lisimflix": { "owner": "LIB-2", "status": "implemented" },
         "summary": "Genres, year range, audio languages, resolutions and an HDR flag present in the library's permitted items; fills the filter menus. 404 for a library the profile may not see.",
         "parameters": [{ "$ref": "#/components/parameters/LibraryIdPath" }],
         "responses": {
@@ -273,9 +273,9 @@
     "/api/v1/items": {
       "get": {
         "operationId": "listItems",
-        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "x-lisimflix": { "owner": "LIB-2", "status": "implemented" },
         "summary": "Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter with parentId, and any combination the server can't apply (including watched until DATA-1 is live, or yearFrom greater than yearTo) are also 400 invalid_request. A library or parent the profile may not see is 404.",
-        "description": "Title collation is fixed in the contract: titles compare by sortTitle folded with META-1a's Normalize (META-1a plan (#121), decision 6), so sorting, the A–Z jump and matching all compare titles the same way. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → \"and\"; other punctuation becomes a space and spaces collapse; a leading \"the\", \"a\" or \"an\" is dropped when more words follow. Other scripts compare as written. So Élite sorts and jumps as elite. Sorting with sort=title puts the # group first (folded sortTitle not starting with a–z, including non-Latin titles, which compare as written within the group), then a–z; within each group items sort by folded sortTitle, and ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Send # percent-encoded as %23. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.",
+        "description": "Title collation is fixed in the contract: titles compare by the sort title, whose leading \"the\", \"a\" or \"an\" was dropped once when the title was parsed, folded with META-1a's Normalize fold (META-1a plan (#121), decision 6) but without dropping a second article, so sorting and the A–Z jump compare titles the same way and The A-Team sorts under A. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → \"and\"; apostrophes (', ’, ʼ) are dropped; other punctuation becomes a space and spaces collapse. Other scripts compare as written. So Élite sorts and jumps as elite. Sorting with sort=title puts the # group first (folded sortTitle not starting with a–z, including non-Latin titles, which compare as written within the group), then a–z; within each group items sort by folded sortTitle, and ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Send # percent-encoded as %23. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. For a movie or episode, the file filters (resolution, hdr, audioLanguage) must all be met by one of its present files; for a show or season, each may be met by a different episode's file. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.",
         "parameters": [
           { "$ref": "#/components/parameters/LibraryIdQuery" },
           { "$ref": "#/components/parameters/ParentIdQuery" },
@@ -303,7 +303,7 @@
     "/api/v1/items/{itemId}": {
       "get": {
         "operationId": "getItem",
-        "x-lisimflix": { "owner": "LIB-2", "status": "planned" },
+        "x-lisimflix": { "owner": "LIB-2", "status": "implemented" },
         "summary": "One item with its versions and streams. META-1 fills the descriptive fields and DATA-1 the user state.",
         "parameters": [{ "$ref": "#/components/parameters/ItemId" }],
         "responses": {
@@ -712,7 +712,7 @@
           "directors": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "studios": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
-          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons, and for a movie or episode with no available file." }
+          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired; `available` says which can play now." }
         },
         "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
         "then": { "properties": { "versions": { "maxItems": 0 } } }
@@ -738,7 +738,7 @@
           "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1 },
           "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes." },
           "segment": { "oneOf": [{ "$ref": "#/components/schemas/Segment" }, { "type": "null" }] },
-          "container": { "type": "string", "minLength": 1, "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm" },
+          "container": { "type": "string", "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm; \"\" until the file is first probed" },
           "video": { "type": "array", "items": { "$ref": "#/components/schemas/VideoStream" } },
           "audio": { "type": "array", "items": { "$ref": "#/components/schemas/AudioStream" } },
           "subtitles": { "type": "array", "items": { "$ref": "#/components/schemas/SubtitleStream" } },

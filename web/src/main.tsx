@@ -9,7 +9,7 @@ import "./styles.css";
 const client = createClient();
 const root = createRoot(document.getElementById("root")!);
 
-// shortcut: M1 fallback until LIB-2c registers listLibraries; delete M1App, /movies and Movie in LIB-2c's PR
+// shortcut: M1 fallback until LIB-2c registers listLibraries; delete M1App, /movies and Movie in LIB-2c's M1-retirement follow-up (#77)
 // Only a 404 not_found (route not registered) means M1; anything else is the browse app.
 client.libraries().then(
   () => true,

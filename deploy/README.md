@@ -1,6 +1,6 @@
 # Running the M1 container
 
-M1 serves one movie to one viewer on a **trusted private network** over plain
+M1 serves one viewer on a **trusted private network** over plain
 HTTP. Plain HTTP has no transport encryption: don't forward the port to the
 internet. Remote access with HTTPS is later work (spec §6.6).
 
@@ -87,7 +87,7 @@ MEDIA_DIR=/path/to/media TZ=Australia/Brisbane docker compose -f deploy/compose.
   start the matching image. M1 has no restore command yet (admin restore is later
   work, spec §11.3), so keep the newer image rather than copying snapshot files by hand.
 
-## 5. Libraries (preview)
+## 5. Libraries
 
 Add a library with a folder inside the media root (repeat `--folder` for more):
 
@@ -98,8 +98,13 @@ docker compose -f deploy/compose.m1.yml exec lisimflix lisimflix library list
 ```
 
 `--type` is `movies`, `tv` or `anime`. `library list` shows each folder's state and its last
-good scan. A running server starts scanning a new library within a minute. Nothing browses
-libraries yet (LIB-2c, UI-2).
+good scan. A running server starts scanning a new library within a minute. Browse and play
+libraries in the web app: it opens on a home page with your libraries, then each title's
+detail page and player.
+
+- **Upgrading from M1:** the old single-movie player now appears only when storage is
+  unavailable. To keep watching the M1 movie, add a library whose folder contains it
+  (`lisimflix library add …`).
 
 - **What it does:** the server watches library folders for changes, rescans every folder every
   6 hours, and probes new files with ffprobe once they've been unchanged for 30 seconds. It

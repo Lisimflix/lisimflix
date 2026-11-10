@@ -15,7 +15,7 @@ type clock struct{ t time.Time }
 
 func (c *clock) now() time.Time { return c.t }
 
-func newStore(t *testing.T) (*Store, *clock) {
+func newStore(t testing.TB) (*Store, *clock) {
 	t.Helper()
 	ctx := context.Background()
 	db, err := storage.Open(ctx, filepath.Join(t.TempDir(), "lisimflix.db"))
