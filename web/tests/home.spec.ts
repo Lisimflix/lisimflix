@@ -37,13 +37,24 @@ test.describe("home", () => {
   });
 
   test("rowCardsKeepOneSizeWithLongTitles", async ({ page }) => {
-    // A long title is cut with an ellipsis; it never widens its card (and so its 2:3 artwork) in a row.
-    const items = many(4).items.map((it, i) => (i === 1 ? { ...it, title: "A Very Long Synthetic Title That Runs On Well Past The Card Width" } : it));
-    await open(page, (api) => api.set("/api/v1/continue-watching", { items, nextCursor: null, total: null }));
-    const arts = page.getByRole("region", { name: "Continue Watching" }).locator(".card .art");
-    await expect(arts).toHaveCount(4);
-    const sizes = await arts.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return `${Math.round(r.width)}x${Math.round(r.height)}`; }));
-    expect(new Set(sizes).size, sizes.join(" ")).toBe(1);
+    // A long title is cut with an ellipsis and never widens its card. Mixed rows (Continue Watching) use
+    // wide 16:9 cards at 17rem; library rows (Recently Added) use 2:3 poster cards at 9.5rem.
+    const long = "A Very Long Synthetic Title That Runs On Well Past The Card Width";
+    const items = many(4).items.map((it, i) => (i === 1 ? { ...it, title: long } : it));
+    await open(page, (api) => {
+      api.set("/api/v1/continue-watching", { items, nextCursor: null, total: null });
+      api.set("/api/v1/items", { items, nextCursor: null, total: null });
+    });
+    const rem = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+    for (const [row, basis] of [["Continue Watching", 17], ["Recently Added · Movies", 9.5]] as const) {
+      const cards = page.getByRole("region", { name: row }).locator(".card");
+      await expect(cards).toHaveCount(4);
+      const widths = await cards.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
+      for (const w of widths) expect(Math.abs(w - basis * rem), `${row}: widths ${widths.join(" ")}`).toBeLessThan(1);
+      const title = cards.locator(".t", { hasText: long });
+      await expect(title).toHaveCount(1);
+      expect(await title.evaluate((e) => e.scrollWidth > e.clientWidth), `${row}: long title is clipped`).toBe(true);
+    }
   });
 
   test("rowArrowsHideAtEnds", async ({ page }) => {
