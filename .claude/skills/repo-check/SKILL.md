@@ -37,11 +37,11 @@ Done when you hold the login, every open PR and every open issue.
    - your latest review is on a commit older than `headRefOid` (re-review after a push);
    - a thread you raised is unresolved and its last comment is by someone else (answer waiting for you).
 3. **Fix**
-   - Your PRs that are not ready, each with every reason: changes requested, N unresolved threads, check failing, pending or not run, conflict, draft, or waiting for a first review (name who is requested).
+   - Your PRs with something for you to do, each with every reason: changes requested on the current `headRefOid`, N unresolved threads whose last comment is by someone else, check failing or not run, conflict, draft.
    - Then open issues assigned to you.
    - Then unassigned issues without the `feature` label (bugs, review notes, chores): assign before starting.
 4. **New feature**: open issues labelled `feature` with no assignee.
-5. **Other**: what waits on someone else: other members' PRs where you requested changes and nothing has moved since, ones you have approved (ready ones: the author merges), their drafts, and issues assigned to others.
+5. **Other**: what waits on someone else: your other not-ready PRs, each with who it waits on (first review: name who is requested; re-review after your push; your thread replies; check pending), other members' PRs where you requested changes and nothing has moved since, ones you have approved (ready ones: the author merges), their drafts, and issues assigned to others.
 
 Done when the group sizes add up to the PR count plus the issue count.
 
