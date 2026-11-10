@@ -31,15 +31,28 @@ func bucket(v int, t4k, t1080, t720 int) string {
 	return "sd"
 }
 
-// defaultVideo returns the Default video stream, else the first.
+// listedVideo and listedAudio are the streams the contract can carry (#168):
+// streams() lists only these, and deriveFile derives facts only from them, so
+// a filter never matches a track or a size the detail leaves out (#181 review).
+func listedVideo(v probe.VideoStream) bool { return v.Codec != "" && v.Width >= 1 && v.Height >= 1 }
+func listedAudio(a probe.AudioStream) bool { return a.Codec != "" && a.Channels >= 1 }
+
+// defaultVideo returns the Default listed video stream, else the first listed.
 func defaultVideo(r probe.Result) (probe.VideoStream, bool) {
-	for _, v := range r.Video {
+	var first *probe.VideoStream
+	for i, v := range r.Video {
+		if !listedVideo(v) {
+			continue
+		}
 		if v.Default {
 			return v, true
 		}
+		if first == nil {
+			first = &r.Video[i]
+		}
 	}
-	if len(r.Video) > 0 {
-		return r.Video[0], true
+	if first != nil {
+		return *first, true
 	}
 	return probe.VideoStream{}, false
 }
@@ -55,6 +68,9 @@ func deriveFile(r probe.Result) fileFacts {
 		f.HDR = v.HDR != probe.SDR
 	}
 	for _, a := range r.Audio {
+		if !listedAudio(a) {
+			continue
+		}
 		if l, ok := langT(a.Language); ok {
 			f.AudioLangs = append(f.AudioLangs, l)
 		}
@@ -133,13 +149,13 @@ func subKind(codec string) string {
 // schema; the rest keep their original indexes (#168).
 func streams(r probe.Result) (video []contracts.VideoStream, audio []contracts.AudioStream, subs []contracts.SubtitleStream) {
 	for _, v := range r.Video {
-		if v.Codec == "" || v.Width < 1 || v.Height < 1 {
+		if !listedVideo(v) {
 			continue
 		}
 		video = append(video, contracts.VideoStream{Index: v.Index, Codec: v.Codec, Width: v.Width, Height: v.Height, HDR: hdrName(v.HDR), Default: v.Default})
 	}
 	for _, a := range r.Audio {
-		if a.Codec == "" || a.Channels < 1 {
+		if !listedAudio(a) {
 			continue
 		}
 		audio = append(audio, contracts.AudioStream{Index: a.Index, Codec: a.Codec, Profile: strPtr(a.Profile), Channels: a.Channels,

@@ -20,6 +20,13 @@ func sortKey(sortTitle string) (key string, group int) {
 	return key, textfold.Group(key)
 }
 
+// currentProbe holds when file f's stored probe, and the facts derived from
+// it, describe the file's current revision. Every reader of facts or
+// probe_json requires it, so whichever writer moves size/mtime_ns on (a scan,
+// a deferred or timed-out probe), an older revision's facts never count, and
+// a file restored to its probed revision gets them back (#181 review).
+const currentProbe = `(f.probe_size IS f.size AND f.probe_mtime_ns IS f.mtime_ns)`
+
 // storeFacts writes a file's derived columns and audio languages. It runs in
 // the transaction that stores the probe result, so they never disagree. A
 // probe with no video stores hdr = 0 and a NULL resolution, so hdr = 0 alone
@@ -172,7 +179,7 @@ func (s *Store) backfillItems(ctx context.Context) (int, error) {
 
 // backfillFiles keys on hdr, which a stored probe always sets, so a probe with
 // no video stream (NULL resolution) isn't picked again. Only a probe of the
-// file's current revision counts: an older one's facts were cleared (#168).
+// file's current revision is derived: an older one's facts don't count (#168).
 func (s *Store) backfillFiles(ctx context.Context) (int, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

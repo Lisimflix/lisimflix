@@ -217,7 +217,7 @@ func (s *Store) Facets(ctx context.Context, g Grant, libraryID string) (contract
 			f.Years = &contracts.YearRange{Min: minY.Int64, Max: maxY.Int64}
 		}
 		if f.AudioLanguages, err = txStrings(ctx, tx, `SELECT DISTINCT a.lang FROM library_file_audio a
-			JOIN library_files f ON f.id = a.file_id AND f.state = 'present'
+			JOIN library_files f ON f.id = a.file_id AND f.state = 'present' AND `+currentProbe+`
 			JOIN library_versions v ON v.file_id = f.id JOIN library_items i ON i.id = v.item_id
 			WHERE i.library_id = ? ORDER BY a.lang`, libraryID); err != nil {
 			return err
@@ -226,7 +226,7 @@ func (s *Store) Facets(ctx context.Context, g Grant, libraryID string) (contract
 		// files with a resolution say anything about SDR or HDR.
 		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT f.resolution, f.hdr FROM library_files f
 			JOIN library_versions v ON v.file_id = f.id JOIN library_items i ON i.id = v.item_id
-			WHERE i.library_id = ? AND f.state = 'present' AND f.resolution IS NOT NULL`, libraryID)
+			WHERE i.library_id = ? AND f.state = 'present' AND f.resolution IS NOT NULL AND `+currentProbe, libraryID)
 		if err != nil {
 			return err
 		}
@@ -364,14 +364,14 @@ const liveVersion = `f.state != 'retired'`
 // as LIB-2c decision 10 does: available first, then unlabelled, then by
 // resolution (4k first), then by version ID. The first is the default.
 const versionOrderSQL = `(f.state = 'present' AND r.state != 'offline') DESC, v.label IS NOT NULL,
-	CASE f.resolution WHEN '4k' THEN 0 WHEN '1080p' THEN 1 WHEN '720p' THEN 2 WHEN 'sd' THEN 3 ELSE 4 END, v.id`
+	CASE CASE WHEN ` + currentProbe + ` THEN f.resolution END WHEN '4k' THEN 0 WHEN '1080p' THEN 1 WHEN '720p' THEN 2 WHEN 'sd' THEN 3 ELSE 4 END, v.id`
 
 // itemColumns are the ItemSummary columns of item i, with its parent p and
 // grandparent gp joined. available: a movie or episode is available when any
 // version's file is present on a root that isn't offline (decision 9).
 const itemColumns = `i.id, i.kind, i.library_id, i.parent_id, COALESCE(i.display_title, i.title),
 	COALESCE(i.display_sort_title, i.sort_title), ` + itemYear + `, i.idx, i.created_at,
-	(SELECT CASE WHEN f.duration_ms > 0 THEN f.duration_ms END FROM library_versions v
+	(SELECT CASE WHEN f.duration_ms > 0 AND ` + currentProbe + ` THEN f.duration_ms END FROM library_versions v
 		JOIN library_files f ON f.id = v.file_id JOIN library_roots r ON r.id = f.root_id
 		WHERE v.item_id = i.id AND ` + liveVersion + ` ORDER BY ` + versionOrderSQL + ` LIMIT 1),
 	CASE WHEN i.kind IN ('show', 'season') THEN (SELECT COUNT(*) FROM library_items c WHERE c.parent_id = i.id) END,
@@ -569,6 +569,10 @@ func (s *Store) Items(ctx context.Context, g Grant, q ItemQuery) (contracts.Item
 			fileArgs = append(fileArgs, []any{q.AudioLanguage})
 		}
 		if len(fileConds) > 0 {
+			// Facts count only for the file's current revision (#181 review).
+			for i := range fileConds {
+				fileConds[i] = currentProbe + " AND " + fileConds[i]
+			}
 			// A movie or episode: one of its files meets every filter. A show
 			// or season: each filter is met by some episode's file.
 			own := ownFiles + " AND " + strings.Join(fileConds, " AND ") + ")"

@@ -11,7 +11,7 @@ import (
 )
 
 func vres(w, h int) probe.Result {
-	return probe.Result{Video: []probe.VideoStream{{Width: w, Height: h, Default: true}}}
+	return probe.Result{Video: []probe.VideoStream{{Codec: "h264", Width: w, Height: h, Default: true}}}
 }
 
 func TestResolutionBuckets(t *testing.T) {
@@ -42,8 +42,8 @@ func TestResolutionBuckets(t *testing.T) {
 
 func TestDefaultVideoStreamDecides(t *testing.T) {
 	r := probe.Result{DurationMs: 5000, Video: []probe.VideoStream{
-		{Width: 1280, Height: 720},
-		{Width: 3840, Height: 2160, HDR: probe.HDR10, Default: true},
+		{Codec: "h264", Width: 1280, Height: 720},
+		{Codec: "hevc", Width: 3840, Height: 2160, HDR: probe.HDR10, Default: true},
 	}}
 	f := deriveFile(r)
 	if f.Resolution != "4k" || !f.HDR || f.DurationMs != 5000 {
@@ -57,7 +57,7 @@ func TestDefaultVideoStreamDecides(t *testing.T) {
 }
 
 func TestAudioLangsSortedDistinct(t *testing.T) {
-	r := probe.Result{Audio: []probe.AudioStream{{Language: "ger"}, {Language: "eng"}, {Language: "deu"}, {Language: ""}, {Language: "ENG"}}}
+	r := probe.Result{Audio: []probe.AudioStream{{Codec: "aac", Channels: 2, Language: "ger"}, {Codec: "aac", Channels: 2, Language: "eng"}, {Codec: "aac", Channels: 2, Language: "deu"}, {Codec: "aac", Channels: 2, Language: ""}, {Codec: "aac", Channels: 2, Language: "ENG"}}}
 	if got, want := deriveFile(r).AudioLangs, []string{"deu", "eng"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -241,5 +241,29 @@ func TestVersionLabelFitsContract(t *testing.T) {
 		if (got == nil) != (c.want == nil) || got != nil && *got != *c.want {
 			t.Errorf("versionLabel(%q) = %v want %v", c.in.String, got, c.want)
 		}
+	}
+}
+
+// #181 review: facts come only from the streams the detail lists, so a filter
+// never matches a track or a size the detail leaves out.
+func TestFactsUseOnlyListedStreams(t *testing.T) {
+	r := probe.Result{
+		Video: []probe.VideoStream{
+			{Index: 0, Codec: "mjpeg", Default: true}, // no size: not listed
+			{Index: 1, Codec: "h264", Width: 1280, Height: 720},
+		},
+		Audio: []probe.AudioStream{
+			{Index: 2, Codec: "aac", Channels: 0, Language: "fre"},
+			{Index: 3, Channels: 2, Language: "jpn"},
+			{Index: 4, Codec: "aac", Channels: 2, Language: "eng"},
+		},
+	}
+	f := deriveFile(r)
+	v, a, _ := streams(r)
+	if f.Resolution != "720p" || len(v) != 1 || v[0].Index != 1 {
+		t.Fatalf("resolution %q from %+v", f.Resolution, v)
+	}
+	if !reflect.DeepEqual(f.AudioLangs, []string{"eng"}) || len(a) != 1 || a[0].Index != 4 {
+		t.Fatalf("audio langs %v, listed %+v", f.AudioLangs, a)
 	}
 }

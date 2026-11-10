@@ -73,6 +73,8 @@
      - `gre→ell`, `ice→isl`, `mac→mkd`, `mao→mri`, `may→msa`
      - `per→fas`, `rum→ron`, `slo→slk`, `tib→bod`, `wel→cym`
    - Untagged and `und` aren't stored.
+   - **Only listed streams count:** facts come from the streams `getItem` lists (video with a codec and a size, audio with a codec and channels), so a filter never matches a track the detail leaves out (#181 review).
+   - **Only the current revision counts:** facts and `probe_json` are read only while `probe_size`/`probe_mtime_ns` match the file's `size`/`mtime_ns`. A change doesn't clear them; a file restored to its probed revision gets them back without a new probe (#168, #181 review).
    - A movie or episode matches when **one** of its present files meets every selected filter (`resolution=4k&audioLanguage=deu` needs a 4k German file, not a 4k English file plus a 1080p German one). A show or season matches when each filter is met by some episode's file.
 7. **`listItems` details the contract leaves to the producer:**
    - **What a `libraryId` listing contains:** movies for a `movies` library, shows for `tv` and `anime` (the top-level items, `parent_id IS NULL`).

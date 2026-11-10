@@ -59,12 +59,12 @@ func (s *Store) Item(ctx context.Context, g Grant, itemID string) (contracts.Ite
 // itemVersions is the one read path for an item's versions: every live
 // version (not retired), available or not, ordered by versionOrderSQL, so the first is the default
 // that listItems' durationMs also reads. Streams and the container come from
-// the stored probe (none before the first probe); fileName is the file's bare
+// the stored probe of the file's current revision (none before it is probed); fileName is the file's bare
 // name for admins and null for everyone else. Segment stays null until LIB-3
 // locates shared-file episodes here.
 func (s *Store) itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID string) ([]contracts.MediaVersion, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT v.id, v.file_id, v.label, CASE WHEN f.duration_ms > 0 THEN f.duration_ms END,
-		f.size, f.mtime_ns, f.path, f.probe_json, (f.state = 'present' AND r.state != 'offline')
+	rows, err := tx.QueryContext(ctx, `SELECT v.id, v.file_id, v.label, CASE WHEN f.duration_ms > 0 AND `+currentProbe+` THEN f.duration_ms END,
+		f.size, f.mtime_ns, f.path, CASE WHEN `+currentProbe+` THEN f.probe_json END, (f.state = 'present' AND r.state != 'offline')
 		FROM library_versions v JOIN library_files f ON f.id = v.file_id JOIN library_roots r ON r.id = f.root_id
 		WHERE v.item_id = ? AND `+liveVersion+` ORDER BY `+versionOrderSQL, itemID)
 	if err != nil {
