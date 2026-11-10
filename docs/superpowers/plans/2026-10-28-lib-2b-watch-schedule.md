@@ -61,7 +61,7 @@
    - Probes run in their own lane, one `ProbeDue` turn at a time with LIB-1's 2 workers (spec §11.2), so a long probe backlog never delays a scan. 2a's compare-and-set makes probes safe alongside scans.
    - A probe turn takes at most 200 files, oldest change first (`ProbeDue` gains a `limit`), then the next root with work gets a turn (round robin).
 3. **fsnotify, not hand-written inotify.** fsnotify is the standard Go wrapper (used by Hugo, Viper, Kubernetes) and reports overflow as `ErrEventOverflow`. It isn't recursive, so the watcher adds one watch per folder, skipping the folders `Discover` skips. Hand-written inotify would save one small dependency at the cost of more code to review.
-4. **Unmounts are found by checking, not by events.** fsnotify drops a watch on `IN_UNMOUNT`/`IN_IGNORED` **without sending any event** (found while prototyping). Every recheck (1 min) checks that each root's own folder is still watched; if not, the root gets a whole-root scan, which re-arms the watch if the root is readable, or records it offline if not. A moved or deleted root folder does send an event, which queues the same scan.
+4. **Unmounts are found by checking, not by events.** fsnotify drops a watch on `IN_UNMOUNT`/`IN_IGNORED` **without sending any event** (found while prototyping). Every recheck (1 min) checks that each root's own folder is still watched; if not, the root gets a whole-root scan, which re-arms the watch if the root is readable, or records it offline if not. A moved or deleted root folder does send an event, which queues the same scan. **Empty-root exception (#140, #157):** a root whose last whole-root scan found it empty and unmounted-looking keeps the empty mark; its lost watch waits for the backed-off periodic scan (15 min, 1 h, then `FullScanEvery`), which re-arms it, unless periodic scans are off, when the recheck scans it as above. The recheck also reads an empty-marked root's folder and scans it once it has entries, so a disk mounted over the empty folder (which sends no events) is found within a minute.
 5. **Offline roots are retried only once readable.** A recheck queues a scan of an offline root only when it can be opened and isn't empty, so an outage adds one failed run, not one a minute. A degraded root (a walk failed part-way) waits for the next periodic scan, unless a scoped scan works on it: then the root is back, and a whole-root scan follows at once.
 6. **Defaults** (`SchedulerOptions`, all overridable in code; not in the config file yet):
 
@@ -70,7 +70,7 @@
    | `FullScanEvery` | 6 h | §3.1; negative turns it off |
    | `Debounce` | 10 s | a burst of events (a season pack) becomes one scan |
    | `MaxDelay` | 2 min | a folder that keeps changing (a file written in place) is still scanned |
-   | `Recheck` | 1 min | offline roots, lost watches and new libraries |
+   | `Recheck` | 1 min | offline roots, lost watches (an empty root's waits for its backoff while periodic scans are on, #140), empty roots that now have entries (#157), and new libraries |
    | `Quiet` / `Workers` | 30 s / 2 | LIB-1's defaults |
    | `ProbeBatch` | 200 | files per probe turn |
    | `MaxScopes` | 64 | more pending folders for one root become one whole-root scan |
