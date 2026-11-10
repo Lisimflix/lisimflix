@@ -36,6 +36,7 @@ ruleset (below) rejects them. Never bypass it with `--no-verify`.
    and only they dismiss their own review. The reviewer then re-reviews (step 5).
 7. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
    Any push after approval (fixups, rebases) needs a fresh approval before it can merge.
+   Dependabot can't merge its own PRs: whoever approves one merges it.
 
 `main` is protected by a GitHub ruleset with no bypass, so GitHub enforces the steps
 above: no direct or force pushes, and a PR merges only by squash, with a passing `check`,
