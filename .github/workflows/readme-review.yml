@@ -1,0 +1,36 @@
+name: readme-review
+
+on:
+  schedule:
+    # Sundays 21:17 UTC = Monday morning in Adelaide. Off the hour: GitHub drops busy slots.
+    - cron: "17 21 * * 0"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  open-issue:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TITLE: Weekly README review
+    steps:
+      - name: Open the weekly README review issue unless one is already open
+        run: |
+          open=$(gh issue list --state open --search "in:title \"$TITLE\"" --json number --jq length)
+          if [ "$open" != "0" ]; then
+            echo "A review issue is already open; nothing to do."
+            exit 0
+          fi
+          gh issue create --title "$TITLE ($(date -u +%F))" --label documentation --body "Compare \`README.md\` with \`main\` and tick each part, or open a PR that fixes it (\`Refs\` this issue).
+
+          - [ ] Status (what works today, current milestone)
+          - [ ] Layout table
+          - [ ] Setup and run steps (and \`deploy/README.md\`)
+          - [ ] Commands and checks (\`make check\`, tool versions)
+          - [ ] Dependencies added since the last review
+
+          Assign yourself before starting. Close this issue when every box is ticked."
