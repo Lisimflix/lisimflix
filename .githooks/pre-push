@@ -1,5 +1,5 @@
 #!/bin/sh
-# Blocks pushes to main: the free GitHub plan can't protect private branches.
+# Blocks pushes to main locally, before the GitHub ruleset rejects them.
 while read -r local_ref local_sha remote_ref remote_sha; do
   if [ "$remote_ref" = "refs/heads/main" ]; then
     echo "pre-push: direct pushes to main are not allowed. Push a branch and open a PR." >&2
