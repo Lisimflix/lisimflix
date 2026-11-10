@@ -57,7 +57,7 @@
    - Items show LIB-2a's parsed title, sort title and year.
    - `library_items` gains `display_title`, `display_sort_title` and `display_year` (NULL = use the parsed value), plus a table `library_item_genres(item_id, genre)`. META-1c sets them with `Store.SetDisplay(ctx, itemID, Display)`, which also refreshes `sort_key` and `sort_group`.
    - This keeps META-1a's rule that `metadata` never writes catalogue tables (it calls library's API instead), and lets sorting and the genre filter use metadata values without a join per row.
-   - Until 1c: genres are empty, `contentRating` is null, `matched` is null, and `primaryImageUrl`, `backdropUrl` and `userState` are null.
+   - Until META-1c: genres are empty, and `contentRating`, `matched`, `primaryImageUrl` and `backdropUrl` are null. `userState` is null until DATA-1b PR B (#174, Decision 9).
 6. **Facet data per file is derived once, when a probe is stored.**
    - `library_files` gains `resolution` (`sd`/`720p`/`1080p`/`4k`, NULL until probed), `hdr` (0/1, NULL until probed) and `duration_ms`.
    - A table `library_file_audio(file_id, lang)` holds each distinct audio language, mapped to ISO 639-2/T.
