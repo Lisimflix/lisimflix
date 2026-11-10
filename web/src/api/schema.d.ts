@@ -216,7 +216,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Movies and episodes with resume, not watched, not hidden; newest lastPlayedAt first. total is null. */
+        /** Movies and episodes with resume, played at least 30 s, not watched, not hidden; newest lastPlayedAt first. total is null. */
         get: operations["listContinueWatching"];
         put?: never;
         post?: never;
@@ -382,7 +382,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
-        /** @description The current profile's state for one movie or episode. revision counts committed changes (0 = nothing recorded yet); writes send it back as expectedRevision. */
+        /** @description The current profile's state for one movie or episode. revision counts explicit changes (watched marks and hides); progress, even the automatic watched mark, never changes it, so a row with only progress is still 0. Writes send it back as expectedRevision. */
         UserItemState: {
             itemId: string;
             /** Format: int64 */

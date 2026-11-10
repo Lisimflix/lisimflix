@@ -28,8 +28,9 @@ const (
 )
 
 // UserItemState is the current profile's state for one movie or episode.
-// Revision counts committed changes (0 = nothing recorded yet); writes send
-// it back as expectedRevision.
+// Revision counts explicit changes (watched marks and hides); progress, even
+// the automatic watched mark, never changes it, so a row with only progress
+// is still 0. Writes send it back as expectedRevision.
 type UserItemState struct {
 	ItemID                     string     `json:"itemId"`
 	Revision                   int64      `json:"revision"`
