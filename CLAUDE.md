@@ -11,7 +11,7 @@
 - PR titles use Conventional Commits; they become the squashed commit message.
 - **README gate:** Before opening or approving a PR, check `README.md` against the branch (status, layout, setup, commands, checks). If the PR changes any of them, update `README.md` in the same PR.
 - At the start of every session, run `git config core.hooksPath`. If it is not `.githooks`, tell the user and ask before setting it (see `CONTRIBUTING.md` one-time setup).
-- At the start of every session, run `gh issue list` and `gh pr list` to see what others are working on.
+- At the start of every session, and when asked to check the repo, run the `repo-check` skill (`.claude/skills/repo-check/`): every open PR and issue, as options in the order Merge, Review, Fix, New feature. At session start, report and then continue with the user's request.
 - Don't edit another member's spec or plan in `docs/superpowers/` unless asked; open an issue instead.
 - **Every review note blocks** and is settled in the PR; there are no non-blocking notes. Reviewing: each note, even a question, is an inline or file comment (a thread), submitted as Request changes; approve only with no notes and no open thread. Authoring: answer or fix every thread in the PR; resolve only threads you raised and leave others' reviews undismissed. File an issue only for something outside the PR's scope. Fix PRs for an existing review-notes issue say `Refs #N` and tick boxes (CONTRIBUTING, Workflow steps 5–7 and Working together).
 - Code with no production caller yet gets `// Planned: <Feature ID> (<what will call it>).`; before calling code unused, also grep `docs/` (spec, plans).

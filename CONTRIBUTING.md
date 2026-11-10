@@ -57,6 +57,9 @@ PR and turn it back on straight after.
   both the local check and its GitHub Actions run. If Actions did not run, find out why
   before merging.
 - Docs-only PRs may skip local `make check`; GitHub Actions still runs on every PR.
+- Every Monday the `readme-review` workflow opens a "Weekly README review" issue (unless one
+  is still open). Whoever takes it checks `README.md` against `main`, then closes it or opens
+  a fix PR.
 - End-to-end tests (Playwright, real media) run locally only for now. Say in the PR's
   "How it was tested" whether you ran them.
 - CI minutes are limited (2,000/month on the free plan), so workflows must:
