@@ -28,3 +28,4 @@ Thumbs.db
 /web/test-results/
 /web/playwright-report/
 *.mp4
+.claude/worktrees/
