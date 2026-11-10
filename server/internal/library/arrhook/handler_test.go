@@ -307,6 +307,38 @@ func TestPartialQueueReceiptIsTruthful(t *testing.T) {
 	}
 }
 
+// A payload refused for its shape still names its event type on the
+// receipt, since that's what an admin needs to debug a schema change.
+func TestSchemaErrorKeepsEventType(t *testing.T) {
+	f := newHook(t)
+	rec := f.ok([]byte(`{"eventType":"Download","series":{"path":"/tv/x"},"episodes":[]}`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	if r := f.lastReceipt(t); r.Result != ResultRejected || r.Event != "Download" {
+		t.Fatalf("receipt %+v", r)
+	}
+	f.ok([]byte(`{"series":{"path":"/tv/x"}}`))
+	if r := f.lastReceipt(t); r.Event != "?" {
+		t.Fatalf("no eventType: receipt %+v", r)
+	}
+}
+
+// Notifications queue scans with the scheduler's own import cause.
+func TestImportUsesLibraryCause(t *testing.T) {
+	f := newHook(t)
+	f.ok(fixture(t, "sonarr_download.json"))
+	calls := f.hints.list()
+	if len(calls) == 0 {
+		t.Fatal("nothing queued")
+	}
+	for _, c := range calls {
+		if !strings.HasSuffix(c, " "+library.CauseImport) {
+			t.Fatalf("hint %q, want cause %q", c, library.CauseImport)
+		}
+	}
+}
+
 // Sender-controlled text is bounded before it reaches the receipt row or the log.
 func TestUntrustedTextIsCapped(t *testing.T) {
 	f := newHook(t)

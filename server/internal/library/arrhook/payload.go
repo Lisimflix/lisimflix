@@ -76,6 +76,10 @@ func parse(kind string, body []byte) (event, error) {
 		return event{}, fmt.Errorf("%w: not JSON", errSchema)
 	}
 	e := event{Type: w.EventType, Kind: kindScan}
+	// fail keeps the event type, so the receipt and the log can name it.
+	fail := func(format string, a ...any) (event, error) {
+		return event{Type: w.EventType}, fmt.Errorf("%w: "+format, append([]any{errSchema}, a...)...)
+	}
 	t := strings.ToLower(w.EventType)
 	var folder string
 	if kind == Sonarr && w.Series != nil {
@@ -119,12 +123,12 @@ func parse(kind string, body []byte) (event, error) {
 			add(file(w.MovieFile))
 		}
 		if len(e.Paths) == 0 {
-			return event{}, fmt.Errorf("%w: Download without a file path", errSchema)
+			return fail("Download without a file path")
 		}
 		var old []wireFile
 		if len(w.DeletedFiles) > 0 && w.DeletedFiles[0] == '[' {
 			if err := json.Unmarshal(w.DeletedFiles, &old); err != nil {
-				return event{}, fmt.Errorf("%w: deletedFiles", errSchema)
+				return fail("deletedFiles")
 			}
 		}
 		for i := range old {
@@ -155,10 +159,10 @@ func parse(kind string, body []byte) (event, error) {
 		return e, nil
 	}
 	if len(e.Paths) == 0 {
-		return event{}, fmt.Errorf("%w: %s without a path", errSchema, w.EventType)
+		return fail("%s without a path", w.EventType)
 	}
 	if len(e.Paths) > maxPaths {
-		return event{}, fmt.Errorf("%w: more than %d paths", errSchema, maxPaths)
+		return fail("more than %d paths", maxPaths)
 	}
 	return e, nil
 }

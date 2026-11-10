@@ -30,9 +30,6 @@ type Hinter interface {
 	Hint(rootID, scope, cause string) error
 }
 
-// CauseImport is the scan cause for notifications, as library.CauseImport.
-const CauseImport = "import"
-
 // Limits (spec §3.6: bound payload and event rates).
 const (
 	maxBodyBytes   = 1 << 20 // an import-complete payload for a season pack is far smaller
@@ -190,7 +187,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var done []Scope // queued so far
 	skipped := 0
 	for _, s := range all {
-		err := h.hint.Hint(s.RootID, s.Path, CauseImport)
+		err := h.hint.Hint(s.RootID, s.Path, library.CauseImport)
 		if errors.Is(err, library.ErrSkipped) {
 			// A path the library never scans (hidden files or folders,
 			// @-folders, sample(s), recycle and system folders) has nothing

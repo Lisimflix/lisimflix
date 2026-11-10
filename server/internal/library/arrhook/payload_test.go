@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -48,15 +49,25 @@ func TestParse(t *testing.T) {
 }
 
 func TestParseRefusesBrokenPayloads(t *testing.T) {
-	for name, c := range map[string]struct{ kind, body string }{
-		"not JSON":                               {Sonarr, `eventType=Download`},
-		"no eventType":                           {Sonarr, `{"series":{"path":"/tv/x"}}`},
-		"download without file":                  {Sonarr, `{"eventType":"Download","series":{"path":"/tv/x"},"episodes":[]}`},
-		"radarr payload sent to a sonarr source": {Sonarr, string(fixture(t, "radarr_download.json"))},
-		"delete without file":                    {Radarr, `{"eventType":"MovieFileDelete","movie":{"folderPath":"/movies/x"}}`},
+	// typ is the event type the error keeps, so the receipt and the log can
+	// name it: empty only when the payload has none to give.
+	many := `{"eventType":"Download","series":{"path":"/tv/x"},"episodeFiles":[` +
+		strings.Repeat(`{"path":"/tv/x/a.mkv"},`, maxPaths) + `{"path":"/tv/x/b.mkv"}]}`
+	for name, c := range map[string]struct{ kind, body, typ string }{
+		"not JSON":                               {Sonarr, `eventType=Download`, ""},
+		"no eventType":                           {Sonarr, `{"series":{"path":"/tv/x"}}`, ""},
+		"download without file":                  {Sonarr, `{"eventType":"Download","series":{"path":"/tv/x"},"episodes":[]}`, "Download"},
+		"radarr payload sent to a sonarr source": {Sonarr, string(fixture(t, "radarr_download.json")), "Download"},
+		"delete without file":                    {Radarr, `{"eventType":"MovieFileDelete","movie":{"folderPath":"/movies/x"}}`, "MovieFileDelete"},
+		"bad deletedFiles":                       {Sonarr, `{"eventType":"Download","series":{"path":"/tv/x"},"episodeFile":{"path":"/tv/x/a.mkv"},"deletedFiles":[1]}`, "Download"},
+		"too many paths":                         {Sonarr, many, "Download"},
 	} {
-		if _, err := parse(c.kind, []byte(c.body)); !errors.Is(err, errSchema) {
+		e, err := parse(c.kind, []byte(c.body))
+		if !errors.Is(err, errSchema) {
 			t.Errorf("%s: %v, want a schema error", name, err)
+		}
+		if e.Type != c.typ || len(e.Paths) != 0 {
+			t.Errorf("%s: event %+v, want type %q and no paths", name, e, c.typ)
 		}
 	}
 	// A new event type in a later release is acknowledged, not an error.
