@@ -711,9 +711,11 @@ func (s *Scheduler) recheck(ctx context.Context) {
 			// scan, which re-arms it (#140); with periodic scans off there
 			// is none, so the recheck does it (#157).
 			check = append(check, cand{rs, true})
-		case rs.empty > 0:
-			// A disk mounted over an empty root sends no events: scan it
-			// once it has entries (#157). reachable is one directory read.
+		case rs.empty > 0 && rs.watch != WatchOn:
+			// A disk mounted over an empty root drops its watch without an
+			// event: scan it once it has entries (#157). reachable is one
+			// directory read. A root still watched gets its first file
+			// through the watch, so it isn't read or scanned here.
 			check = append(check, cand{rs, false})
 		}
 	}
