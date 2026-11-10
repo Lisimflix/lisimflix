@@ -15,8 +15,10 @@ ruleset (below) rejects them. Never bypass it with `--no-verify`.
 
 ## Workflow
 
-1. Pick a named feature from the spec's §9.4 catalogue (e.g. `PLY-1`, `UI-1`) and
-   claim its issue, or pick a bounded documentation/spec change. One feature slice
+1. Pick a named feature from the spec's §9.4 catalogue (e.g. `PLY-1`, `UI-1`) or another
+   open issue, and assign the issue to yourself before you start. Every feature ID has an
+   issue; if one is missing, create it first. A bounded documentation/spec change needs
+   no issue. One feature slice
    or spec part per PR keeps reviews small; cite its acceptance IDs as well. Apply
    the catalogue's GitHub area labels to the issue and the affected subset to the PR.
 2. Branch off an up-to-date `main`: `git switch main && git pull && git switch -c feat/short-name`.
@@ -26,14 +28,20 @@ ruleset (below) rejects them. Never bypass it with `--no-verify`.
    If the PR changes anything `README.md` describes (status, layout, setup,
    commands or checks), update `README.md` in the same PR.
 5. Another member (see Reviewers below) reviews: run `/code-review` in Claude Code on the PR branch as a
-   first pass, then read it yourself and approve or request changes.
-   Check that `README.md` still matches the branch before approving.
-6. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
+   first pass, then read it yourself. Check that `README.md` still matches the branch.
+   Every note blocks, even a question: put each one on the PR as an inline or file comment
+   (a thread), including the `/code-review` findings you've checked, and submit the review as
+   **Request changes**. Approve only when you have no notes and no thread is open.
+6. The author answers or fixes every thread in the PR. Whoever raised a thread resolves it,
+   and only they dismiss their own review. The reviewer then re-reviews (step 5).
+7. Once approved, the author merges with **Squash and merge**. The branch is deleted automatically.
    Any push after approval (fixups, rebases) needs a fresh approval before it can merge.
+   Dependabot can't merge its own PRs: whoever approves one merges it.
 
 `main` is protected by a GitHub ruleset with no bypass, so GitHub enforces the steps
-above: no direct or force pushes, and a PR merges only by squash, with a passing `check`
-and one approval of its latest push from someone other than whoever pushed it.
+above: no direct or force pushes, and a PR merges only by squash, with a passing `check`,
+every review thread resolved, no outstanding request for changes, and one approval of its
+latest push from someone other than whoever pushed it.
 This applies to every PR, including docs, config and Dependabot. `check` also runs on
 `main` after every merge.
 An admin can disable the ruleset (Settings → Rules) for an emergency; say why on the
@@ -44,17 +52,11 @@ PR and turn it back on straight after.
 - Before pushing code or opening its PR, run `make check` locally on the complete
   feature branch, after installing locked dependencies reproducibly (e.g. `npm ci`).
   Record the local result in the PR.
-- The bootstrap PR that adds `make check` and GitHub Actions must run its completed
-  check locally, with locked dependencies, before publishing. A new `pull_request`
-  workflow can run from the PR merge branch before reaching the default branch.
-  Require the normal review by another member and report the actual Actions result.
 - GitHub Actions runs `make check` on every PR. Its independent result supplements
-  the local preflight; a green remote run does not replace it. Every code PR,
-  including bootstrap, must pass both the local check and its GitHub Actions run.
-  If Actions did not run, investigate the trigger/settings rather than assuming
-  a bootstrap exemption. See [GitHub's pull_request event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
-- Docs-only PRs may skip local `make check`; once the workflow exists, GitHub Actions
-  still runs on every PR.
+  the local preflight; a green remote run does not replace it. Every code PR must pass
+  both the local check and its GitHub Actions run. If Actions did not run, find out why
+  before merging.
+- Docs-only PRs may skip local `make check`; GitHub Actions still runs on every PR.
 - End-to-end tests (Playwright, real media) run locally only for now. Say in the PR's
   "How it was tested" whether you ran them.
 - CI minutes are limited (2,000/month on the free plan), so workflows must:
@@ -92,7 +94,7 @@ PR and turn it back on straight after.
 
 - We plan for 2–4 contributors working in parallel. Choose an unclaimed ready
   feature yourself; work is not allocated by Pete or by fixed subsystem teams.
-  Assign its issue to yourself before coding; record its feature ID, reviewer, file scope, consumed/
+  Assign its issue to yourself before coding; record its feature ID, file scope, consumed/
   produced contracts, standalone checks and integration dependencies. Do not claim
   another person's active scope. Use separate branches and working directories.
 - Follow spec §§8.1–8.4 and 9.5: small agreed contracts and fixture/test harnesses let
@@ -104,15 +106,13 @@ PR and turn it back on straight after.
   update the contract and affected consumers together rather than editing in parallel.
 - Don't edit a spec or plan someone else is writing. Open an issue for them instead.
 - Hand-offs and decisions go in issue or PR comments, not only in chat.
-- Review notes are blocking or non-blocking:
-  - **Blocking:** anything that must change before merge, however small. Request
-    changes; don't approve with fixes still to make.
-  - **Non-blocking:** can wait until after merge. File one issue per review, with a
-    checkbox per note (area labels, linking the PR or review), before the PR merges. A
-    comment alone gets lost. Only file notes you've checked; leave out nits not worth
-    a follow-up. Issues noticed in passing get an issue the same way.
-  - A PR that fixes some of the notes says `Refs #N` and ticks their boxes. The issue
-    closes once every box is ticked or dropped with a reason.
+- Every review note blocks and is settled in the PR as a thread before approval
+  (Workflow, steps 5–6). There are no non-blocking notes, so nothing is left to go stale.
+  - File an issue only for something outside the PR's scope, such as a problem noticed
+    in passing in code the PR doesn't touch (area labels, linking the PR). It does not
+    block the merge.
+  - A PR that fixes part of an existing review-notes issue says `Refs #N` and ticks its
+    boxes. The issue closes once every box is ticked or dropped with a reason.
 - Code added for a later feature, with no production caller yet, gets a one-line comment
   naming its future user: `// Planned: <Feature ID> (<what will call it>).` Remove it when
   the caller lands. Reviews and audits treat untagged code with no caller as dead.
