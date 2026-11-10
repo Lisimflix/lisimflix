@@ -245,7 +245,7 @@
       "get": {
         "operationId": "listContinueWatching",
         "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
-        "summary": "Movies and episodes with resume, played at least 30 s, not watched, not hidden; newest lastPlayedAt first. total is null.",
+        "summary": "Movies and episodes with resume, at least 30 s of the item covered (media time played, not position), not watched, not hidden; newest lastPlayedAt first. total is null.",
         "parameters": [{ "$ref": "#/components/parameters/Cursor" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
           "200": { "description": "Items", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ItemPage" } } } },
@@ -485,7 +485,7 @@
         "type": "object",
         "additionalProperties": false,
         "required": ["itemId", "revision", "resume", "watched", "playCount", "lastPlayedAt", "hiddenFromContinueWatching"],
-        "description": "The current profile's state for one movie or episode. revision counts explicit changes (watched marks and hides); progress, even the automatic watched mark, never changes it, so a row with only progress is still 0. Writes send it back as expectedRevision.",
+        "description": "The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched (and hiding from Continue Watching, once DATA-1b adds it). Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Writes send it back as expectedRevision.",
         "properties": {
           "itemId": { "type": "string", "minLength": 1 },
           "revision": { "type": "integer", "format": "int64", "minimum": 0 },
