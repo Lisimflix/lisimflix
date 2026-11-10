@@ -36,6 +36,16 @@ test.describe("home", () => {
     await expect(card).toHaveAccessibleName(/^Synthetic Episode Two, Synthetic Show · S1 E2\b/); // screen readers can tell episodes apart
   });
 
+  test("rowCardsKeepOneSizeWithLongTitles", async ({ page }) => {
+    // A long title is cut with an ellipsis; it never widens its card (and so its 2:3 artwork) in a row.
+    const items = many(4).items.map((it, i) => (i === 1 ? { ...it, title: "A Very Long Synthetic Title That Runs On Well Past The Card Width" } : it));
+    await open(page, (api) => api.set("/api/v1/continue-watching", { items, nextCursor: null, total: null }));
+    const arts = page.getByRole("region", { name: "Continue Watching" }).locator(".card .art");
+    await expect(arts).toHaveCount(4);
+    const sizes = await arts.evaluateAll((els) => els.map((e) => { const r = e.getBoundingClientRect(); return `${Math.round(r.width)}x${Math.round(r.height)}`; }));
+    expect(new Set(sizes).size, sizes.join(" ")).toBe(1);
+  });
+
   test("rowArrowsHideAtEnds", async ({ page }) => {
     await open(page, (api) => api.set("/api/v1/continue-watching", many(30)));
     const left = page.getByRole("button", { name: "Scroll Continue Watching left" });
