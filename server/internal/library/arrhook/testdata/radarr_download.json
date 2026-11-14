@@ -1,0 +1,4 @@
+{"movie":{"id":5,"title":"Heat","year":1995,"filePath":"/movies/Heat (1995)/Heat (1995) [Bluray-2160p].mkv","releaseDate":"1996-06-25","folderPath":"/movies/Heat (1995)","tmdbId":949,"imdbId":"tt0113277"},
+ "remoteMovie":{"tmdbId":949,"imdbId":"tt0113277","title":"Heat","year":1995},
+ "movieFile":{"id":7,"relativePath":"Heat (1995) [Bluray-2160p].mkv","path":"/movies/Heat (1995)/Heat (1995) [Bluray-2160p].mkv","quality":"Bluray-2160p","qualityVersion":1,"size":1,"indexerFlags":"0"},
+ "isUpgrade":false,"downloadClient":"qBittorrent","downloadId":"X","eventType":"Download","instanceName":"Radarr","applicationUrl":""}

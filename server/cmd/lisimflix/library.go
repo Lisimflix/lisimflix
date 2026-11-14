@@ -43,6 +43,19 @@ func orDefault(a, b string) string {
 	return b
 }
 
+// openForCLI loads the config and opens the database as serve does
+// (migrations, with a snapshot first if the schema changes), for commands
+// that manage libraries and import sources.
+func openForCLI(ctx context.Context, cfgPath, dbPath, backups string) (m1config.Config, *storage.DB, error) {
+	cfg, err := m1config.Load(cfgPath)
+	if err != nil {
+		return m1config.Config{}, nil, err
+	}
+	db, dir := storagePaths(cfgPath, dbPath, backups)
+	d, err := openStorage(ctx, db, storage.SnapshotOptions{Dir: dir, AppVersion: version, ExtraFiles: []string{cfgPath}}, nil)
+	return cfg, d, err
+}
+
 // cmdLibrary adds and lists libraries until the admin screens (LIB-2d)
 // exist. A running server picks up a new library within a minute.
 func cmdLibrary(args []string, stdout io.Writer) error {
@@ -63,13 +76,8 @@ func cmdLibrary(args []string, stdout io.Writer) error {
 	if err := fl.Parse(args[1:]); err != nil {
 		return err
 	}
-	cfg, err := m1config.Load(*cfgPath)
-	if err != nil {
-		return err
-	}
 	ctx := context.Background()
-	db, dir := storagePaths(*cfgPath, *dbPath, *backups)
-	d, err := openStorage(ctx, db, storage.SnapshotOptions{Dir: dir, AppVersion: version, ExtraFiles: []string{*cfgPath}}, nil)
+	cfg, d, err := openForCLI(ctx, *cfgPath, *dbPath, *backups)
 	if err != nil {
 		return err
 	}

@@ -6,6 +6,7 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -28,14 +29,22 @@ const (
 		"connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 )
 
+// Mount is a route served beside the API, outside its browser-only Origin and
+// CSRF checks: an integration endpoint that authenticates its own callers.
+type Mount struct {
+	Pattern string // a path outside /api/ and /health/, e.g. "/hooks/v1/arr"
+	Handler http.Handler
+}
+
 // New returns the application handler. playback owns GET /api/v1/movies and
 // everything under /api/v1/playback/; catalogue owns /api/v1/libraries and
 // /api/v1/items and everything under them. Both only ever see requests with a
 // live session. A nil catalogue (storage didn't start) leaves its routes
 // answering 404 not_found, so the browse app falls back to the M1 movie (UI-2
-// decision 10). web must contain index.html. ready reports whether initialisation
-// succeeded; /health/ready returns 503 while it returns an error.
-func New(cfg m1config.Config, am *auth.Manager, playback, catalogue http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger) (http.Handler, error) {
+// decision 10). mounts add routes beside the API (see Mount). web must contain
+// index.html. ready reports whether initialisation succeeded; /health/ready
+// returns 503 while it returns an error.
+func New(cfg m1config.Config, am *auth.Manager, playback, catalogue http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger, mounts ...Mount) (http.Handler, error) {
 	if am == nil || playback == nil || web == nil || ready == nil {
 		return nil, errors.New("app: auth manager, playback handler, web assets and ready check are required")
 	}
@@ -87,6 +96,14 @@ func New(cfg m1config.Config, am *auth.Manager, playback, catalogue http.Handler
 	root.HandleFunc("/health/", func(w http.ResponseWriter, r *http.Request) {
 		health(w, http.StatusNotFound, "not_found")
 	})
+	seen := map[string]bool{}
+	for _, m := range mounts {
+		if !strings.HasPrefix(m.Pattern, "/") || m.Pattern == "/" || m.Pattern == "/api" || m.Pattern == "/health" || seen[m.Pattern] || strings.HasPrefix(m.Pattern, "/api/") || strings.HasPrefix(m.Pattern, "/health/") || m.Handler == nil {
+			return nil, fmt.Errorf("app: invalid mount %q", m.Pattern)
+		}
+		seen[m.Pattern] = true
+		root.Handle(m.Pattern, m.Handler)
+	}
 	root.Handle("/", spa(web))
 	return observe(log, securityHeaders(root)), nil
 }

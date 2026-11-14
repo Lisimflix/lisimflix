@@ -283,8 +283,18 @@ func rootEmpty(dir *os.Root) (bool, error) {
 	return len(names) == 0, err
 }
 
+// Skipped reports whether whole-root scans never reach scope, a path
+// relative to a library folder: it is, or is inside, a folder they skip
+// (hidden, @-folders, recycle bins, samples), or a hidden file. Such a scope
+// has nothing to scan. Import notifications (LIB-4) use it to leave paths
+// out before queuing anything.
+func Skipped(scope string) bool { return skippedPath(path.Clean(scope)) }
+
 // skippedPath reports whether Discover would never reach p: one of its
-// folders is skipped (hidden, recycle bins, samples).
+// folders is skipped (hidden, recycle bins, samples), or p is a hidden
+// file. A last part that isn't a video file name is taken as a folder, so
+// a skipped folder as the scope is caught too (a scoped scan of it would
+// walk what whole-root scans skip, since Discover never skips ".").
 func skippedPath(p string) bool {
 	if p == "." {
 		return false
@@ -295,7 +305,8 @@ func skippedPath(p string) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(parts[len(parts)-1], ".")
+	last := parts[len(parts)-1]
+	return strings.HasPrefix(last, ".") || !isVideo(last) && skipDir(last)
 }
 
 // startRun records a running scan. A whole-root scan marks the root scanning.
