@@ -216,7 +216,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Movies and episodes with resume, not watched, not hidden; newest lastPlayedAt first. total is null. */
+        /** Movies and episodes with resume, at least 30 s of the item covered (media time played, not position), not watched, not hidden; newest lastPlayedAt first. total is null. */
         get: operations["listContinueWatching"];
         put?: never;
         post?: never;
@@ -382,7 +382,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
-        /** @description The current profile's state for one movie or episode. revision counts committed changes (0 = nothing recorded yet); writes send it back as expectedRevision. */
+        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched (and hiding from Continue Watching, once DATA-1b adds it). Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Writes send it back as expectedRevision. */
         UserItemState: {
             itemId: string;
             /** Format: int64 */
