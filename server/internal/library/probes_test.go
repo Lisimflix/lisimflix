@@ -336,3 +336,24 @@ func TestStaleProbeTimeoutIsDropped(t *testing.T) {
 		t.Fatalf("stale timeout deferred the file: probe_after %v", *after)
 	}
 }
+
+// #168: a failure for an older revision than the catalogue's is stale: it
+// writes no error, and the newer revision stays due.
+func TestStaleProbeFailureIsDropped(t *testing.T) {
+	s, _, _, sc, root := setupMovies(t, "A (2001)/A (2001).mkv")
+	const rel = "A (2001)/A (2001).mkv"
+	p := &scriptedProber{fail: map[string]error{rel: errors.New("corrupt")}, during: func(string) {
+		s.db.Exec(`UPDATE library_files SET size = size + 1`) // a scan records a newer revision
+	}}
+	if run := probeDue(t, sc, root, p); run.Stale != 1 || run.Failed != 0 {
+		t.Fatalf("%+v", run)
+	}
+	if _, perr, _ := probeColumns(t, s, rel); perr != nil {
+		t.Fatalf("stale failure stored: %q", *perr)
+	}
+	var due int
+	s.db.QueryRow(`SELECT count(*) FROM library_files WHERE probe_size IS NOT size`).Scan(&due)
+	if due != 1 {
+		t.Fatal("the newer revision is no longer due")
+	}
+}

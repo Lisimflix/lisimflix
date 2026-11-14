@@ -1,7 +1,9 @@
 package library
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -254,4 +256,22 @@ func TestRetiredVersionIsLeftOut(t *testing.T) {
 	}
 	e.scan(root)
 	check("cut missing", false)
+}
+
+// #168: the store logs through the logger serve gives it; building the API
+// doesn't swap it.
+func TestStoreLogsThroughItsOwnLogger(t *testing.T) {
+	e := newBrowse(t)
+	filmLibrary(e)
+	id := e.itemID("Film")
+	var storeLog, apiLog bytes.Buffer
+	e.s.SetLogger(slog.New(slog.NewTextHandler(&storeLog, nil)))
+	NewAPI(e.s, func(contracts.Principal) Grant { return grantAll }, slog.New(slog.NewTextHandler(&apiLog, nil)))
+	if _, err := e.s.db.Exec(`UPDATE library_files SET probe_json = '{not json'`); err != nil {
+		t.Fatal(err)
+	}
+	e.detail(grantAll, id)
+	if !strings.Contains(storeLog.String(), "library.probe_corrupt") || apiLog.Len() != 0 {
+		t.Fatalf("store log %q, api log %q", storeLog.String(), apiLog.String())
+	}
 }

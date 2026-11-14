@@ -89,6 +89,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	if db != nil {
 		// LIB-2c: catalogue files play, and the M1 movie still does.
 		store = library.NewStore(db)
+		store.SetLogger(log)
 		// Items from before the sort keys (a LIB-2b database) get them
 		// before the catalogue is served: listItems pages on them. It is
 		// one fast pass; file facts are filled in the background below. If
