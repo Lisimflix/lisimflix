@@ -93,7 +93,7 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
     - `// shortcut: M1 fallback until LIB-2c registers listLibraries; delete M1App, /movies and Movie in LIB-2c's PR` (CTR-2 decision 12 gives that retirement to UI-2/PLY-2; LIB-2c's PR does it once items are served).
 11. **A–Z jump restarts the grid at that letter.** It doesn't scroll back through unloaded pages. A "Back to top" button clears it.
     - `// shortcut: jump restarts the list; upgrade to bidirectional paging if Pete finds it awkward at 5k titles`.
-12. **Scroll and focus restore** (§5.7) use an in-memory cache keyed by `history.state.key`. It holds the loaded pages, cursor, scroll position and focused item ID. Back restores them without refetching. A reload refetches the first page.
+12. **Scroll and focus restore** (§5.7) use an in-memory cache keyed by `history.state.key`. It holds the loaded pages, cursor, scroll position and focused item ID. Back restores them without refetching. That covers layout only: user-state reads are invalidated by writes (playback, Mark watched), as #142 built it. A reload refetches the first page.
 13. **Out of scope, each with its owner:**
     - Search and the header search button (no search feature ID is claimed; it's hidden until one is)
     - Who's watching / profile picker (ACC-1)
@@ -644,7 +644,7 @@ test("logoutDuringPlaybackStopsFirst", ...)     // same order assertion as playe
 
 - [ ] **Step 5: Update the README and commit**
 
-  In `README.md`, the Status line says browsing is built and runs against fixtures until LIB-2c, and the layout row adds `web/src/{app,browse,ui}`. Then commit `"feat(web): UI-2 play, resume and progress"`, open PR C (reviewers Lammy, Ondo) and tick #95 items 3–5.
+  In `README.md`, the Status line says browsing is built and runs against fixtures until LIB-2c, and the layout row adds `web/src/{app,browse,ui}`. Then commit `"feat(web): UI-2 play, resume and progress"`, open PR C and tick #95 items 3–5.
 
 ### Task 9: Integration and actual-scale qualification (after the producers land)
 
