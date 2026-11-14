@@ -674,8 +674,9 @@ func (s *Scheduler) after(ctx context.Context, rootID string, run Run) {
 }
 
 // recheck re-reads the roots, then queues a whole-root scan for an offline
-// root that is reachable again, and for a root whose watch was dropped
-// (an unmount drops it without an event; spec §3.6 remount reconciliation).
+// root that is reachable again, for a root whose watch was dropped (an
+// unmount drops it without an event; spec §3.6 remount reconciliation), and
+// for an empty root that has entries now (a disk mounted over it, #157).
 func (s *Scheduler) recheck(ctx context.Context) {
 	if err := s.reload(ctx, CauseAdded); err != nil {
 		s.log.Error("library.recheck", "err", err.Error())
@@ -693,6 +694,7 @@ func (s *Scheduler) recheck(ctx context.Context) {
 		rs   *rootSched
 		lost bool
 	}
+	backsOff := s.opt.FullScanEvery > 0
 	var check []cand
 	for id, rs := range s.roots {
 		if rs.pending() || s.scanning != nil && s.scanning.root == id {
@@ -704,16 +706,24 @@ func (s *Scheduler) recheck(ctx context.Context) {
 		switch {
 		case rs.State == RootOffline:
 			check = append(check, cand{rs, false})
-		case w != nil && rs.watch == WatchOff && rs.empty == 0:
+		case w != nil && rs.watch == WatchOff && (rs.empty == 0 || !backsOff):
 			// An empty root's lost watch waits for its backed-off periodic
-			// scan, which re-arms it (#140).
+			// scan, which re-arms it (#140); with periodic scans off there
+			// is none, so the recheck does it (#157).
 			check = append(check, cand{rs, true})
+		case rs.empty > 0 && rs.watch != WatchOn:
+			// A disk mounted over an empty root drops its watch without an
+			// event: scan it once it has entries (#157). reachable is one
+			// directory read. A root still watched gets its first file
+			// through the watch, so it isn't read or scanned here.
+			check = append(check, cand{rs, false})
 		}
 	}
 	s.mu.Unlock()
 	for _, c := range check {
-		// An offline root is scanned only once it can be read again, so an
-		// outage doesn't add a failed run every minute. A lost watch is
+		// An offline or empty root is scanned only once it can be read and
+		// has entries, so an outage or an idle new library doesn't add a
+		// run every minute. A lost watch is
 		// scanned either way: it records the outage, or re-arms and catches
 		// up on what the watch missed.
 		if c.lost || s.sc.reachable(c.rs.Path) {
