@@ -49,6 +49,9 @@ changing `docs/contracts/openapi.json`.
 
 Tests that need real ffmpeg/ffprobe use the `integration` build tag and run only on request,
 e.g. `go -C server test -tags integration ./internal/library/` (needs both on `PATH`).
+The catalogue scale run (LIB-2c, synthetic library, no media needed) uses the `scale` tag, also on
+request: `go -C server test -tags scale -run TestCatalogueAtScale -v -timeout 40m ./internal/library/`
+(results in `docs/testing/lib-2c-scale-results.md`).
 
 ## Contributing
 
