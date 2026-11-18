@@ -28,7 +28,7 @@ private network only, over plain HTTP.
 | `docs/design/` | Approved visual references (UI-2 mockups and logo) |
 | `deploy/` | Container compose file and run guide |
 | `server/` | Go server |
-| `web/` | React + Vite web app (`web/src/{app,browse,ui,player}`) |
+| `web/` | React + Vite web app (`web/src/{api,app,browse,ui,player}`) |
 | `testdata/` | Synthetic fixtures (no real media) |
 | `.claude/skills/` | Claude Code skills for this repo (`repo-check`: status of every open PR and issue) |
 
