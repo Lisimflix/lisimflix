@@ -48,7 +48,8 @@ Lammy chose A: it matches the viewer's expectation at any library size, which is
 - `ItemPage.offset` (new, integer or null): on a first page requested with `from`, the number
   of titles in the listing before the first item of that page. Null otherwise.
 - `ItemPage.prevCursor` (new, string or null): loads the page immediately before this one, in
-  the same order. Null when nothing comes before (always null on a first page without `from`).
+  the same order. Title order only (the only order with a rail); null in other orders, when
+  nothing comes before, and on a first page without `from`.
   Pages loaded with a `prevCursor` also carry `prevCursor`, so a client can keep loading upwards;
   every page keeps `nextCursor` as today.
 - The `cursor` parameter accepts either `nextCursor` or `prevCursor`; the cursor itself records
