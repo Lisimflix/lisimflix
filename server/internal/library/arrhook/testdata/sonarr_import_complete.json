@@ -1,0 +1,8 @@
+{"series":{"id":1,"title":"Show","path":"/tv/Show (2019)","tvdbId":123},
+ "episodes":[{"id":11,"episodeNumber":1,"seasonNumber":2},{"id":12,"episodeNumber":2,"seasonNumber":2},{"id":13,"episodeNumber":3,"seasonNumber":2}],
+ "episodeFiles":[
+  {"id":31,"relativePath":"Season 02/Show - S02E01.mkv","path":"/tv/Show (2019)/Season 02/Show - S02E01.mkv","quality":"Bluray-1080p","size":1},
+  {"id":32,"relativePath":"Season 02/Show - S02E02.mkv","path":"/tv/Show (2019)/Season 02/Show - S02E02.mkv","quality":"Bluray-1080p","size":1},
+  {"id":33,"relativePath":"Season 02/Show - S02E03.mkv","path":"/tv/Show (2019)/Season 02/Show - S02E03.mkv","quality":"Bluray-1080p","size":1}],
+ "downloadClient":"qBittorrent","downloadId":"ABC","sourcePath":"/downloads/Show.S02.1080p","destinationPath":"/tv/Show (2019)",
+ "eventType":"Download","instanceName":"Sonarr","applicationUrl":""}
