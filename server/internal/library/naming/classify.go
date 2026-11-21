@@ -25,7 +25,7 @@ const (
 
 var (
 	ErrUnrecognised = errors.New("naming: no movie or episode in the file name")
-	ErrExtra        = errors.New("naming: extra or trailer (LIB-3)")
+	ErrExtra        = errors.New("naming: extra or trailer")
 	ErrSample       = errors.New("naming: sample file")
 )
 
@@ -64,12 +64,13 @@ func Classify(libType, rel string, size int64) (Entry, error) {
 	if size < sampleMaxBytes && sampleRe.MatchString(stem) {
 		return Entry{}, ErrSample
 	}
-	for _, d := range dirs {
-		if extraFolders[strings.ToLower(d)] {
-			return Entry{}, ErrExtra
+	if _, bySuffix, ok := extra(dirs, stem); ok {
+		// An episode titled "The Crime-Scene" is still the episode (decision 6c).
+		if bySuffix && (libType == TV || libType == Anime) {
+			if e, err := classifyEpisode(libType == Anime, dirs, stem); err == nil {
+				return e, nil
+			}
 		}
-	}
-	if isExtraName(stem) && len(dirs) > 0 {
 		return Entry{}, ErrExtra
 	}
 	switch libType {
@@ -85,25 +86,6 @@ func Classify(libType, rel string, size int64) (Entry, error) {
 		return e, err
 	}
 	return Entry{}, fmt.Errorf("naming: unknown library type %q", libType)
-}
-
-// extraFolders are Plex/Jellyfin extras folders.
-var extraFolders = map[string]bool{
-	"behind the scenes": true, "deleted scenes": true, "featurettes": true, "interviews": true,
-	"scenes": true, "shorts": true, "trailers": true, "extras": true, "other": true, "others": true,
-}
-
-func isExtraName(stem string) bool {
-	lower := strings.ToLower(stem)
-	if lower == "trailer" {
-		return true
-	}
-	for _, s := range []string{"-behindthescenes", "-deleted", "-featurette", "-interview", "-scene", "-short", "-trailer", "-other"} {
-		if strings.HasSuffix(lower, s) && len(lower) > len(s) {
-			return true
-		}
-	}
-	return false
 }
 
 func classifyMovie(dirs []string, stem string) Entry {
