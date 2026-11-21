@@ -198,6 +198,28 @@ func TestLibraryScanProgress(t *testing.T) {
 	}
 }
 
+// #181 review: a file whose only French track can't be listed (no
+// channels) matches no French filter and adds no French facet.
+func TestUnlistedTrackMatchesNoFilter(t *testing.T) {
+	ctx := context.Background()
+	e := newBrowse(t)
+	lib := e.library("Movies", "movies", []string{"Movies"}, "Movies/Mute (2020)/Mute (2020).mkv")
+	e.probe(lib.Roots[0].ID, resProber{"Mute (2020).mkv": {Container: "matroska",
+		Video: []probe.VideoStream{{Index: 0, Codec: "hevc", Width: 1920, Height: 1080, Default: true}},
+		Audio: []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 0, Language: "fre"}}}})
+	if got := titles(e.items(grantAll, ItemQuery{LibraryID: lib.ID, AudioLanguage: "fra"})); len(got) != 0 {
+		t.Fatalf("fra matched %v", got)
+	}
+	f, err := e.s.Facets(ctx, grantAll, lib.ID)
+	if err != nil || len(f.AudioLanguages) != 0 {
+		t.Fatalf("facets %+v %v", f, err)
+	}
+	d, err := e.s.Item(ctx, grantAll, e.itemID("Mute"))
+	if err != nil || len(d.Versions) != 1 || len(d.Versions[0].Audio) != 0 {
+		t.Fatalf("detail %+v %v", d, err)
+	}
+}
+
 func TestFacetsFromPresentFiles(t *testing.T) {
 	e := newBrowse(t)
 	lib := e.library("Movies", "movies", []string{"Movies"},
@@ -207,9 +229,9 @@ func TestFacetsFromPresentFiles(t *testing.T) {
 		return []probe.VideoStream{{Index: 0, Codec: "hevc", Width: w, Height: h, HDR: hdr, Default: true}}
 	}
 	e.probe(root, resProber{
-		"Uhd (2020).mkv":  {Container: "matroska", Video: vid(3840, 2160, probe.HDR10), Audio: []probe.AudioStream{{Index: 1, Language: "ger"}}},
-		"Hd (1995).mkv":   {Container: "matroska", Video: vid(1920, 1080, ""), Audio: []probe.AudioStream{{Index: 1, Language: "eng"}}},
-		"Gone (2001).mkv": {Container: "matroska", Video: vid(1280, 720, ""), Audio: []probe.AudioStream{{Index: 1, Language: "fre"}}},
+		"Uhd (2020).mkv":  {Container: "matroska", Video: vid(3840, 2160, probe.HDR10), Audio: []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 2, Language: "ger"}}},
+		"Hd (1995).mkv":   {Container: "matroska", Video: vid(1920, 1080, ""), Audio: []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 2, Language: "eng"}}},
+		"Gone (2001).mkv": {Container: "matroska", Video: vid(1280, 720, ""), Audio: []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 2, Language: "fre"}}},
 	})
 	if err := os.Remove(filepath.Join(e.m.dir, "Movies/Gone (2001)/Gone (2001).mkv")); err != nil {
 		t.Fatal(err)
@@ -236,7 +258,7 @@ func TestFacetsFromPresentFiles(t *testing.T) {
 	e2 := newBrowse(t)
 	l2 := e2.library("Movies", "movies", []string{"Movies"}, "Movies/Song (2010)/Song (2010).mkv", "Movies/Uhd (2020)/Uhd (2020).mkv")
 	e2.probe(l2.Roots[0].ID, resProber{
-		"Song (2010).mkv": {Container: "matroska", Audio: []probe.AudioStream{{Index: 0, Language: "eng"}}},
+		"Song (2010).mkv": {Container: "matroska", Audio: []probe.AudioStream{{Index: 0, Codec: "aac", Channels: 2, Language: "eng"}}},
 		"Uhd (2020).mkv":  {Container: "matroska", Video: vid(3840, 2160, probe.HDR10)},
 	})
 	f2, err := e2.s.Facets(ctx, grantAll, l2.ID)
@@ -499,7 +521,9 @@ func TestFiltersMatchAnyPresentFile(t *testing.T) {
 	vid := func(w, h int, hdr probe.HDRType) []probe.VideoStream {
 		return []probe.VideoStream{{Index: 0, Codec: "hevc", Width: w, Height: h, HDR: hdr, Default: true}}
 	}
-	aud := func(lang string) []probe.AudioStream { return []probe.AudioStream{{Index: 1, Language: lang}} }
+	aud := func(lang string) []probe.AudioStream {
+		return []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 2, Language: lang}}
+	}
 	e.probe(lib.Roots[0].ID, resProber{
 		"Uhd (2020).mkv":         {Container: "matroska", Video: vid(3840, 2160, probe.HDR10), Audio: aud("ger")},
 		"Hd (1995).mkv":          {Container: "matroska", Video: vid(1920, 1080, ""), Audio: aud("eng")},
@@ -891,7 +915,9 @@ func TestCombinedFiltersOneFileForMoviesAnyEpisodeForShows(t *testing.T) {
 	vid := func(w, h int) []probe.VideoStream {
 		return []probe.VideoStream{{Index: 0, Codec: "hevc", Width: w, Height: h, Default: true}}
 	}
-	aud := func(lang string) []probe.AudioStream { return []probe.AudioStream{{Index: 1, Language: lang}} }
+	aud := func(lang string) []probe.AudioStream {
+		return []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 2, Language: lang}}
+	}
 	lib := e.library("Movies", "movies", []string{"Movies"},
 		"Movies/Mix (2015)/Mix (2015) - 2160p.mkv", "Movies/Mix (2015)/Mix (2015) - 1080p.mkv",
 		"Movies/Plain (2016)/Plain (2016).mkv")

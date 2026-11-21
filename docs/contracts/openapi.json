@@ -779,7 +779,7 @@
           "codec": { "type": "string", "minLength": 1 },
           "profile": { "type": ["string", "null"], "minLength": 1, "description": "ffprobe profile, e.g. LC, Dolby TrueHD + Dolby Atmos, DTS-HD MA. Null when none is reported." },
           "channels": { "type": "integer", "minimum": 1 },
-          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$", "description": "ISO 639-2 as tagged; null when untagged or und" },
+          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$", "description": "ISO 639-2/T, the code the audioLanguage filter and facets use (/B tags are mapped, e.g. ger to deu; case is folded); null when untagged, und or not a three-letter code" },
           "title": { "type": ["string", "null"], "minLength": 1 },
           "default": { "type": "boolean" },
           "forced": { "type": "boolean" }
@@ -793,7 +793,7 @@
           "index": { "type": "integer", "minimum": 0 },
           "codec": { "type": "string", "minLength": 1 },
           "kind": { "type": "string", "enum": ["text", "image", "ass"] },
-          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$" },
+          "language": { "type": ["string", "null"], "pattern": "^(?!und$)[a-z]{3}$", "description": "ISO 639-2/T, mapped as for audio streams; null when untagged, und or not a three-letter code" },
           "title": { "type": ["string", "null"], "minLength": 1 },
           "default": { "type": "boolean" },
           "forced": { "type": "boolean" },

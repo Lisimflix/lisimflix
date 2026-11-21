@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 
@@ -41,7 +42,8 @@ type factsProber struct{}
 func (factsProber) Probe(_ context.Context, _ *os.Root, rel string) (probe.Result, error) {
 	return probe.Result{Container: "matroska", DurationMs: 7_200_000,
 		Video: []probe.VideoStream{{Index: 0, Codec: "hevc", Width: 1920, Height: 800, HDR: probe.HDR10, Default: true}},
-		Audio: []probe.AudioStream{{Index: 1, Language: "eng"}, {Index: 2, Language: "ger"}, {Index: 3, Language: "und"}}}, nil
+		Audio: []probe.AudioStream{{Index: 1, Codec: "aac", Channels: 2, Language: "eng"}, {Index: 2, Codec: "aac", Channels: 2, Language: "ger"},
+			{Index: 3, Codec: "aac", Channels: 2, Language: "und"}}}, nil
 }
 
 type fileRow struct {
@@ -216,4 +218,127 @@ func TestRetryProbeClearsFileFacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertNoFacts(t, s)
+}
+
+// served is what the API shows of the one movie file's facts.
+type served struct {
+	res, hdr, eng        bool // the 1080p, HDR and eng filters match it
+	facetRes, facetAudio int  // resolutions and audio languages in the facets
+	dur, summaryDur      *int64
+	container            string
+	video, audio         int
+}
+
+func servedFacts(t *testing.T, s *Store) served {
+	t.Helper()
+	ctx := context.Background()
+	var libID, itemID string
+	if err := s.db.QueryRow(`SELECT library_id, id FROM library_items WHERE kind = 'movie'`).Scan(&libID, &itemID); err != nil {
+		t.Fatal(err)
+	}
+	matches := func(q ItemQuery) bool {
+		q.LibraryID = libID
+		p, err := s.Items(ctx, grantAll, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(p.Items) == 1
+	}
+	yes := true
+	sv := served{res: matches(ItemQuery{Resolution: "1080p"}), hdr: matches(ItemQuery{HDR: &yes}), eng: matches(ItemQuery{AudioLanguage: "eng"})}
+	f, err := s.Facets(ctx, grantAll, libID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sv.facetRes, sv.facetAudio = len(f.Resolutions), len(f.AudioLanguages)
+	d, err := s.Item(ctx, grantAll, itemID)
+	if err != nil || len(d.Versions) != 1 {
+		t.Fatalf("detail %+v %v", d, err)
+	}
+	v := d.Versions[0]
+	sv.dur, sv.summaryDur, sv.container, sv.video, sv.audio = v.DurationMs, d.Item.DurationMs, v.Container, len(v.Video), len(v.Audio)
+	return sv
+}
+
+// assertFactsServed: the current probe's facts reach filters, facets and detail.
+func assertFactsServed(t *testing.T, s *Store) {
+	t.Helper()
+	sv := servedFacts(t, s)
+	if !sv.res || !sv.hdr || !sv.eng || sv.facetRes != 1 || sv.facetAudio != 2 || sv.dur == nil || sv.summaryDur == nil ||
+		sv.container != "matroska" || sv.video != 1 || sv.audio != 3 {
+		t.Fatalf("facts not served: %+v", sv)
+	}
+}
+
+// assertFactsHidden: an older revision's probe reaches none of them.
+func assertFactsHidden(t *testing.T, s *Store) {
+	t.Helper()
+	sv := servedFacts(t, s)
+	if sv.res || sv.hdr || sv.eng || sv.facetRes != 0 || sv.facetAudio != 0 || sv.dur != nil || sv.summaryDur != nil ||
+		sv.container != "" || sv.video != 0 || sv.audio != 0 {
+		t.Fatalf("old facts served: %+v", sv)
+	}
+}
+
+// #168, #181 review: facts and the stored probe count only while they
+// describe the file's current revision, whoever moved size/mtime_ns. A file
+// restored to its probed revision gets them back without a new probe.
+func TestOldProbeFactsCountOnlyForTheirRevision(t *testing.T) {
+	const rel = "Movies/Heat (1995)/Heat (1995).mkv"
+	s, _, m, sc, root := setupMovies(t, "Heat (1995)/Heat (1995).mkv")
+	probeDue(t, sc, root, factsProber{})
+	assertFactsServed(t, s)
+	scan(t, sc, root) // unchanged: still served
+	assertFactsServed(t, s)
+	info, err := os.Stat(filepath.Join(m.dir, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.write(rel, 20)
+	scan(t, sc, root)
+	assertFactsHidden(t, s)
+	m.write(rel, 10)
+	if err := os.Chtimes(filepath.Join(m.dir, rel), info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	scan(t, sc, root)
+	assertFactsServed(t, s)
+	if run := probeDue(t, sc, root, factsProber{}); run.Queued != 0 {
+		t.Fatalf("restored file probed again: %+v", run)
+	}
+}
+
+// #168: the start-up backfill derives facts only from a probe of the file's
+// current revision, so it can't bring back facts a change cleared.
+func TestBackfillSkipsProbeOfOlderRevision(t *testing.T) {
+	s, _, m, sc, root := setupMovies(t, "Heat (1995)/Heat (1995).mkv")
+	probeDue(t, sc, root, factsProber{})
+	m.write("Movies/Heat (1995)/Heat (1995).mkv", 20)
+	scan(t, sc, root)
+	if _, f, err := s.BackfillDerived(context.Background()); err != nil || f != 0 {
+		t.Fatalf("backfill files %d, err %v", f, err)
+	}
+	assertFactsHidden(t, s)
+}
+
+// #168, #181 review: a probe of the changed file that times out or is
+// deferred moves size/mtime_ns on (retryTimeout, the ErrChanged branch)
+// without storing facts; the old revision's facts still don't count.
+func TestTimedOutOrDeferredProbeKeepsNoOldFacts(t *testing.T) {
+	const rel = "Heat (1995)/Heat (1995).mkv"
+	for name, p := range map[string]func(m *media) Prober{
+		"timeout":  func(*media) Prober { return &scriptedProber{fail: map[string]error{rel: probe.ErrTimeout}} },
+		"deferred": func(m *media) Prober { return &scriptedProber{during: func(r string) { m.write("Movies/"+r, 99) }} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, _, m, sc, root := setupMovies(t, rel)
+			probeDue(t, sc, root, factsProber{})
+			m.write("Movies/"+rel, 20)
+			scan(t, sc, root)
+			if run := probeDue(t, sc, root, p(m)); run.TimedOut+run.Deferred != 1 {
+				t.Fatalf("%+v", run)
+			}
+			assertFactsHidden(t, s)
+		})
+	}
 }
