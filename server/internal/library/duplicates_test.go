@@ -360,3 +360,50 @@ func TestLooseFileMoveFoldsWhenAnotherLibraryHasTheSameShow(t *testing.T) {
 		t.Fatalf("TV shows %v, want %v", got, before)
 	}
 }
+
+// A fold, by rename or by the admin's merge, carries the other item's extras
+// into the surviving item (decision 6a).
+func TestFoldCarriesExtras(t *testing.T) {
+	t.Run("rename", func(t *testing.T) {
+		s, _ := newStore(t)
+		m := newMedia(t)
+		m.write("Movies/Heat (1995)/Heat (1995).mkv", 10)
+		m.write("Movies/Heat (1995)/Featurettes/a.mkv", 10)
+		lib, _ := s.CreateLibrary(context.Background(), "Movies", "movies", []string{"Movies"})
+		sc := m.scanner(s)
+		scan(t, sc, lib.Roots[0].ID)
+		heat := itemID(t, s, "movie:heat|1995")
+
+		os.RemoveAll(filepath.Join(m.dir, "Movies/Heat (1995)"))
+		m.write("Movies/Heat (1995) {imdb-tt0113277}/Heat (1995).mkv", 10)
+		// Walked after the movie, so it is placed on the new folder's provisional item.
+		m.write("Movies/Heat (1995) {imdb-tt0113277}/Trailers/b.mkv", 10)
+		scan(t, sc, lib.Roots[0].ID)
+		want := []string{"movie:heat|1995 featurette a", "movie:heat|1995 trailer b"}
+		if got := s.extras(t); itemID(t, s, "movie:heat|1995") != heat || !slices.Equal(got, want) {
+			t.Fatalf("extras %v, want %v", got, want)
+		}
+	})
+	t.Run("merge", func(t *testing.T) {
+		s, _ := newStore(t)
+		m := newMedia(t)
+		m.write("Movies/Heat (1995)/Heat (1995).mkv", 10)
+		m.write("Movies/Heat (1995)/Trailers/a.mkv", 10)
+		m.write("Movies/Heat.1995/Heat.1995.mkv", 20)
+		m.write("Movies/Heat.1995/Trailers/b.mkv", 20)
+		ctx := context.Background()
+		lib, _ := s.CreateLibrary(ctx, "Movies", "movies", []string{"Movies"})
+		scan(t, m.scanner(s), lib.Roots[0].ID)
+		d := dups(t, s, lib.ID)
+		if len(d) != 1 {
+			t.Fatalf("duplicates %+v", d)
+		}
+		if err := s.Decide(ctx, d[0].ID, true); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"movie:heat|1995 trailer a", "movie:heat|1995 trailer b"}
+		if got := s.extras(t); !slices.Equal(got, want) {
+			t.Fatalf("extras %v, want %v", got, want)
+		}
+	})
+}

@@ -235,6 +235,9 @@ func (sc *Scanner) Scan(ctx context.Context, rootID, scope, cause string) (Run, 
 	if err := st.settle(bg, rootID, full); err != nil {
 		return dbFailed(err)
 	}
+	if err := st.adopt(bg, rootID, full); err != nil {
+		return dbFailed(err)
+	}
 	return sc.finish(bg, root, run, full, RunCompleted, "", RootAvailable)
 }
 
@@ -417,14 +420,18 @@ func (s *Store) place(ctx context.Context, tx *sql.Tx, root Root, libType, fileI
 	libID := root.LibraryID
 	e, err := naming.Classify(libType, f.Path, f.Rev.Size)
 	if err != nil {
-		run.Unplaced++
 		reason := "unrecognised"
 		switch {
 		case errors.Is(err, naming.ErrExtra):
 			reason = "extra"
+			placed, err := s.placeExtra(ctx, tx, root, fileID, f.Path)
+			if placed || err != nil {
+				return err
+			}
 		case errors.Is(err, naming.ErrSample):
 			reason = "sample"
 		}
+		run.Unplaced++
 		_, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = ? WHERE id = ?`, reason, fileID)
 		return err
 	}

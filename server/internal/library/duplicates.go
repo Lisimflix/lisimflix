@@ -239,11 +239,12 @@ func fold(ctx context.Context, tx *sql.Tx, into, other string) error {
 	return moveInto(ctx, tx, into, other)
 }
 
-// moveInto gives item into the versions and ID hints of item from, then
+// moveInto gives item into the versions, extras and ID hints of item from, then
 // deletes from (its children have already been moved).
 func moveInto(ctx context.Context, tx *sql.Tx, into, from string) error {
 	for _, q := range []string{
 		`UPDATE OR IGNORE library_versions SET item_id = ? WHERE item_id = ?`,
+		`UPDATE OR IGNORE library_extras SET item_id = ? WHERE item_id = ?`,
 		`INSERT OR IGNORE INTO library_id_hints(item_id, namespace, value) SELECT ?, namespace, value FROM library_id_hints WHERE item_id = ?`,
 		`UPDATE library_items SET parent_id = ? WHERE parent_id = ?`,
 	} {
