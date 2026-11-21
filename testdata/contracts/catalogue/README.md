@@ -17,10 +17,11 @@ provider keys or personal data here.
 | `libraries.json` | `LibraryList` | A movie library (idle scan, `partial` availability) and an anime library (scanning, 1,204 of 3,410 files, `available`) |
 | `items-movies.json` | `ItemPage` | A first page (`total` 412, a next page): a partly watched movie with a resume position (`matched` null), and an unmatched movie whose file is offline (`matched` and `available` false) |
 | `items-episodes.json` | `ItemPage` | A later page (`total` null): episodes 1–2 of a season, with `showTitle` and `seasonIndex`. Both live in one file with unknown boundaries, so neither has a duration; episode 1 was marked watched by hand |
-| `item-movie.json` | `ItemDetail` | A movie with two versions: a 1080p MP4 and a 4K HDR10 Director's Cut with TrueHD Atmos (audio `profile`), an untagged AC-3 track with no profile and forced PGS subtitles. Version 2 is offline. A viewer's response: both `fileName`s are null. Also `communityRating`, `directors` and `studios` |
-| `item-movie-admin.json` | `ItemDetail` | The same movie as an admin sees it: both versions carry a bare `fileName` |
-| `item-episode-shared-file.json` | `ItemDetail` | Episode 2: its version's file (`fil-synthetic-0003`) also holds episode 1, and `segment` is null because the boundaries are unknown |
-| `item-show.json` | `ItemDetail` | A show: no user state, no duration, no versions, `childCount` 2, `available` null |
+| `item-movie.json` | `ItemDetail` | A movie with two versions: a 1080p MP4 and a 4K HDR10 Director's Cut with TrueHD Atmos (audio `profile`), an untagged AC-3 track with no profile and forced PGS subtitles. Version 2 is offline. A viewer's response: every `fileName` is null. Also `communityRating`, `directors` and `studios`, and two extras: a trailer and an offline featurette (`version.available` false); each extra's `id` is its `version.id` |
+| `item-movie-admin.json` | `ItemDetail` | The same movie as an admin sees it: both versions and both extras carry a bare `fileName` |
+| `item-episode-shared-file.json` | `ItemDetail` | Episode 2: its version's file (`fil-synthetic-0003`) also holds episode 1, and `segment` is null because the boundaries are unknown. No extras (always empty for episodes) |
+| `item-episode-chaptered.json` | `ItemDetail` | The same episode when the file's two chapters tile it: `segment` is 25:00–50:00 of the 50-minute file (`durationMs` is the file's) |
+| `item-show.json` | `ItemDetail` | A show: no user state, no duration, no versions, `childCount` 2, `available` null, and one featurette extra |
 | `facets.json` | `LibraryFacets` | Two genres, years 2006–2023, English and Japanese audio, 1080p and 4K, HDR and SDR present |
 | `continue-watching.json` | `ItemPage` | A home row: a movie with a resume, and an episode with `showTitle` and a resume. `total` is null |
 | `next-up.json` | `ItemPage` | A home row: episode 2 of a second show, fresh state (the first show has an episode in progress, so it is in `continue-watching.json` instead). `total` is null |

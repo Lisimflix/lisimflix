@@ -23,7 +23,7 @@ var contractTypes = map[string]any{
 	"Page": Page[Movie]{}, "Library": Library{}, "LibraryScan": LibraryScan{}, "LibraryFacets": LibraryFacets{},
 	"YearRange": YearRange{}, "ContentRating": ContentRating{}, "ItemSummary": ItemSummary{}, "ItemPage": ItemPage{},
 	"CommunityRating": CommunityRating{}, "ExternalID": ExternalID{}, "ItemDetail": ItemDetail{},
-	"MediaVersion": MediaVersion{}, "Segment": Segment{}, "VideoStream": VideoStream{}, "AudioStream": AudioStream{},
+	"MediaVersion": MediaVersion{}, "Extra": Extra{}, "Segment": Segment{}, "VideoStream": VideoStream{}, "AudioStream": AudioStream{},
 	"SubtitleStream": SubtitleStream{}, "Viewer": Viewer{}, "AuthState": AuthState{}, "Movie": Movie{},
 	"MovieList": MovieList{}, "PlaybackSession": PlaybackSession{}, "APIError": APIError{},
 	"LoginRequest": LoginRequest{}, "PlaybackSessionRequest": PlaybackSessionRequest{}, "HeartbeatRequest": HeartbeatRequest{},

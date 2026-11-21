@@ -179,7 +179,7 @@ func TestOpenAPIMatchesGoTypes(t *testing.T) {
 		"ProgressEvent": ProgressEvent{}, "ProgressResult": ProgressResult{}, "WatchedRequest": WatchedRequest{},
 		"Library": Library{}, "LibraryList": LibraryList{}, "LibraryScan": LibraryScan{}, "LibraryFacets": LibraryFacets{}, "YearRange": YearRange{}, "CommunityRating": CommunityRating{}, "ContentRating": ContentRating{},
 		"ItemSummary": ItemSummary{}, "ItemPage": ItemPage{}, "ExternalId": ExternalID{}, "ItemDetail": ItemDetail{},
-		"MediaVersion": MediaVersion{}, "Segment": Segment{},
+		"MediaVersion": MediaVersion{}, "Extra": Extra{}, "Segment": Segment{},
 		"VideoStream": VideoStream{}, "AudioStream": AudioStream{}, "SubtitleStream": SubtitleStream{},
 		"Profile": Profile{}, "ProfilePolicy": ProfilePolicy{}, "ProfileList": ProfileList{},
 		"ItemMetadata": ItemMetadata{}, "MetadataFields": MetadataFields{},

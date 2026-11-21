@@ -27,5 +27,27 @@
   "directors": [],
   "studios": [],
   "externalIds": [{ "namespace": "anilist", "id": "700001" }, { "namespace": "tvdb", "id": "600001" }],
-  "versions": []
+  "versions": [],
+  "extras": [
+    {
+      "id": "ext-synthetic-0003",
+      "type": "featurette",
+      "title": "Inside Synthetic Show",
+      "version": {
+        "id": "ext-synthetic-0003",
+        "fileId": "fil-synthetic-0006",
+        "label": null,
+        "sizeBytes": 209715200,
+        "available": true,
+        "fileName": null,
+        "durationMs": 600000,
+        "sourceRevision": "d5b8a7773530b1f7c55189bb66b3a6345bcc407956b8a1d7bb49b1f6bfb3dfb8",
+        "segment": null,
+        "container": "mov,mp4,m4a,3gp,3g2,mj2",
+        "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],
+        "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "eng", "title": null, "default": true, "forced": false }],
+        "subtitles": []
+      }
+    }
+  ]
 }

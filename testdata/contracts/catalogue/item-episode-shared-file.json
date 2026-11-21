@@ -51,5 +51,6 @@
       "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "jpn", "title": null, "default": true, "forced": false }],
       "subtitles": [{ "index": 2, "codec": "ass", "kind": "ass", "language": "eng", "title": "Full", "default": true, "forced": false, "hearingImpaired": false }]
     }
-  ]
+  ],
+  "extras": []
 }

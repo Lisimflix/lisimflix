@@ -12,6 +12,7 @@ var catalogueFixtures = map[string]func() any{
 	"item-movie.json":               func() any { return &ItemDetail{} },
 	"item-movie-admin.json":         func() any { return &ItemDetail{} },
 	"item-episode-shared-file.json": func() any { return &ItemDetail{} },
+	"item-episode-chaptered.json":   func() any { return &ItemDetail{} },
 	"item-show.json":                func() any { return &ItemDetail{} },
 	"facets.json":                   func() any { return &LibraryFacets{} },
 	"continue-watching.json":        func() any { return &ItemPage{} },
@@ -47,4 +48,5 @@ func TestCatalogueEnumsMatchOpenAPI(t *testing.T) {
 	checkEnum(t, "Library", "availability", AvailabilityAvailable, AvailabilityPartial, AvailabilityOffline)
 	checkSchemaEnum(t, "Resolution", ResolutionSD, Resolution720, Resolution1080, Resolution4K)
 	checkParamEnum(t, "Sort", SortTitle, SortAdded, SortYear)
+	checkSchemaEnum(t, "ExtraType", ExtraTrailer, ExtraFeaturette, ExtraBehindTheScenes, ExtraDeletedScene, ExtraInterview, ExtraScene, ExtraShort, ExtraOther)
 }

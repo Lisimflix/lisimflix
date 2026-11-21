@@ -568,8 +568,22 @@ export interface components {
             directors: string[];
             studios: string[];
             externalIds: components["schemas"]["ExternalId"][];
-            /** @description Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired; `available` says which can play now. */
+            /** @description Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired, except that a version whose file is missing is listed only when no version is available or its root is offline (LIB-3 decision 2); `available` says which can play now. */
             versions: components["schemas"]["MediaVersion"][];
+            /** @description Trailers, featurettes and other extras of a movie or show. Empty for seasons and episodes. */
+            extras: components["schemas"]["Extra"][];
+        } & (unknown & unknown);
+        /**
+         * @description Kind of extra
+         * @enum {string}
+         */
+        ExtraType: "trailer" | "featurette" | "behindTheScenes" | "deletedScene" | "interview" | "scene" | "short" | "other";
+        /** @description A trailer, featurette or other extra of a movie or show. id equals version.id and is the extra's own playback itemId, so its progress never counts towards the parent (LIB-3 decision 4). */
+        Extra: {
+            id: string;
+            type: components["schemas"]["ExtraType"];
+            title: string;
+            version: components["schemas"]["MediaVersion"];
         };
         CommunityRating: {
             /** @description Provider, e.g. tmdb */
@@ -580,7 +594,7 @@ export interface components {
         MediaVersion: {
             id: string;
             fileId: string;
-            /** @description e.g. Director's Cut. Null when the item has one unnamed version. */
+            /** @description e.g. Director's Cut. null for the first unnamed version; later copies read 'Version n' or 'label (n)', n counted over the listed versions. */
             label: string | null;
             /** Format: int64 */
             durationMs: number | null;

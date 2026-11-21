@@ -701,7 +701,7 @@
       "ItemDetail": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["item", "originalTitle", "overview", "genres", "externalIds", "versions", "communityRating", "directors", "studios"],
+        "required": ["item", "originalTitle", "overview", "genres", "externalIds", "versions", "extras", "communityRating", "directors", "studios"],
         "description": "Decision 7: communityRating, directors and studios are META-1's. Version file names are admin-only (decision 1).",
         "properties": {
           "item": { "$ref": "#/components/schemas/ItemSummary" },
@@ -712,10 +712,32 @@
           "directors": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "studios": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
-          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired; `available` says which can play now." }
+          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired, except that a version whose file is missing is listed only when no version is available or its root is offline (LIB-3 decision 2); `available` says which can play now." },
+          "extras": { "type": "array", "items": { "$ref": "#/components/schemas/Extra" }, "description": "Trailers, featurettes and other extras of a movie or show. Empty for seasons and episodes." }
         },
-        "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
-        "then": { "properties": { "versions": { "maxItems": 0 } } }
+        "allOf": [
+          {
+            "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
+            "then": { "properties": { "versions": { "maxItems": 0 } } }
+          },
+          {
+            "if": { "properties": { "item": { "properties": { "kind": { "enum": ["season", "episode"] } } } } },
+            "then": { "properties": { "extras": { "maxItems": 0 } } }
+          }
+        ]
+      },
+      "ExtraType": { "type": "string", "enum": ["trailer", "featurette", "behindTheScenes", "deletedScene", "interview", "scene", "short", "other"], "description": "Kind of extra" },
+      "Extra": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "title", "version"],
+        "description": "A trailer, featurette or other extra of a movie or show. id equals version.id and is the extra's own playback itemId, so its progress never counts towards the parent (LIB-3 decision 4).",
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/components/schemas/ExtraType" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "version": { "$ref": "#/components/schemas/MediaVersion" }
+        }
       },
       "CommunityRating": {
         "type": "object",
@@ -734,7 +756,7 @@
         "properties": {
           "id": { "type": "string", "minLength": 1 },
           "fileId": { "type": "string", "minLength": 1 },
-          "label": { "type": ["string", "null"], "minLength": 1, "maxLength": 100, "description": "e.g. Director's Cut. Null when the item has one unnamed version." },
+          "label": { "type": ["string", "null"], "minLength": 1, "maxLength": 100, "description": "e.g. Director's Cut. null for the first unnamed version; later copies read 'Version n' or 'label (n)', n counted over the listed versions." },
           "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1 },
           "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes." },
           "segment": { "oneOf": [{ "$ref": "#/components/schemas/Segment" }, { "type": "null" }] },
