@@ -159,6 +159,7 @@ checkFixtures(catalogueFixtures, [
   ["path in extra fileName", "item-movie-admin.json", (d) => { d.extras[0].version.fileName = "/media/x.mkv"; }],
   ["extras on an episode", "item-episode-shared-file.json", (d) => { d.extras = catalogue("item-movie.json").extras; }],
   ["extra without version", "item-movie.json", (d) => { delete d.extras[0].version; }],
+  ["extras on a season", "item-show.json", (d) => { Object.assign(d.item, { kind: "season", parentId: "shw-synthetic-0001", showTitle: "Synthetic Show" }); }],
 ]);
 
 const profileFixtures = { "profiles.json": "ProfileList" };

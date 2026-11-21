@@ -21,6 +21,22 @@ var catalogueFixtures = map[string]func() any{
 
 func TestCatalogueFixturesRoundTrip(t *testing.T) { roundTripFixtures(t, catalogueFixtures) }
 
+// Decision 4: an extra's ID is its version's ID (the extra's playback itemId).
+func TestExtraIDIsVersionID(t *testing.T) {
+	for name, newValue := range catalogueFixtures {
+		d, ok := newValue().(*ItemDetail)
+		if !ok {
+			continue
+		}
+		decodeStrict(t, loadCatalogueFixture(t, name), d)
+		for _, e := range d.Extras {
+			if e.ID != e.Version.ID {
+				t.Errorf("%s: extra %s has version %s", name, e.ID, e.Version.ID)
+			}
+		}
+	}
+}
+
 func TestEmptyPagesEncodeItemsAsArray(t *testing.T) {
 	for _, c := range []struct {
 		v    any

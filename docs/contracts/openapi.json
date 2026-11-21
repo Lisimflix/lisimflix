@@ -717,12 +717,12 @@
         },
         "allOf": [
           {
-            "if": { "properties": { "item": { "properties": { "kind": { "enum": ["show", "season"] } } } } },
-            "then": { "properties": { "versions": { "maxItems": 0 } } }
+            "if": { "properties": { "item": { "type": "object", "properties": { "kind": { "enum": ["show", "season"] } } } } },
+            "then": { "properties": { "versions": { "type": "array", "maxItems": 0 } } }
           },
           {
-            "if": { "properties": { "item": { "properties": { "kind": { "enum": ["season", "episode"] } } } } },
-            "then": { "properties": { "extras": { "maxItems": 0 } } }
+            "if": { "properties": { "item": { "type": "object", "properties": { "kind": { "enum": ["season", "episode"] } } } } },
+            "then": { "properties": { "extras": { "type": "array", "maxItems": 0 } } }
           }
         ]
       },
