@@ -404,7 +404,19 @@ func (s *Store) applyFiles(ctx context.Context, root Root, libType, runID string
 				return err
 			}
 			if !unplaced.Valid {
-				continue // already placed
+				if state == "present" {
+					continue // already placed
+				}
+				// A returning file whose version was adopted by its
+				// replacement has no row left: place it again (LIB-3).
+				var placed bool
+				if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM library_versions WHERE file_id = ?)
+					OR EXISTS (SELECT 1 FROM library_extras WHERE file_id = ?)`, id, id).Scan(&placed); err != nil {
+					return err
+				}
+				if placed {
+					continue
+				}
 			}
 		}
 		if err := s.place(ctx, tx, root, libType, id, f, run); err != nil {
@@ -531,12 +543,6 @@ func (s *Store) item(ctx context.Context, tx *sql.Tx, libID string, it item) (st
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM library_items WHERE library_id = ? AND scan_key = ?`, libID, it.key).Scan(&id)
 	return id, err
-}
-
-func (s *Store) version(ctx context.Context, tx *sql.Tx, itemID, fileID, label string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO library_versions(id, item_id, file_id, label) VALUES(?, ?, ?, NULLIF(?, ''))
-		ON CONFLICT(item_id, file_id) DO NOTHING`, newID("ver"), itemID, fileID, label)
-	return err
 }
 
 func (s *Store) hints(ctx context.Context, tx *sql.Tx, itemID string, ids map[string]string) error {

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Lisimflix/lisimflix/server/internal/library/naming"
@@ -106,7 +107,7 @@ func (s *Store) settle(ctx context.Context, rootID string, flag bool) error {
 // item of the library mapped from the same naming key, not only the one
 // whose key it clashed with: after an admin's "keep separate" or "merge",
 // either folder can be renamed later. A candidate qualifies if one of its
-// folders has no present file left (that folder is gone), or, for loose
+// folders has no present file left but extras (that folder is gone), or, for loose
 // files, if it has no present file at all.
 func renamed(ctx context.Context, tx *sql.Tx, other string) (string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT c.item_id FROM library_folders o
@@ -132,8 +133,7 @@ func renamed(ctx context.Context, tx *sql.Tx, other string) (string, error) {
 	for _, c := range cands {
 		var gone bool
 		if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM library_folders f WHERE f.item_id = ? AND f.folder != ''
-			AND NOT EXISTS (SELECT 1 FROM library_files x WHERE x.root_id = f.root_id AND x.state = 'present'
-				AND x.path >= f.folder || '/' AND x.path < f.folder || '0'))`, c).Scan(&gone); err != nil {
+			AND `+folderGone+`)`, c).Scan(&gone); err != nil {
 			return "", err
 		}
 		if !gone {
@@ -154,16 +154,22 @@ func renamed(ctx context.Context, tx *sql.Tx, other string) (string, error) {
 }
 
 // dropGoneFolders removes the item's mappings for folders with no present
-// file left: the folder a rename replaced. Kept, it would make every later
+// file left but extras: the folder a rename replaced. Kept, it would make every later
 // folder with the same naming key look like another rename of it, and a
 // coexisting copy would be folded in silently (Pete, #111). If the old
 // folder comes back, it is a new folder and is flagged.
 func dropGoneFolders(ctx context.Context, tx *sql.Tx, itemID string) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM library_folders AS f WHERE f.item_id = ? AND f.folder != ''
-		AND NOT EXISTS (SELECT 1 FROM library_files x WHERE x.root_id = f.root_id AND x.state = 'present'
-			AND x.path >= f.folder || '/' AND x.path < f.folder || '0')`, itemID)
+	_, err := tx.ExecContext(ctx, `DELETE FROM library_folders AS f WHERE f.item_id = ? AND f.folder != '' AND `+folderGone, itemID)
 	return err
 }
+
+// folderGone holds when library_folders row f has no present file left other
+// than extras (a library_extras row, or unplaced as 'extra'): Radarr moves the
+// movie and leaves Featurettes/ behind (decision 6a). renamed and
+// dropGoneFolders must share it, or #111 reopens.
+const folderGone = `NOT EXISTS (SELECT 1 FROM library_files x WHERE x.root_id = f.root_id AND x.state = 'present'
+	AND x.path >= f.folder || '/' AND x.path < f.folder || '0'
+	AND x.unplaced IS NOT 'extra' AND NOT EXISTS (SELECT 1 FROM library_extras e WHERE e.file_id = x.id))`
 
 // hasPresentFile reports whether any version under the item (or, for a
 // show, under its seasons and episodes) is on a present file. Scan keys are
@@ -240,8 +246,14 @@ func fold(ctx context.Context, tx *sql.Tx, into, other string) error {
 }
 
 // moveInto gives item into the versions, extras and ID hints of item from, then
-// deletes from (its children have already been moved).
+// deletes from (its children have already been moved). The versions that move
+// are renumbered after into's own; one whose file into already has is
+// ignored and deleted with from.
 func moveInto(ctx context.Context, tx *sql.Tx, into, from string) error {
+	ids, err := versionIDs(ctx, tx, from)
+	if err != nil {
+		return err
+	}
 	for _, q := range []string{
 		`UPDATE OR IGNORE library_versions SET item_id = ? WHERE item_id = ?`,
 		`UPDATE OR IGNORE library_extras SET item_id = ? WHERE item_id = ?`,
@@ -252,8 +264,33 @@ func moveInto(ctx context.Context, tx *sql.Tx, into, from string) error {
 			return err
 		}
 	}
-	_, err := tx.ExecContext(ctx, `DELETE FROM library_items WHERE id = ?`, from)
+	left, err := versionIDs(ctx, tx, from)
+	if err != nil {
+		return err
+	}
+	moved := slices.DeleteFunc(ids, func(id string) bool { return slices.Contains(left, id) })
+	if err := renumber(ctx, tx, into, moved); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM library_items WHERE id = ?`, from)
 	return err
+}
+
+func versionIDs(ctx context.Context, tx *sql.Tx, itemID string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT id FROM library_versions WHERE item_id = ?`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // Duplicate is a possible duplicate the admin decides: two folders of the

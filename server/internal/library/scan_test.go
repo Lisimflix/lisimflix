@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -197,14 +198,23 @@ func TestMovedFileKeepsItsItem(t *testing.T) {
 	lib, _ := s.CreateLibrary(ctx, "Movies", "movies", []string{"Movies"})
 	sc := m.scanner(s)
 	scan(t, sc, lib.Roots[0].ID)
-	// Radarr renames the folder and file: same title and year, same item.
-	os.RemoveAll(filepath.Join(m.dir, "Movies/Heat.1995.1080p"))
-	m.write("Movies/Heat (1995) {tmdb-949}/Heat (1995) - 1080p.mkv", 10)
-	if got := counts(scan(t, sc, lib.Roots[0].ID)); got != [6]int{1, 1, 0, 0, 1, 0} {
-		t.Fatalf("rename run %v", got)
-	}
-	if got := s.tree(t, lib.ID); !slices.Equal(got, []string{"movie Heat - v2"}) {
-		t.Fatalf("items %v", got) // the old version's file is missing; retirement removes it later
+	id := s.vers(t, heatKey)[0].ID
+	// Radarr renames the folder and file: same title and year, same item and
+	// version (LIB-3). Renamed back and forth, so a random-ID order can't
+	// hide a wrong ordinal.
+	names := []string{"Heat.1995.1080p/Heat.1995.1080p.mkv", "Heat (1995) {tmdb-949}/Heat (1995) - 1080p.mkv"}
+	for i := range 4 {
+		from, to := names[i%2], names[(i+1)%2]
+		os.RemoveAll(filepath.Join(m.dir, "Movies", path.Dir(from)))
+		m.write("Movies/"+to, 10)
+		run := counts(scan(t, sc, lib.Roots[0].ID))
+		if i == 0 && run != [6]int{1, 1, 0, 0, 1, 0} {
+			t.Fatalf("rename run %v", run)
+		}
+		if got := s.tree(t, lib.ID); !slices.Equal(got, []string{"movie Heat - v1"}) {
+			t.Fatalf("items %v", got)
+		}
+		only(t, s.vers(t, heatKey), id, to)
 	}
 }
 

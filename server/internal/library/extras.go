@@ -125,6 +125,6 @@ func (s *Store) adopt(ctx context.Context, rootID string, full bool) error {
 			return err
 		}
 	}
-	// Planned: LIB-3 (Task 3 calls adoptVersions(ctx, rootID, full) here, after extras are healed).
-	return nil
+	// After healing, so a healed file's fresh version can pair in this scan.
+	return s.adoptVersions(ctx, rootID, full)
 }

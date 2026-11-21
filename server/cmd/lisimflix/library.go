@@ -32,6 +32,10 @@ var newProber = func() library.Prober {
 // catalogue. Tests replace it to make it fail.
 var backfillSortKeys = (*library.Store).BackfillSortKeys
 
+// backfillVersions numbers versions placed before LIB-3 before serve mounts
+// the catalogue or starts scanning. Tests replace it to make it fail.
+var backfillVersions = (*library.Store).BackfillVersions
+
 // libraryOptions are the scheduler's settings: the spec defaults. Tests
 // shorten them.
 var libraryOptions = library.SchedulerOptions{}

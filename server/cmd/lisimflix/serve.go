@@ -40,11 +40,14 @@ type server struct {
 	root       *os.Root
 	db         *storage.DB // nil when storage failed to start
 	storageErr error
+	// versionsErr is the version backfill's failure (LIB-3): the catalogue
+	// stays unmounted, nothing scans and the server is not ready.
+	versionsErr error
 
 	stopNightly context.CancelFunc // stops the nightly job and the auth sweep
 	nightlyDone chan struct{}
 
-	scans       *library.Scheduler // nil when storage failed to start
+	scans       *library.Scheduler // nil when storage or the version backfill failed
 	stopLibrary context.CancelFunc
 	libraryDone chan struct{}
 	once        sync.Once
@@ -85,7 +88,8 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	}
 	var resolver playback.Resolver = single
 	var store *library.Store
-	var catalogue http.Handler // nil without storage or sort keys: its routes answer 404
+	var catalogue http.Handler // nil without storage, sort keys or numbered versions: its routes answer 404
+	var versionsErr error
 	if db != nil {
 		// LIB-2c: catalogue files play, and the M1 movie still does.
 		store = library.NewStore(db)
@@ -96,12 +100,22 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		// app falls back to M1) rather than page on missing keys.
 		access := library.M1Access(v)
 		resolver = playback.Chain(library.NewResolver(store, access), single)
-		if n, err := backfillSortKeys(store, ctx); err != nil {
-			log.Error("library.backfill_sort_keys", "items", n, "err", err.Error(), "catalogue", "not served")
-		} else {
-			if n > 0 {
-				log.Info("library.backfill_sort_keys", "items", n)
-			}
+		n, sortErr := backfillSortKeys(store, ctx)
+		switch {
+		case sortErr != nil:
+			log.Error("library.backfill_sort_keys", "items", n, "err", sortErr.Error(), "catalogue", "not served")
+		case n > 0:
+			log.Info("library.backfill_sort_keys", "items", n)
+		}
+		// LIB-3: versions from before seq and ordinal are numbered before
+		// anything lists or scans them. A failure keeps the catalogue
+		// unmounted and the scheduler stopped, and makes the server not ready.
+		if n, versionsErr = backfillVersions(store, ctx); versionsErr != nil {
+			log.Error("library.backfill_versions", "versions", n, "err", versionsErr.Error(), "catalogue", "not served")
+		} else if n > 0 {
+			log.Info("library.backfill_versions", "versions", n)
+		}
+		if sortErr == nil && versionsErr == nil {
 			catalogue = library.NewAPI(store, access, log).Handler()
 		}
 	}
@@ -127,7 +141,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	}
 	am.SetLogger(log)
 
-	s := &server{cfg: cfg, pb: pb, single: single, root: root, db: db, storageErr: storageErr,
+	s := &server{cfg: cfg, pb: pb, single: single, root: root, db: db, storageErr: storageErr, versionsErr: versionsErr,
 		nightlyDone: make(chan struct{}), libraryDone: make(chan struct{}), stopLibrary: func() {}}
 	nctx, cancel := context.WithCancel(context.Background())
 	s.stopNightly = cancel // also stops the auth sweep
@@ -141,7 +155,7 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	} else {
 		close(s.nightlyDone)
 	}
-	if s.db != nil {
+	if s.db != nil && s.versionsErr == nil {
 		// LIB-2: scans and probes run in the background; browsing and
 		// playback never wait for them.
 		sc := &library.Scanner{Store: store, Media: root}
@@ -173,6 +187,9 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 	ready := func(context.Context) error {
 		if s.storageErr != nil {
 			return s.storageErr
+		}
+		if s.versionsErr != nil {
+			return s.versionsErr
 		}
 		return single.Check(root)
 	}
