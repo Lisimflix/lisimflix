@@ -144,7 +144,7 @@ var (
 // Servarr quality words to its one resolution, or "" when it has none.
 func canonicalLabel(label string) string {
 	label = realRe.ReplaceAllString(junkRe.ReplaceAllString(label, ""), "")
-	label = strings.TrimSpace(spacesRe.ReplaceAllString(label, " "))
+	label = cleanTitle(label) // "Director's Cut - REPACK" leaves a dash
 	if noResQualities[strings.ToLower(label)] {
 		return ""
 	}
@@ -163,7 +163,7 @@ const maxLabelRunes = 90
 
 func cutLabel(label string) string {
 	if r := []rune(label); len(r) > maxLabelRunes {
-		return string(r[:maxLabelRunes])
+		return strings.TrimSpace(string(r[:maxLabelRunes]))
 	}
 	return label
 }
