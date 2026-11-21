@@ -163,7 +163,7 @@ const maxLabelRunes = 90
 
 func cutLabel(label string) string {
 	if r := []rune(label); len(r) > maxLabelRunes {
-		return strings.TrimSpace(string(r[:maxLabelRunes]))
+		return strings.TrimRight(string(r[:maxLabelRunes]), " -_.") // the cut may land inside " - "
 	}
 	return label
 }

@@ -82,8 +82,9 @@ func extra(dirs []string, stem string) (x ExtraEntry, bySuffix, ok bool) {
 		}
 		folder := parseName(own)
 		// "The Crime-Scene (2019)/The Crime-Scene.mkv" is the movie (decision 6c).
-		// The folder may spell it without the dash ("The Crime Scene (2019)"), so compare keys.
-		if fk := key(folder.Title); strings.HasSuffix(" "+fk, " "+key(s.suffix)) && key(parseName(stem).Title) == fk {
+		// The raw stem, suffix word included, must key like the folder's title; a
+		// year-named extra ("The Interview (2014)-interview") keys differently.
+		if key(stem) == key(folder.Title) {
 			return ExtraEntry{}, false, false
 		}
 		pre := strings.TrimSpace(stem[:len(stem)-len(s.suffix)])
