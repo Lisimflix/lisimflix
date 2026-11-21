@@ -41,8 +41,6 @@ var extraSuffixes = []struct {
 // Extra reports whether rel (a slash-separated path inside a root) is an
 // extra, and where it belongs. It is type-blind; Classify adds the episode
 // rule for TV and anime libraries.
-//
-// Planned: LIB-3 (the scan's placeExtra places extras with it, Task 2).
 func Extra(rel string) (ExtraEntry, bool) {
 	parts := strings.Split(rel, "/")
 	dirs, file := parts[:len(parts)-1], parts[len(parts)-1]
@@ -125,8 +123,6 @@ func climb(dirs []string) []string {
 
 // IsResolutionLabel reports whether label names only a resolution, the
 // adoption class of decision 2.
-//
-// Planned: LIB-3 (adoptVersions and BackfillVersions, Task 3).
 func IsResolutionLabel(label string) bool {
 	l := strings.ToLower(label)
 	return l == "" || resolution(l) == l
@@ -134,8 +130,6 @@ func IsResolutionLabel(label string) bool {
 
 // FoldLabel lower-cases ASCII letters only, matching SQLite lower(), so Go and
 // SQL group labels the same way (decision 6e).
-//
-// Planned: LIB-3 (placement, adoption and RelabelVersion compare labels with it, Task 3).
 func FoldLabel(label string) string {
 	return strings.Map(func(r rune) rune {
 		if 'A' <= r && r <= 'Z' {

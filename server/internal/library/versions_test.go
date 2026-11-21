@@ -945,3 +945,37 @@ func TestUpgradeAsTwoFileScopedScans(t *testing.T) {
 		only(t, s.vers(t, heatKey), id, heatRepack)
 	}
 }
+
+// Controller ruling on Task 3: a moved version whose ordinal is free in into
+// is still flagged at its target, so no flag points at a higher ordinal.
+func TestRenumberKeepsFlagsBelow(t *testing.T) {
+	g := newGrp(t)
+	b := g.add(g.it, "1080p", "")
+	gap := g.add(g.it, "1080p", "")
+	c := g.add(g.it, "1080p", "")
+	if err := g.s.RelabelVersion(context.Background(), gap, "Director's Cut"); err != nil { // into: B(1), C(3)
+		t.Fatal(err)
+	}
+	if ord, _ := g.at(c); ord != 3 {
+		t.Fatalf("C ordinal %d, want 3", ord)
+	}
+	other := g.item("dup:x")
+	x := g.add(other, "1080p", "")
+	f := g.add(other, "1080p", "") // F(2) against X(1)
+	g.merge(g.it, other)
+	if ord, of := g.at(x); ord != 4 || of != b {
+		t.Fatalf("X ordinal %d against %s, want 4 against B", ord, of)
+	}
+	if ord, of := g.at(f); ord != 2 || of != b {
+		t.Fatalf("F ordinal %d against %s, want 2 against B", ord, of)
+	}
+	var up int
+	if err := g.s.db.QueryRow(`SELECT COUNT(*) FROM library_version_flags g JOIN library_versions v ON v.id = g.version_id
+		JOIN library_versions o ON o.id = g.of_id WHERE o.ordinal >= v.ordinal`).Scan(&up); err != nil {
+		t.Fatal(err)
+	}
+	if up != 0 {
+		t.Fatalf("%d flags point at an equal or higher ordinal", up)
+	}
+	noBadFlags(t, g.s)
+}

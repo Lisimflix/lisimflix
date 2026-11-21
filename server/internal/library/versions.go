@@ -170,6 +170,8 @@ func (s *Store) adoptVersions(ctx context.Context, rootID string, full bool) err
 	if !full {
 		return nil
 	}
+	// One statement, not batched by 500 rows: an exception to spec §10.2's
+	// bound, to measure in LIB-2c's scale run (#110).
 	_, err = s.db.ExecContext(ctx, `UPDATE library_versions SET fresh = 0
 		WHERE fresh = 1 AND file_id IN (SELECT id FROM library_files WHERE root_id = ?)`, rootID)
 	return err
@@ -292,8 +294,9 @@ func leaveGroup(ctx context.Context, tx *sql.Tx, vs []ver, n ver) error {
 }
 
 // renumber gives the versions moved into item into by a merge or rename fold
-// (moved, IDs) the next seqs, in their seq order, and a new ordinal and flag
-// when their ordinal is already taken in their label group. into's existing
+// (moved, IDs) the next seqs, in their seq order, and a new ordinal when
+// theirs is already taken in their label group; any ordinal above 1 is
+// flagged again at its target, so flags stay below. into's existing
 // versions never change; a rename then finishes in adoptVersions.
 func renumber(ctx context.Context, tx *sql.Tx, into string, moved []string) error {
 	vs, err := loadVersions(ctx, tx, into)
@@ -331,7 +334,7 @@ func renumber(ctx context.Context, tx *sql.Tx, into string, moved []string) erro
 		if _, err := tx.ExecContext(ctx, `UPDATE library_versions SET seq = ?, ordinal = ? WHERE id = ?`, m.seq, m.ord, m.id); err != nil {
 			return err
 		}
-		if taken {
+		if m.ord > 1 { // also when free: its old flag may point at a sibling just renumbered above it
 			if err := setFlag(ctx, tx, m.id, flagTarget(settled, m.label, m.ord, "")); err != nil {
 				return err
 			}
