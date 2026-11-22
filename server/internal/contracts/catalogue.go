@@ -247,7 +247,6 @@ const (
 )
 
 // Extra is a trailer, featurette or other bonus video of a movie or show.
-// Planned: LIB-3 (Task 7, getItem serves extras).
 type Extra struct {
 	ID      string       `json:"id"`   // also Version.ID; the extra's own playback item ID
 	Type    string       `json:"type"` // one of the Extra* constants

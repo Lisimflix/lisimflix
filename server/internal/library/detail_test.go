@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"slices"
@@ -524,5 +525,75 @@ func TestItemExtrasSkipMissingAfterRename(t *testing.T) {
 	}
 	if xs := e.s.extrasOf(t, grantAll, e.itemID("Show")); len(xs) != 1 {
 		t.Fatalf("retired extra listed on an offline root %+v", xs)
+	}
+}
+
+func TestItemDetailListsExtras(t *testing.T) {
+	e := newBrowse(t)
+	const featurette = "Movies/Film (2001)/Featurettes/Making Of.mkv"
+	e.library("Movies", "movies", []string{"Movies"}, filmHD, "Movies/Film (2001)/Film (2001)-trailer.mkv", featurette)
+	e.library("TV", "tv", []string{"TV"}, showEp, showExtra)
+	// The featurette's file sits on a second root that is offline.
+	if _, err := e.s.db.Exec(`INSERT INTO library_roots(id, library_id, path, state)
+		SELECT 'root-off', library_id, 'Elsewhere', 'offline' FROM library_roots WHERE path = 'Movies'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.db.Exec(`UPDATE library_files SET root_id = 'root-off' WHERE path = ?`, strings.TrimPrefix(featurette, "Movies/")); err != nil {
+		t.Fatal(err)
+	}
+	type shape struct {
+		typ, title string
+		available  bool
+	}
+	check := func(id string, want []shape) {
+		t.Helper()
+		d := e.detail(grantAll, id)
+		raw, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire struct {
+			Extras []json.RawMessage `json:"extras"`
+		}
+		if err := json.Unmarshal(raw, &wire); err != nil || wire.Extras == nil || len(wire.Extras) != len(want) {
+			t.Fatalf("%s: wire extras %s (%v)", id, raw, err)
+		}
+		if len(d.Extras) != len(want) {
+			t.Fatalf("%s: extras %+v, want %+v", id, d.Extras, want)
+		}
+		for i, x := range d.Extras {
+			if (shape{x.Type, x.Title, x.Version.Available}) != want[i] || x.ID == "" || x.ID != x.Version.ID ||
+				x.Version.FileID == "" || x.Version.SourceRevision != e.revisionOf(x.Version.FileID) || x.Version.FileName != nil {
+				t.Fatalf("%s: extra %d %+v, want %+v", id, i, x, want[i])
+			}
+		}
+	}
+	check(e.itemID("Film"), []shape{{contracts.ExtraFeaturette, "Making Of", false}, {contracts.ExtraTrailer, "Trailer", true}})
+	check(e.itemID("Show"), []shape{{contracts.ExtraFeaturette, "Making Of", true}})
+	check(e.itemID("Season 1"), nil)
+	check(e.itemID("Episode 1"), nil)
+}
+
+// LIB-3's integration proof through getItem: a second same-label copy is
+// numbered, and episodes sharing a file carry their segment.
+func TestItemDetailShowsNumberedAndSegmentedVersions(t *testing.T) {
+	e := newBrowse(t)
+	e.library("Movies", "movies", []string{"Movies"}, "Movies/Heat (1995)/Heat.1995.2160p.mkv")
+	e.m.write("Movies/Heat (1995)/Heat (1995) - 4K.mkv", 10)
+	var root string
+	if err := e.s.db.QueryRow(`SELECT id FROM library_roots WHERE path = 'Movies'`).Scan(&root); err != nil {
+		t.Fatal(err)
+	}
+	e.scan(root)
+	if got := labels(e.detail(grantAll, e.itemID("Heat")).Versions); !slices.Equal(got, []string{"2160p", "2160p (2)"}) {
+		t.Fatalf("labels %v", got)
+	}
+
+	se, ep1, ep2 := sharedFile(t)
+	for id, w := range map[string]contracts.Segment{ep1: {StartMs: 0, EndMs: 1_500_000}, ep2: {StartMs: 1_500_000, EndMs: 3_000_000}} {
+		vs := se.detail(grantAll, id).Versions
+		if len(vs) != 1 || vs[0].Segment == nil || *vs[0].Segment != w {
+			t.Fatalf("%s: %+v, want segment %v", id, vs, w)
+		}
 	}
 }

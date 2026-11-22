@@ -12,15 +12,15 @@ import (
 	"github.com/Lisimflix/lisimflix/server/internal/probe"
 )
 
-// Item returns one item with its genres and, for a movie or episode, every
-// listed version in LIB-2c decision 10's order (the first is the default,
-// whose duration the summary carries); LIB-3 decision 2 hides a missing
-// version beside a present one. An item outside the grant is ErrNotFound,
+// Item returns one item with its genres, a movie's or show's extras, and, for
+// a movie or episode, every listed version in LIB-2c decision 10's order (the
+// first is the default, whose duration the summary carries); LIB-3 decision 2
+// hides a missing version beside a present one. An item outside the grant is ErrNotFound,
 // the same as an unknown ID. META-1c fills the descriptive fields; until then
 // they are null or empty, and externalIds stays empty.
 func (s *Store) Item(ctx context.Context, g Grant, itemID string) (contracts.ItemDetail, error) {
 	d := contracts.ItemDetail{Genres: []string{}, ExternalIDs: []contracts.ExternalID{}, Versions: []contracts.MediaVersion{},
-		Directors: []string{}, Studios: []string{}}
+		Extras: []contracts.Extra{}, Directors: []string{}, Studios: []string{}}
 	err := s.read(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT `+itemColumns+itemJoins+` WHERE i.id = ?`, itemID)
 		if err != nil {
@@ -48,7 +48,12 @@ func (s *Store) Item(ctx context.Context, g Grant, itemID string) (contracts.Ite
 		}
 		d.Genres = append(d.Genres, genres...)
 		if it.Kind == contracts.KindMovie || it.Kind == contracts.KindEpisode {
-			d.Versions, err = s.itemVersions(ctx, tx, g, itemID)
+			if d.Versions, err = s.itemVersions(ctx, tx, g, itemID); err != nil {
+				return err
+			}
+		}
+		if it.Kind == contracts.KindMovie || it.Kind == contracts.KindShow {
+			d.Extras, err = s.itemExtras(ctx, tx, g, itemID)
 		}
 		return err
 	})
@@ -133,7 +138,6 @@ func (s *Store) itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID st
 // each played by its own ID (decision 4). A retired file's extra is gone, and
 // a missing one is left out unless its root is offline, so a renamed extra
 // doesn't list twice.
-// Planned: LIB-3 (Store.Item lists extras, Task 7).
 func (s *Store) itemExtras(ctx context.Context, tx *sql.Tx, g Grant, itemID string) ([]contracts.Extra, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT x.id, x.type, x.title, x.file_id, CASE WHEN f.duration_ms > 0 THEN f.duration_ms END,
 		f.size, f.mtime_ns, f.path, f.probe_json, (f.state = 'present' AND r.state != 'offline')
