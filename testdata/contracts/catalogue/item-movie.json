@@ -72,26 +72,6 @@
   ],
   "extras": [
     {
-      "id": "ext-synthetic-0001",
-      "type": "trailer",
-      "title": "Synthetic Test Movie Trailer",
-      "version": {
-        "id": "ext-synthetic-0001",
-        "fileId": "fil-synthetic-0004",
-        "label": null,
-        "sizeBytes": 52428800,
-        "available": true,
-        "fileName": null,
-        "durationMs": 150000,
-        "sourceRevision": "c3c9943268ffbd2c4aac8986f927c5d613b48d50b4181c1859752e277ef1c218",
-        "segment": null,
-        "container": "mov,mp4,m4a,3gp,3g2,mj2",
-        "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],
-        "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "eng", "title": null, "default": true, "forced": false }],
-        "subtitles": []
-      }
-    },
-    {
       "id": "ext-synthetic-0002",
       "type": "featurette",
       "title": "Making the Synthetic Movie",
@@ -104,6 +84,26 @@
         "fileName": null,
         "durationMs": 900000,
         "sourceRevision": "ddf58b4cd9e329d4d932ba631e4910beb10928dddfba050f25f8dffa3190433b",
+        "segment": null,
+        "container": "mov,mp4,m4a,3gp,3g2,mj2",
+        "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],
+        "audio": [{ "index": 1, "codec": "aac", "profile": "LC", "channels": 2, "language": "eng", "title": null, "default": true, "forced": false }],
+        "subtitles": []
+      }
+    },
+    {
+      "id": "ext-synthetic-0001",
+      "type": "trailer",
+      "title": "Synthetic Test Movie Trailer",
+      "version": {
+        "id": "ext-synthetic-0001",
+        "fileId": "fil-synthetic-0004",
+        "label": null,
+        "sizeBytes": 52428800,
+        "available": true,
+        "fileName": null,
+        "durationMs": 150000,
+        "sourceRevision": "c3c9943268ffbd2c4aac8986f927c5d613b48d50b4181c1859752e277ef1c218",
         "segment": null,
         "container": "mov,mp4,m4a,3gp,3g2,mj2",
         "video": [{ "index": 0, "codec": "h264", "width": 1920, "height": 1080, "hdr": "sdr", "default": true }],

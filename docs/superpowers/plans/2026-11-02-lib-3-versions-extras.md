@@ -68,9 +68,9 @@ Decided by Pete on 2026-11-02 (issue #160), "all recommended" (decision 2 revise
 
 7. **Rulings during implementation (2026-11-22, pending Pete's confirmation):**
    - **F9:** a non-extras folder between the extras folder and the file means the file stays unplaced (reason `extra`), e.g. `Collections/Shorts/Film (2010)/Film.mkv`; follows decision 6b.
-   - **`MediaVersion.durationMs`** is the whole file's length, also for a shared-file episode (matches `detail.go`). Pending Pete: it affects the watched rule.
+   - **`MediaVersion.durationMs`** is the whole file's length, also for a shared-file episode (matches `detail.go`). Pete accepted it (22 Nov); the OpenAPI description says so.
    - **F2:** if #181 merges first, a stale probe serves no probe data and Task 4 follows #181's `currentProbe`.
-   - **Extras order:** type, then title, then id.
+   - **Extras order:** type name (alphabetical), then title, then id. Pete accepted it (22 Nov).
    - **`S01E01-trailer`** reads as an episode: decision 6c's accepted residual.
 
 ## Global Constraints

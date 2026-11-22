@@ -713,7 +713,7 @@
           "studios": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
           "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired, except that a version whose file is missing is listed only when no version is available or its root is offline (LIB-3 decision 2); `available` says which can play now." },
-          "extras": { "type": "array", "items": { "$ref": "#/components/schemas/Extra" }, "description": "Trailers, featurettes and other extras of a movie or show, ordered by type, then title. Empty for seasons and episodes." }
+          "extras": { "type": "array", "items": { "$ref": "#/components/schemas/Extra" }, "description": "Trailers, featurettes and other extras of a movie or show, ordered by type name (alphabetical: behindTheScenes, deletedScene, featurette, …), then title. Empty for seasons and episodes." }
         },
         "allOf": [
           {
@@ -757,7 +757,7 @@
           "id": { "type": "string", "minLength": 1 },
           "fileId": { "type": "string", "minLength": 1 },
           "label": { "type": ["string", "null"], "minLength": 1, "maxLength": 100, "description": "e.g. Director's Cut. null for the first unnamed version; later copies read 'Version n' or 'label (n)', n counted over the listed versions." },
-          "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1 },
+          "durationMs": { "type": ["integer", "null"], "format": "int64", "minimum": 1, "description": "Length of the whole file, also when episodes share it; segment gives the episode's range." },
           "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes." },
           "segment": { "oneOf": [{ "$ref": "#/components/schemas/Segment" }, { "type": "null" }] },
           "container": { "type": "string", "description": "ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm; \"\" until the file is first probed" },

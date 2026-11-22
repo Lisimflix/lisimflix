@@ -570,7 +570,7 @@ export interface components {
             externalIds: components["schemas"]["ExternalId"][];
             /** @description Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired, except that a version whose file is missing is listed only when no version is available or its root is offline (LIB-3 decision 2); `available` says which can play now. */
             versions: components["schemas"]["MediaVersion"][];
-            /** @description Trailers, featurettes and other extras of a movie or show, ordered by type, then title. Empty for seasons and episodes. */
+            /** @description Trailers, featurettes and other extras of a movie or show, ordered by type name (alphabetical: behindTheScenes, deletedScene, featurette, …), then title. Empty for seasons and episodes. */
             extras: components["schemas"]["Extra"][];
         } & (unknown & unknown);
         /**
@@ -596,7 +596,10 @@ export interface components {
             fileId: string;
             /** @description e.g. Director's Cut. null for the first unnamed version; later copies read 'Version n' or 'label (n)', n counted over the listed versions. */
             label: string | null;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Length of the whole file, also when episodes share it; segment gives the episode's range.
+             */
             durationMs: number | null;
             /** @description Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes. */
             sourceRevision: string;
