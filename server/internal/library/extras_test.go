@@ -250,8 +250,15 @@ func TestAdoptHealsMisreadEpisode(t *testing.T) {
 	sc := m.scanner(s)
 	scan(t, sc, lib.Roots[0].ID)
 	// As if an older version had read it as an extra.
-	s.db.Exec(`DELETE FROM library_items`)
-	s.db.Exec(`UPDATE library_files SET unplaced = 'extra'`)
+	if _, err := s.db.Exec(`DELETE FROM library_items`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.db.Exec(`UPDATE library_files SET unplaced = 'extra'`); err != nil {
+		t.Fatal(err)
+	}
+	if u := s.unplaced(t); len(u) != 1 || u["Show (2019)/Season 01/Show - S01E02 - The Crime-Scene.mkv"] != "extra" {
+		t.Fatalf("before heal: unplaced %v", u)
+	}
 	m.write("TV/Other (2020)/Season 01/Other - S01E01.mkv", 10)
 	if _, err := sc.Scan(ctx, lib.Roots[0].ID, "Other (2020)", CauseWatch); err != nil {
 		t.Fatal(err)

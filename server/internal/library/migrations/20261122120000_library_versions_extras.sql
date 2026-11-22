@@ -20,3 +20,4 @@ CREATE TABLE library_version_flags (
     of_id TEXT NOT NULL REFERENCES library_versions(id) ON DELETE CASCADE,
     state TEXT NOT NULL CHECK (state IN ('flagged','kept'))
 ) STRICT;
+CREATE INDEX library_version_flags_of ON library_version_flags(of_id);

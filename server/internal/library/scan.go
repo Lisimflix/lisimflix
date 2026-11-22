@@ -444,7 +444,7 @@ func (s *Store) place(ctx context.Context, tx *sql.Tx, root Root, libType, fileI
 			reason = "sample"
 		}
 		run.Unplaced++
-		_, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = ? WHERE id = ?`, reason, fileID)
+		_, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = ? WHERE id = ? AND unplaced IS NOT ?`, reason, fileID, reason) // no-op when unchanged: adopt re-places unplaced extras every scan
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = NULL WHERE id = ?`, fileID); err != nil {
