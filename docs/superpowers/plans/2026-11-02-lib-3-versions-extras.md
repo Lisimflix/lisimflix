@@ -27,7 +27,7 @@
 | Branch | `feat/lib-3-versions-extras` (this plan's own docs PR uses `docs/lib-3-plan`) |
 | Owner / reviewers | Pete (claimant) / reviewers per `.github/CODEOWNERS` |
 | Acceptance | Spec row: stable logical identities, version choice, supplemental media, **version/cut reconciliation fixtures** (Task 6) |
-| File scope | `server/internal/library/{scan.go, duplicates.go}` and the changed expectations in `scan_test.go`, `duplicates_test.go`; new `library/{extras.go, versions.go, segments.go, backfill.go}` with `extras_test.go`, `versions_test.go`, `segments_test.go`, `backfill_test.go`, `reconcile_test.go`; `library/naming/{classify.go, names.go, extras.go}` with `classify_test.go`, `extras_test.go`; one new `library/migrations/*.sql`; `server/cmd/lisimflix/{serve.go, library.go, library_test.go}` (one call, its seam and its failure test); **Tasks 4 and 7:** `library/detail.go` (LIB-2c's `itemVersions`, extended in place), `library/browse.go` (`versionOrderSQL`: `v.ordinal` before `v.id` only) and `library/resolver.go` with their tests (`browse_test.go` too); `server/internal/contracts/{catalogue.go, catalogue_test.go, fixtures_test.go}`, `docs/contracts/openapi.json`, `testdata/contracts/catalogue/` (fixtures and `README.md`), `web/src/api/schema.d.ts` (generated), `web/tests/fake-api.ts` (one literal), `web/contract-tests/fixtures.test.mjs`; `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md`; `README.md` only if it misdescribes the branch |
+| File scope | `server/internal/library/{scan.go, duplicates.go}` and the changed expectations in `scan_test.go`, `duplicates_test.go`; new `library/{extras.go, versions.go, segments.go, backfill.go}` with `extras_test.go`, `versions_test.go`, `segments_test.go`, `reconcile_test.go` (backfill tests live in `versions_test.go`); `library/naming/{classify.go, names.go, extras.go}` with `classify_test.go`, `extras_test.go`; one new `library/migrations/*.sql`; `server/cmd/lisimflix/{serve.go, library.go, library_test.go}` (one call, its seam and its failure test); **Tasks 4 and 7:** `library/detail.go` (LIB-2c's `itemVersions`, extended in place), `library/browse.go` (`versionOrderSQL`: `v.ordinal` before `v.id` only) and `library/resolver.go` with their tests (`browse_test.go` and `detail_test.go` too); `server/internal/contracts/{catalogue.go, catalogue_test.go, nulls_test.go, types_test.go}`, `docs/contracts/openapi.json`, `testdata/contracts/catalogue/` (fixtures and `README.md`), `web/src/api/schema.d.ts` (generated), `web/tests/fake-api.ts` (one literal), `web/contract-tests/fixtures.test.mjs`; `docs/superpowers/plans/2026-10-24-catalogue-plans-map.md`; `README.md` only if it misdescribes the branch |
 | Consumes | `library_files`, `library_versions`, `library_folders`, `naming.Entry.Version`, `probe.Result.Chapters`, `contracts.MediaVersion`, `contracts.Segment` |
 | Produces | LIB-2c's `itemVersions(ctx, tx, g, itemID)` extended in place (signature and `[]contracts.MediaVersion` return unchanged), an unexported `itemExtras(ctx, tx, g, itemID)`, `Store.BackfillVersions`, `Store.VersionFlags` / `KeepVersions` / `RelabelVersion`, `naming.Extra` / `ExtraEntry` / `ExtraType` / `IsResolutionLabel` / `FoldLabel`, `library.SegmentOf`, `VersionFlag`, `contracts.Extra`, the `contracts.Extra*` constants, `ItemDetail.extras`, the reconciliation fixtures |
 | Start dependency | Tasks 1–3: none open (LIB-2a/2b and CTR-2 merged). Tasks 4, 6 and 7 need LIB-2c's code, which merged as #169 (Decision 5; Task 6's segment scenario needs Task 4). **Task 5 lands before Task 4**: `itemExtras` returns Task 5's `contracts.Extra`. Tasks 1–3 don't reach main without Task 7 |
@@ -65,6 +65,13 @@ Decided by Pete on 2026-11-02 (issue #160), "all recommended" (decision 2 revise
    - **(d) A stale probe hides only the segment (Task 4).** #169 serves container and streams from the stored probe whether or not it matches the file's revision; LIB-3 keeps that and only withholds `segment`, so LIB-2c's output doesn't change.
    - **(e) One label fold everywhere: ASCII only.** Placement, adoption pass 1, `RelabelVersion`, the backfill and the read-time rank all group labels with the same fold: SQLite `lower()` in SQL and `naming.FoldLabel` in Go (lower-cases ASCII letters only, so the two agree). `Édition` and `édition` are therefore two labels in every one of them: neither is numbered or flagged against the other.
    - **Not LIB-3's:** showing extras in the web app. It is a UI-2 follow-up, noted on #113; LIB-3 delivers `ItemDetail.extras`.
+
+7. **Rulings during implementation (2026-11-22, pending Pete's confirmation):**
+   - **F9:** a non-extras folder between the extras folder and the file means the file stays unplaced (reason `extra`), e.g. `Collections/Shorts/Film (2010)/Film.mkv`; follows decision 6b.
+   - **`MediaVersion.durationMs`** is the whole file's length, also for a shared-file episode (matches `detail.go`). Pending Pete: it affects the watched rule.
+   - **F2:** if #181 merges first, a stale probe serves no probe data and Task 4 follows #181's `currentProbe`.
+   - **Extras order:** type, then title, then id.
+   - **`S01E01-trailer`** reads as an episode: decision 6c's accepted residual.
 
 ## Global Constraints
 
@@ -200,7 +207,7 @@ Decided by Pete on 2026-11-02 (issue #160), "all recommended" (decision 2 revise
 **Files:**
 - Create: `server/internal/library/versions.go`, `server/internal/library/backfill.go`
 - Modify: `server/internal/library/scan.go` (`version` moves to `versions.go`; `applyFiles`' skip rule at `:400-402`), `server/internal/library/duplicates.go` (`moveInto`), `server/internal/library/duplicates.go` (`renamed` and `dropGoneFolders` share one folder-gone predicate that ignores extra files, decision 6a), `server/cmd/lisimflix/serve.go` and `library.go` (one **synchronous** `backfillVersions` call beside #169's `backfillSortKeys`, through the same kind of package-variable seam in `library.go`, before the catalogue handler is built and before the scheduler goroutine starts. A failure leaves the catalogue routes unmounted, as a sort-key failure does, keeps the scheduler from starting, and is the error `ready` returns, so `/health/ready` reports not ready. Readiness today checks only `storageErr` (a sort-key failure does not make the server not ready), so this is new behaviour: add a `versionsErr` field on `server` that `ready` also returns. Nothing scans or lists against `seq = 0` rows: the scheduler is the only scan caller in `serve`, and LIB-2d's admin `ScanRoot` route must be mounted only when this call succeeded, like the catalogue routes; that is a line for LIB-2d's plan), and the expectations that flip from `v2` to `v1` (a rename now ends with the old version; a null label counts as the same label): `scan_test.go:205-208` (`TestMovedFileKeepsItsItem`), `duplicates_test.go:121` (`TestRenamedFolderKeepsItemIDs`) and `duplicates_test.go:281` (`TestMergedFolderCanBeRenamed`)
-- Test: `server/internal/library/versions_test.go`, `backfill_test.go`, `server/cmd/lisimflix/main_test.go`
+- Test: `server/internal/library/versions_test.go` (backfill tests included), `server/cmd/lisimflix/library_test.go`
 
 **Interfaces:**
 - Consumes: the Task 2 migration (`ordinal`, `seq`, `fresh`, `library_version_flags`), `adopt`.
@@ -269,7 +276,7 @@ Decided by Pete on 2026-11-02 (issue #160), "all recommended" (decision 2 revise
 **Files:**
 - Create: `server/internal/library/segments.go`
 - Modify: `server/internal/library/detail.go` (LIB-2c's `itemVersions`, extended in place), `server/internal/library/browse.go` (`versionOrderSQL`: `v.ordinal` before `v.id`, nothing else; decision 5)
-- Test: `server/internal/library/segments_test.go`, `server/internal/library/browse_test.go`
+- Test: `server/internal/library/segments_test.go`, `server/internal/library/browse_test.go`, `server/internal/library/detail_test.go` (`TestItemDetailVersionsAndStreams` flips to one version, decision 2)
 
 **Interfaces:**
 - Consumes: `probe.Result{DurationMs, Chapters}`, `library_versions`, `library_extras`, `displayLabel`, **#169's `(*Store).itemVersions`**, which this task extends in place (no second path), and Task 5's `contracts.Extra`.
@@ -295,7 +302,7 @@ Decided by Pete on 2026-11-02 (issue #160), "all recommended" (decision 2 revise
   - `TestVersionOrderBreaksTiesByOrdinal` (`browse_test.go`): two same-label versions, both present, same `f.resolution`, different file `duration_ms`, with IDs **chosen** so the ordinal-2 version has the lower `id` → the ordinal-1 version is the default, and `listItems`' `durationMs` comes from its file (so the check tells them apart); then swap the IDs and get the same result.
 
   Run: `go -C server test ./internal/library -run 'TestSegmentOf|TestItemVersions|TestVersionOrder|TestItemExtras' -v`. Expected: FAIL.
-- [ ] **Step 2: Implement** `SegmentOf` as a pure function, add `v.ordinal` before `v.id` in `versionOrderSQL` (and update its doc comment, "then by version ID"), then the two reads (`itemVersions` extended in place, `itemExtras` new; one query each: version or extra joined to file and root; the stored probe keeps feeding `container` and the streams as on #169; `Segment` is computed only when `probe_size`/`probe_mtime_ns` equal the file's size/mtime). Shared-file detection is `SELECT v.item_id FROM library_versions v JOIN library_items i ON i.id = v.item_id WHERE v.file_id = ? AND i.kind = 'episode' AND i.parent_id = ? ORDER BY i.idx`.
+- [ ] **Step 2: Implement** `SegmentOf` as a pure function, add `v.ordinal` before `v.id` in `versionOrderSQL` (and update its doc comment, "then by version ID"), then the two reads (`itemVersions` extended in place, `itemExtras` new; one query each: version or extra joined to file and root; the stored probe keeps feeding `container` and the streams as on #169; `Segment` is computed only when `probe_size`/`probe_mtime_ns` equal the file's size/mtime). Shared-file detection is `SELECT v.item_id FROM library_versions v JOIN library_items i ON i.id = v.item_id WHERE v.file_id = ? AND i.kind = 'episode' AND i.parent_id = ? ORDER BY i.idx, i.air_date, i.id` (daily episodes have a NULL `idx`).
 - [ ] **Step 3: Run** the same command plus the package. Expected: PASS.
 - [ ] **Step 4: Commit** `feat(library): episode segments from chapters and version/extra reads (LIB-3)`.
 
@@ -306,7 +313,7 @@ Decided by Pete on 2026-11-02 (issue #160), "all recommended" (decision 2 revise
 **Files:**
 - Modify: `server/internal/contracts/catalogue.go:211-240` (`ItemDetail`, new `Extra` and `ExtraType` constants), `docs/contracts/openapi.json:701-760` (`ItemDetail`, new `Extra` and `ExtraType`), `testdata/contracts/catalogue/{item-movie,item-movie-admin,item-show,item-episode-shared-file}.json`, `testdata/contracts/catalogue/README.md`, `web/src/api/schema.d.ts` (regenerate), `web/tests/fake-api.ts:160`, `web/contract-tests/fixtures.test.mjs`
 - Create: `testdata/contracts/catalogue/item-episode-chaptered.json`
-- Test: `server/internal/contracts/catalogue_test.go`, `fixtures_test.go` (list the new fixture), `web/contract-tests/fixtures.test.mjs`
+- Test: `server/internal/contracts/catalogue_test.go`, `nulls_test.go`, `types_test.go`, `web/contract-tests/fixtures.test.mjs`
 
 **Interfaces:**
 - Produces:
@@ -351,7 +358,7 @@ Decided by Pete on 2026-11-02 (issue #160), "all recommended" (decision 2 revise
 
 ### Task 7: Wire the catalogue and the `Resolver` (after LIB-2c's code merges)
 
-LIB-3 doesn't reach main without this task (Decision 5): without it the picker shows identical unnumbered "1080p" labels.
+LIB-3 doesn't reach main without this task (Decision 5). Numbering went live in Task 4 (`Store.Item` already called `itemVersions`); Task 7 adds extras and extra playback.
 
 **Files:**
 - Modify: `server/internal/library/detail.go` (LIB-2c's `Store.Item`: fill `ItemDetail.Extras` from `itemExtras` and use the extended `itemVersions`), `server/internal/library/resolver.go` (the extras branch)

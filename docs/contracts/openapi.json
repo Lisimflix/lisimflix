@@ -713,7 +713,7 @@
           "studios": { "type": "array", "items": { "type": "string", "minLength": 1, "maxLength": 200 } },
           "externalIds": { "type": "array", "items": { "$ref": "#/components/schemas/ExternalId" } },
           "versions": { "type": "array", "items": { "$ref": "#/components/schemas/MediaVersion" }, "description": "Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired, except that a version whose file is missing is listed only when no version is available or its root is offline (LIB-3 decision 2); `available` says which can play now." },
-          "extras": { "type": "array", "items": { "$ref": "#/components/schemas/Extra" }, "description": "Trailers, featurettes and other extras of a movie or show. Empty for seasons and episodes." }
+          "extras": { "type": "array", "items": { "$ref": "#/components/schemas/Extra" }, "description": "Trailers, featurettes and other extras of a movie or show, ordered by type, then title. Empty for seasons and episodes." }
         },
         "allOf": [
           {
