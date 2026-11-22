@@ -298,21 +298,22 @@ func labels(vs []contracts.MediaVersion) []string {
 
 const sharedEp = "TV/Show (2019)/Season 01/Show - S01E01-E02.mkv"
 
-// sharedFile is a season with episodes 1 and 2 on one probed file of two
-// 25-minute chapters. Episode 1's version is re-inserted so episode 2's row
-// comes first: the read must order by episode number, not by row.
-func sharedFile(t *testing.T) (*benv, string, string) {
+// sharedFile is a season with two episodes on one probed file of two
+// 25-minute chapters. Their numbers are then swapped, so insertion order
+// disagrees with episode order: first is the episode now numbered 1 (placed
+// second), and the read must follow idx, not row order.
+func sharedFile(t *testing.T) (e *benv, first, second string) {
 	t.Helper()
-	e := newBrowse(t)
+	e = newBrowse(t)
 	lib := e.library("TV", "tv", []string{"TV"}, sharedEp)
 	e.probe(lib.Roots[0].ID, resProber{"Show - S01E01-E02.mkv": {Container: "matroska,webm", DurationMs: 3_000_000,
+		Video:    []probe.VideoStream{{Index: 0, Codec: "h264", Width: 1920, Height: 1080, Default: true}},
 		Chapters: []probe.Chapter{{StartMs: 0, EndMs: 1_500_000}, {StartMs: 1_500_000, EndMs: 3_000_000}}}})
-	ep1, ep2 := e.itemID("Episode 1"), e.itemID("Episode 2")
-	if _, err := e.s.db.Exec(`CREATE TEMP TABLE v1 AS SELECT * FROM library_versions WHERE item_id = ?;
-		DELETE FROM library_versions WHERE item_id = ?; INSERT INTO library_versions SELECT * FROM v1; DROP TABLE v1`, ep1, ep1); err != nil {
+	placed1, placed2 := e.itemID("Episode 1"), e.itemID("Episode 2")
+	if _, err := e.s.db.Exec(`UPDATE library_items SET idx = 3 - idx WHERE id IN (?, ?)`, placed1, placed2); err != nil {
 		t.Fatal(err)
 	}
-	return e, ep1, ep2
+	return e, placed2, placed1
 }
 
 func TestItemVersionsSharedFile(t *testing.T) {
@@ -348,7 +349,7 @@ func TestItemVersionsStaleProbeHasNoSegment(t *testing.T) {
 		t.Fatal(err)
 	}
 	vs := e.s.versionsOf(t, grantAll, ep1)
-	if len(vs) != 1 || vs[0].Segment != nil || vs[0].Container != "matroska,webm" {
+	if len(vs) != 1 || vs[0].Segment != nil || vs[0].Container != "matroska,webm" || len(vs[0].Video) != 1 {
 		t.Fatalf("stale probe: %+v", vs)
 	}
 }

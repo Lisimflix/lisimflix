@@ -13,8 +13,9 @@ import (
 )
 
 // Item returns one item with its genres and, for a movie or episode, every
-// version in LIB-2c decision 10's order (the first is the default, whose
-// duration the summary carries). An item outside the grant is ErrNotFound,
+// listed version in LIB-2c decision 10's order (the first is the default,
+// whose duration the summary carries); LIB-3 decision 2 hides a missing
+// version beside a present one. An item outside the grant is ErrNotFound,
 // the same as an unknown ID. META-1c fills the descriptive fields; until then
 // they are null or empty, and externalIds stays empty.
 func (s *Store) Item(ctx context.Context, g Grant, itemID string) (contracts.ItemDetail, error) {
@@ -117,7 +118,7 @@ func (s *Store) itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID st
 	rows.Close()
 	for _, l := range shared {
 		eps, err := queryStrings(ctx, tx, `SELECT v.item_id FROM library_versions v JOIN library_items i ON i.id = v.item_id
-			WHERE v.file_id = ? AND i.kind = 'episode' AND i.parent_id = ? ORDER BY i.idx`, out[l.at].FileID, l.season)
+			WHERE v.file_id = ? AND i.kind = 'episode' AND i.parent_id = ? ORDER BY i.idx, i.air_date, i.id`, out[l.at].FileID, l.season)
 		if err != nil {
 			return nil, err
 		}
@@ -126,6 +127,36 @@ func (s *Store) itemVersions(ctx context.Context, tx *sql.Tx, g Grant, itemID st
 		}
 	}
 	return out, nil
+}
+
+// itemExtras lists a movie's or show's extras (none for a season or episode),
+// each played by its own ID (decision 4). A retired file's extra is gone, and
+// a missing one is left out unless its root is offline, so a renamed extra
+// doesn't list twice.
+// Planned: LIB-3 (Store.Item lists extras, Task 7).
+func (s *Store) itemExtras(ctx context.Context, tx *sql.Tx, g Grant, itemID string) ([]contracts.Extra, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT x.id, x.type, x.title, x.file_id, CASE WHEN f.duration_ms > 0 THEN f.duration_ms END,
+		f.size, f.mtime_ns, f.path, f.probe_json, (f.state = 'present' AND r.state != 'offline')
+		FROM library_extras x JOIN library_items i ON i.id = x.item_id
+		JOIN library_files f ON f.id = x.file_id JOIN library_roots r ON r.id = f.root_id
+		WHERE x.item_id = ? AND i.kind IN ('movie', 'show') AND `+liveVersion+` AND (f.state = 'present' OR r.state = 'offline')
+		ORDER BY x.type, x.title, x.id`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []contracts.Extra{}
+	for rows.Next() {
+		var x contracts.Extra
+		var f fileCols
+		if err := rows.Scan(&x.ID, &x.Type, &x.Title, &x.Version.FileID, &f.duration, &f.size, &f.mtime, &f.rel, &f.probeJSON, &x.Version.Available); err != nil {
+			return nil, err
+		}
+		x.Version.ID = x.ID
+		s.fileVersion(&x.Version, g, f)
+		out = append(out, x)
+	}
+	return out, rows.Err()
 }
 
 // fileCols are a version's or extra's file columns as read.
