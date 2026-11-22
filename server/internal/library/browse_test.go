@@ -989,3 +989,42 @@ func TestLibraryCursorFitsWithLongQuotedName(t *testing.T) {
 		t.Fatalf("unknown id cursor: %v", err)
 	}
 }
+
+// Decision 5: two same-label copies alike in everything else rank by ordinal
+// before ID, so "1080p (2)" never becomes the default by a random ID.
+func TestVersionOrderBreaksTiesByOrdinal(t *testing.T) {
+	e := newBrowse(t)
+	lib := e.library("Movies", "movies", []string{"Movies"}, "Movies/"+heat1080, "Movies/"+heatRepack)
+	if _, err := e.s.db.Exec(`DELETE FROM library_version_flags; UPDATE library_files SET resolution = '1080p',
+		duration_ms = CASE (SELECT ordinal FROM library_versions v WHERE v.file_id = library_files.id) WHEN 1 THEN 5000 ELSE 7000 END`); err != nil {
+		t.Fatal(err)
+	}
+	// IDs chosen: first the ordinal-2 version has the lower ID, then the reverse.
+	for _, c := range []struct{ ord1, ord2 string }{{"ver-b", "ver-a"}, {"ver-a", "ver-b"}} {
+		if _, err := e.s.db.Exec(`UPDATE library_versions SET id = CASE ordinal WHEN 1 THEN ? ELSE ? END || '-tmp'`, c.ord1, c.ord2); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.s.db.Exec(`UPDATE library_versions SET id = replace(id, '-tmp', '')`); err != nil {
+			t.Fatal(err)
+		}
+		var first string
+		var labels []string
+		for _, v := range e.detail(grantAll, e.itemID("Heat")).Versions {
+			labels = append(labels, *v.Label)
+			if first == "" {
+				first = v.ID
+			}
+		}
+		var ord int
+		if err := e.s.db.QueryRow(`SELECT ordinal FROM library_versions WHERE id = ?`, first).Scan(&ord); err != nil {
+			t.Fatal(err)
+		}
+		if ord != 1 || !slices.Equal(labels, []string{"1080p", "1080p (2)"}) {
+			t.Fatalf("ids %+v: default %s has ordinal %d, labels %v", c, first, ord, labels)
+		}
+		p := e.items(grantAll, ItemQuery{LibraryID: lib.ID})
+		if len(p.Items) != 1 || p.Items[0].DurationMs == nil || *p.Items[0].DurationMs != 5000 {
+			t.Fatalf("ids %+v: listItems durationMs %+v", c, p.Items)
+		}
+	}
+}

@@ -348,7 +348,6 @@ func renumber(ctx context.Context, tx *sql.Tx, into string, moved []string) erro
 // the listed versions of its label group, never the stored ordinal. Rank 1
 // shows the label as is; later ranks add " (n)", cutting the label so the
 // whole stays within 100 characters; a null label shows "Version n".
-// Planned: LIB-3 (itemVersions ranks listed versions, Task 4).
 func displayLabel(label *string, n int) *string {
 	if n <= 1 {
 		return label

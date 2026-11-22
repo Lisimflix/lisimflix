@@ -362,9 +362,10 @@ const liveVersion = `f.state != 'retired'`
 
 // versionOrderSQL orders an item's live versions (v, its file f, f's root r)
 // as LIB-2c decision 10 does: available first, then unlabelled, then by
-// resolution (4k first), then by version ID. The first is the default.
+// resolution (4k first), then by ordinal within a label (LIB-3 decision 5),
+// then by version ID. The first is the default.
 const versionOrderSQL = `(f.state = 'present' AND r.state != 'offline') DESC, v.label IS NOT NULL,
-	CASE f.resolution WHEN '4k' THEN 0 WHEN '1080p' THEN 1 WHEN '720p' THEN 2 WHEN 'sd' THEN 3 ELSE 4 END, v.id`
+	CASE f.resolution WHEN '4k' THEN 0 WHEN '1080p' THEN 1 WHEN '720p' THEN 2 WHEN 'sd' THEN 3 ELSE 4 END, v.ordinal, v.id`
 
 // itemColumns are the ItemSummary columns of item i, with its parent p and
 // grandparent gp joined. available: a movie or episode is available when any
