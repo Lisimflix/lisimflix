@@ -1,7 +1,7 @@
 # A–Z rail jumps within the full list (#188)
 
 Status: design approved by Lammy (2026-11-18). Needs the plan and Pete's review (UI-2 consumer, #168 `total`).
-Refs #188, #168, #113.
+Refs #188, #168, #113. Supersedes UI-2 plan decision 11 ("A–Z jump restarts the grid at that letter"; "Back to top" clears it).
 
 ## Why
 
@@ -57,7 +57,8 @@ Lammy chose A: it matches the viewer's expectation at any library size, which is
 - `total` counts the whole listing; `from` no longer reduces it. This settles #168's
   "`total` with `from`" question by leaving `from` out of the count.
 - A letter past the end (e.g. `from=Z` with nothing at or after `z`) gives `items: []`,
-  `nextCursor: null`, `offset == total`, and a `prevCursor` that loads the last page.
+  `nextCursor: null`, `offset == total`, and a `prevCursor` that loads the last page. The web
+  grid treats it as a position, not an empty result: "No titles match" shows only when `total` is 0.
 
 Consumers: the web library grid (UI-2) only. The contract text, Go types, OpenAPI,
 generated `schema.d.ts` and fixtures change together in one PR.
@@ -78,7 +79,7 @@ generated `schema.d.ts` and fixtures change together in one PR.
 - Choosing a letter loads the page at that letter, sets `start = offset`, and scrolls to that row.
 - Scrolling near the top of the window loads the previous page (`prevCursor`) and prepends it;
   near the bottom, the next page as today. Prepending keeps the viewport on the same cards.
-- The URL keeps `from`, so reload and Back open at the same letter.
+- The URL keeps `from`, so reload and Back open at the same letter. Choosing the letter already in `from` loads it again, so it always takes the viewer back to that letter.
 - "Back to top" is removed: scrolling up reaches the top. `aria-current` on the rail letter stays.
 - The saved view cache (scroll restore) stores `start` along with the window.
 
