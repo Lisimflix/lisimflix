@@ -257,6 +257,7 @@ func TestCatalogueAtScale(t *testing.T) {
 		kept, runs := samples{}, 0
 		var took time.Duration
 		for len(kept["Resolve"]) < minLoaded {
+			before := len(kept["Resolve"])
 			prep()
 			done := make(chan time.Time, 1)
 			start := time.Now()
@@ -275,6 +276,10 @@ func TestCatalogueAtScale(t *testing.T) {
 			}
 			took += ended.Sub(start)
 			runs++
+			// A load shorter than one round (or failing at once) would repeat forever.
+			if len(kept["Resolve"]) == before {
+				t.Fatalf("%s: run %d ended before a round finished (%v); %d samples kept, need %d", phase, runs, ended.Sub(start).Round(time.Millisecond), before, minLoaded)
+			}
 		}
 		t.Logf("%s: %d runs, %v per run", phase, runs, (took / time.Duration(runs)).Round(time.Millisecond))
 		report(phase, kept)

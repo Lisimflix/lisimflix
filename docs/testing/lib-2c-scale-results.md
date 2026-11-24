@@ -30,8 +30,10 @@ section.
   p50 and p95 are nearest-rank (the ⌈q·n⌉-th smallest sample), so with n ≥ 20
   p95 is not just the maximum.
 - **Machine:** a 12-core x86-64 Linux container, SQLite in WAL mode on local
-  disk, from `main` at `0fc22e5`. Other builds were running on the same machine
-  during this run, so idle numbers are noisier than under load in places.
+  disk, from this PR's branch at `0dc5aaa` (`main` at `0fc22e5` merged in; the
+  harness is not on `main` until this PR merges). Other builds were running on
+  the same machine during this run, so idle numbers are noisier than under load
+  in places.
 - **Facts:** `benchProber` takes a file's resolution from its path length and
   its audio language from a hash of the path, so every resolution comes with
   every language. The combined filters (resolution + audio) use a pair that
