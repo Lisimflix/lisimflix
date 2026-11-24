@@ -36,6 +36,27 @@ test.describe("home", () => {
     await expect(card).toHaveAccessibleName(/^Synthetic Episode Two, Synthetic Show · S1 E2\b/); // screen readers can tell episodes apart
   });
 
+  test("rowCardsKeepOneSizeWithLongTitles", async ({ page }) => {
+    // A long title is cut with an ellipsis and never widens its card. Mixed rows (Continue Watching) use
+    // wide 16:9 cards at 17rem; library rows (Recently Added) use 2:3 poster cards at 9.5rem.
+    const long = "A Very Long Synthetic Title That Runs On Well Past The Card Width";
+    const items = many(4).items.map((it, i) => (i === 1 ? { ...it, title: long } : it));
+    await open(page, (api) => {
+      api.set("/api/v1/continue-watching", { items, nextCursor: null, total: null });
+      api.set("/api/v1/items", { items, nextCursor: null, total: null });
+    });
+    const rem = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+    for (const [row, basis] of [["Continue Watching", 17], ["Recently Added · Movies", 9.5]] as const) {
+      const cards = page.getByRole("region", { name: row }).locator(".card");
+      await expect(cards).toHaveCount(4);
+      const widths = await cards.evaluateAll((els) => els.map((e) => e.getBoundingClientRect().width));
+      for (const w of widths) expect(Math.abs(w - basis * rem), `${row}: widths ${widths.join(" ")}`).toBeLessThan(1);
+      const title = cards.locator(".t", { hasText: long });
+      await expect(title).toHaveCount(1);
+      expect(await title.evaluate((e) => e.scrollWidth > e.clientWidth), `${row}: long title is clipped`).toBe(true);
+    }
+  });
+
   test("rowArrowsHideAtEnds", async ({ page }) => {
     await open(page, (api) => api.set("/api/v1/continue-watching", many(30)));
     const left = page.getByRole("button", { name: "Scroll Continue Watching left" });

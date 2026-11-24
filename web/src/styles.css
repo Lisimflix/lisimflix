@@ -68,7 +68,7 @@ header.shell nav a[aria-current="page"] { opacity: 1; color: var(--accent); }
 
 .vgrid { position: relative; }
 .vgrid .cell { position: absolute; }
-.card { display: block; text-decoration: none; }
+.card { display: block; min-width: 0; text-decoration: none; } /* min-width: as a flex item a card would otherwise grow to its unwrapped title */
 .card .art { position: relative; display: block; aspect-ratio: var(--aspect, 2 / 3); background: #1a1b1f; border-radius: 0.5rem; overflow: hidden; }
 .card.wide .art { aspect-ratio: 16 / 9; }
 .card .art img { width: 100%; height: 100%; object-fit: cover; display: block; }
