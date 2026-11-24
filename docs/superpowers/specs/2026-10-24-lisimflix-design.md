@@ -3,7 +3,7 @@
 - **Date:** 2026-10-24
 - **Status:** Expanded review draft; original vision retained, revised scope and defaults require Pete/Lammy approval
 - **Revision:** 2026-10-25 — requirements, failure behaviour, contracts and acceptance gates
-- **Repo:** `Lisimflix/lisimflix` (private, GitHub org `Lisimflix`)
+- **Repo:** `Lisimflix/lisimflix` (public, AGPL-3.0, GitHub org `Lisimflix`)
 - **Image:** `ghcr.io/lisimflix/lisimflix`
 
 ## 0. How to read and approve this spec
@@ -404,19 +404,24 @@ episodes and user data. Changing presentation order does not change watched iden
 ### 3.8 Progress, preferences and external sync
 
 Progress belongs to profile + logical item, retaining source/version identity for
-different cuts. Proposed watched rule: unique acknowledged media-time intervals cover
-90% of the playable duration, or cover 50% and playback advances naturally into a
-verified credits marker. Seeking over an interval does not count it; replay counts
-only once, and playback speed changes elapsed wall time rather than media coverage.
-Record advancing intervals from bounded progress events, excluding explicit seeks
-and implausible jumps. Seeking directly to credits cannot mark an item watched.
+different cuts. Watched rule (accepted, D11): an item becomes watched when playback
+has reached the end of the file or its position is past 95% of the playable duration,
+however the viewer got there (natural playback, a seek or a skip-credits action), and unique
+acknowledged media-time intervals cover at least 50% of the playable duration. Both
+conditions are checked on every progress event, in either order.
+Seeking over an interval does not count it as covered; replay counts only once, and
+playback speed changes elapsed wall time rather than media coverage. Record advancing
+intervals from bounded progress events, excluding explicit seeks and implausible jumps.
+An item below the coverage floor is not marked watched by position alone: it keeps its
+resume position and stays in Continue Watching, so the viewer does not lose their place.
 Explicit mark watched/unwatched overrides automation. Different timelines require
 confirmation before copying a resume position between versions.
 
 For multi-episode files, automatic per-episode watched state requires known timeline
 boundaries. Without them, retain file resume state and ask for explicit episode-level
-watched actions instead of assuming equal-length episodes. This behaviour and the
-coverage thresholds are provisional defaults under D11.
+watched actions instead of assuming equal-length episodes. This multi-episode behaviour
+is a provisional default; the watched rule above and the 30-second Continue Watching
+floor are accepted (D11).
 
 Clients send progress every 10 seconds and on pause/seek/stop/exit when possible.
 Session ID, monotonic event sequence and source revision reject stale/duplicate events.
@@ -956,24 +961,20 @@ traffic is disclosed in setup and can be disabled independently.
 
 ## 8. Team workflow (Lisimflix org)
 
-- Private repo `Lisimflix/lisimflix`, monorepo: `server/` (Go), `web/` (React), `docs/`,
+- Public repo `Lisimflix/lisimflix` (AGPL-3.0), monorepo: `server/` (Go), `web/` (React), `docs/`,
   `deploy/` (generic compose, optional Unraid template), `testdata/`. Android goes in
   `Lisimflix/lisimflix-android` (G4 expansion milestone).
-- The team merge rule for code PRs, including CI bootstrap, is local `make check` + PR + 1 review + green GitHub CI. A new `pull_request` workflow can run from the PR merge branch before reaching the default branch. The org is on the free plan,
-  so a `.githooks/pre-push` hook blocks direct pushes instead of GitHub branch protection (see `CONTRIBUTING.md`).
-  Switch to a GitHub ruleset when the org upgrades.
+- The team merge rule for code PRs is local `make check` + PR + 1 review + green GitHub CI,
+  with every review thread resolved. A no-bypass GitHub ruleset on `main` enforces it (see
+  `CONTRIBUTING.md`); the `.githooks/pre-push` hook is a local early check.
 - GitHub Actions runs lint,
   unit tests and web build through `make check` on every PR.
   E2E and real-device/GPU checks remain local per `CONTRIBUTING.md`; attach evidence
   to relevant PRs. On merge to `main`: build and push
   `ghcr.io/lisimflix/lisimflix:edge`. Tags `vX.Y.Z` push versioned + `latest`.
 - For code changes, authors complete dependency installation and run `make check`
-  locally on the finished feature branch before publishing it. The bootstrap PR that
-  introduces the command/workflow runs the new command locally on its own branch
-  before its first push. The bootstrap PR also requires the independent GitHub run
-  and normal second-member review. Report the actual Actions result; if it did not
-  run, investigate the trigger/settings rather than assuming a bootstrap exemption.
-  This follows GitHub's [pull_request event documentation](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request).
+  locally on the finished feature branch before publishing it. Report the actual
+  Actions result; if it did not run, find out why before merging.
 - Work is tracked as GitHub Issues on an org Project board, grouped by phase/milestone.
   Module boundaries (2.2) map to issue labels (`area:transcode`, `area:web`, ...).
 - `CONTRIBUTING.md` and `CLAUDE.md` define conventions for humans and AI agents alike.
@@ -988,7 +989,7 @@ readiness, not an instruction for every contributor to work through one serial q
 Use the named feature IDs in 9.4 as the unit of discussion, issue claims, plans and
 PRs, following the requirement-catalogue pattern used by Trillion's PRD. Ownership is
 per active feature, not permanent ownership of an entire subsystem. One person claims
-an issue, identifies the other reviewer and declares their write scope before coding.
+an issue and declares their write scope before coding; `.github/CODEOWNERS` requests reviewers.
 Features stay unassigned until a contributor chooses an available one and assigns
 its issue to themselves. Pete does not allocate work or preassign subsystem roles.
 An active claim is visible to everyone; another contributor picks a different ready
@@ -1060,7 +1061,7 @@ seed; the integration plan separately proves the complete movie. These are revie
 drafts, not assignments or evidence that implementation has started.
 
 Produce small feature/subsystem plans rather than one enormous serial implementation
-plan. Every task names feature IDs, owner role, reviewer, file scope, input/output
+plan. Every task names feature IDs, owner role, file scope, input/output
 contracts, real dependencies, standalone test command and integration proof. The plan
 must say what can run now against fixtures and what genuinely needs another feature.
 Exact file paths/signatures and test assertions are settled in those implementation
@@ -1107,11 +1108,14 @@ M2 onward every milestone's exit test also covers Chrome and Firefox on Windows.
 | Milestone | Gate | Scope | Exit test |
 |---|---|---|---|
 | M1 — one movie plays | G0 | One browser-compatible movie at original quality, no re-encoding | Done: four targets pass ([results](../../testing/m1-results.md)) |
-| M2 — library and interface | G1 (first part) | LIB-2, LIB-4, META-1, UI-2, DATA-1, DATA-2 | On every target: browse a real scanned library (Movies, TV, Anime), play a title, resume where it stopped, see progress and watchlist saved; a Sonarr/Radarr scan adds a new item |
+| M2 — library and interface | G1 (first part) | LIB-2, LIB-4, META-1, UI-2, DATA-1, DATA-2 | On every target: browse a real scanned library (Movies, TV, Anime), play a title that needs no conversion (software conversion, PLY-3, arrives in M3), resume where it stopped, see progress and watchlist saved; a Sonarr/Radarr scan adds a new item |
 | M3 — full local slice | G1 (rest) | PLY-1 to PLY-4, SUB-1, UI-3, ACC-1, ACC-2, OPS-3, OPS-4, plus any remaining G1 P0 items | G1 exit evidence: a second tester deploys fresh and restores a backup; required playback cases work with permissions enforced |
-| M4 — compatibility | G2 | LIB-3, META-2, PLY-5, UI-4, UI-5, UI-6 | G2 exit evidence: mandatory matrix passes on two independent installations |
+| M4 — compatibility | G2 | LIB-3, META-2, PLY-5, UI-4, UI-5, UI-6 | G2 exit evidence: mandatory matrix passes on two independent installations, including one NVIDIA hardware-transcode case (jellyfin-ffmpeg) for PLY-5 |
 | M5 — invited remote trial | G3 | ACC-3, PLY-8, OPS-5, remaining UI-6 | G3 exit evidence: security and failure tests pass; 14-day trials meet §13 targets |
 | Later | G4 | PLY-6, PLY-7, META-3, DATA-3 to DATA-5, UI-7, ACC-4, EXT-1 to EXT-6 | Each feature gets its own approved contract and acceptance evidence |
+
+An existing media server keeps running throughout. Its administrator decides on cut-over
+after the M5/G3 trial evidence. The order of the "Later" features is decided when M5 is close.
 
 **Planning status of M2 (2026-11-04, `main` at `4acab3e`).** Merged: LIB-2a, LIB-2b, META-1a,
 UI-2 (fixture-backed), DATA-1a (store only). In review: LIB-2c (#169), LIB-4 (#159).
@@ -1359,7 +1363,7 @@ in linked GitHub issues, avoiding a second progress ledger in this document.
 
 These tracks group compatible work and expose dependencies for 2–3 contributors;
 they are not assignments. Contributors self-select individual features rather than
-being allocated a track. Each claimed feature records its claimant, reviewer, scope
+being allocated a track. Each claimed feature records its claimant, scope
 and target checkpoint before coding. Unclaimed work remains available to anyone.
 Use feature plans to keep PRs small.
 
@@ -1720,10 +1724,8 @@ is useful comparative evidence, not a guarantee inherited by this application.
 present and web production build. Local E2E/GPU/device evidence is attached when a PR
 touches those paths. Deterministic unit tests do not replace real decoder/display
 evidence. Run `make check` locally on the complete code branch before pushing/opening
-the PR; after push, GitHub Actions independently runs the same command, including
-on the CI-bootstrap PR. New `pull_request` workflows can run from the PR merge
-branch before reaching the default branch; require the actual Actions pass and
-normal second-member review.
+the PR; after push, GitHub Actions independently runs the same command. Require the
+actual Actions pass and normal second-member review.
 No blanket tests for every trivial helper; test invariants and failures.
 
 A gate records implemented requirement IDs, measured results, fixture/client versions,
@@ -1753,7 +1755,7 @@ as approval. Record decision, owner/date and rationale here when settled.
 | D08 | Profile PIN / child-policy guarantees? | Server-enforced restricted profile grants; account controller remains privileged; deny unrated by default for kids | Policy UX and security tests |
 | D09 | Local versus remote ingress/TLS | Approved: local HTTP from first launch with no domain/proxy; Linux/Docker server. Remote access requires HTTPS; proxy configuration/certificate ownership is settled before G3 | Initial local mode settled; remote deployment details later |
 | D10 | Plex/Jellyfin source access and import completeness? | Approved as later optional G4 features; validate read-only source/version data before promising complete history. Core compatibility is required under 10.3 now | Source adapters only; not basic development |
-| D11 | Which remaining numeric defaults/targets are accepted? | Approved: actual-scale baseline and PERF-05 one-second browse/search target. Discovery has no universal one-minute deadline; remaining budgets/targets await measurement/review | Remaining acceptance sign-off |
+| D11 | Which remaining numeric defaults/targets are accepted? | Approved: actual-scale baseline and PERF-05 one-second browse/search target; the §3.8 watched rule (95% position or end of file, with 50% coverage) and the 30-second Continue Watching floor (Pete, 2026-11-11). Discovery has no universal one-minute deadline; remaining budgets/targets await measurement/review | Remaining acceptance sign-off |
 | D12 | Backup destination, recovery owner and key custody? | Owner names external copy target and tests restore before remote trial | Disaster-recovery claim |
 | D13 | Original mockups missing from tracked repo? | Settled by Pete, 2026-10-27: new versioned layout C mockups and logo in [`docs/design/ui-2/`](../../design/ui-2/README.md) replace the untracked originals; details may still change in the UI-2 plan | Settled; UI-2 plan builds on them |
 | D14 | License and specialist fixture redistribution? | Pin builds; document notices/source and sample rights before publication | Image/test artifact distribution |
