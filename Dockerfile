@@ -2,7 +2,7 @@
 # Lisimflix image: amd64, non-root, no shell. Ships ffprobe (LIB-1), no encoder yet.
 # Build with `make image`. Bases are pinned by digest.
 
-FROM node:24.22.1-trixie@sha256:f1e034976f948cf212ef1f659c12e5dd58ac7eab947831813e81a62401ca38be AS web
+FROM node:24.22.2-trixie@sha256:5c6e2e57d7dd6652ce6f087ba0328312059d7c77f93baa8751865dbf103f1acb AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
