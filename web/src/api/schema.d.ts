@@ -216,7 +216,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Movies and episodes with resume, at least 30 s of the item covered (media time played, not position), not watched, not hidden; newest lastPlayedAt first. total is null. */
+        /** Movies and episodes with resume, at least 30 s of the item covered, not watched, not hidden; newest lastPlayedAt first. total is null. */
         get: operations["listContinueWatching"];
         put?: never;
         post?: never;
