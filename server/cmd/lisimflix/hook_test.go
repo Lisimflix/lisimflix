@@ -104,6 +104,12 @@ func TestServeImportNotification(t *testing.T) {
 	if out := run1("hook", "list"); !strings.Contains(out, "revoked") {
 		t.Fatalf("list:\n%s", out)
 	}
+	// #159 review: rotating the token keeps the revoked source's receipts.
+	run1("hook", "add", "--name", "radarr", "--kind", "radarr", "--folder", "Films", "--map", "/movies=Films")
+	if out := run1("hook", "receipts", "--name", "radarr"); !strings.Contains(out, "(live)") || !strings.Contains(out, "(revoked)") ||
+		!strings.Contains(out, "Heat (1995)") {
+		t.Fatalf("receipts after rotation:\n%s", out)
+	}
 }
 
 func TestPrintable(t *testing.T) {

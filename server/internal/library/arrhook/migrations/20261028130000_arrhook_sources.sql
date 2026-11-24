@@ -5,12 +5,13 @@
 
 CREATE TABLE arrhook_sources (
     id         TEXT PRIMARY KEY,
-    name       TEXT NOT NULL UNIQUE,
+    name       TEXT NOT NULL,          -- unique among live sources (index below); a rotated token's revoked source keeps it
     kind       TEXT NOT NULL CHECK (kind IN ('sonarr', 'radarr')),
     token_hash BLOB NOT NULL,          -- SHA-256 of the token; the token itself is shown once
     created_at INTEGER NOT NULL,
     revoked_at INTEGER                 -- set: every request is refused
 ) STRICT;
+CREATE UNIQUE INDEX arrhook_sources_live_name ON arrhook_sources(name) WHERE revoked_at IS NULL;
 
 -- The library folders a source may queue scans in.
 CREATE TABLE arrhook_roots (

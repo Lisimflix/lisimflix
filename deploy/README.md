@@ -146,7 +146,8 @@ for Radarr.
   reads it. Sonarr 4 and Radarr 5 or 6 are supported.
 - **Revoking:** `lisimflix hook revoke --name sonarr` stops its token at once; `hook list` shows
   the state. To replace a leaked token, revoke the source, then run the same `hook add --name sonarr`
-  again and paste the new password into Sonarr; the old source and its receipts are removed.
+  again and paste the new password into Sonarr. The revoked source stays in `hook list`, and
+  `hook receipts --name sonarr` still shows its receipts, the record of what the old token did.
 - **Deleting the last item:** if the last item of a library folder is deleted, the folder shows
   as offline until it has content again.
 - **Details:** events, responses and limits are in `docs/contracts/arr-webhook.md`.

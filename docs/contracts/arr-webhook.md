@@ -15,8 +15,8 @@ the browser Origin and CSRF checks. It does get the same security headers and `X
 
 HTTP Basic. The username is the source ID and the password is the token, both printed once by
 `lisimflix hook add`. Only the token's SHA-256 is stored. A revoked source stops working on its
-next request. Its name can be added again (to rotate the token): the new source replaces the
-revoked one, along with its receipts.
+next request. Its name can be added again (to rotate the token): the revoked source is kept,
+with its receipts, as the record of what the old token did.
 
 ## User-Agent and supported versions
 

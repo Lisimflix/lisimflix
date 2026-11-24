@@ -103,7 +103,7 @@ func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
 
 // Add creates a source and returns it with its token, shown once: only the
 // token's hash is stored. A name in use by a live source is refused; a
-// revoked source of that name is replaced.
+// revoked source of that name stays, with its receipts.
 func (s *Store) Add(ctx context.Context, name, kind string, roots []string, maps []Mapping) (Source, string, error) {
 	switch {
 	case !nameRe.MatchString(name):
@@ -138,13 +138,11 @@ func (s *Store) Add(ctx context.Context, name, kind string, roots []string, maps
 	}
 	defer tx.Rollback()
 
-	// A revoked source's name can be added again (to rotate a token): the
-	// new source replaces it, and its roots, mappings and receipts go with it.
-	if _, err := tx.ExecContext(ctx, `DELETE FROM arrhook_sources WHERE name = ? AND revoked_at IS NOT NULL`, name); err != nil {
-		return Source{}, "", err
-	}
+	// A revoked source's name can be added again (to rotate a token). The
+	// revoked source is kept: its receipts are the record of what a leaked
+	// token did (#159 review).
 	var taken int
-	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM arrhook_sources WHERE name = ?`, name).Scan(&taken); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM arrhook_sources WHERE name = ? AND revoked_at IS NULL`, name).Scan(&taken); err != nil {
 		return Source{}, "", err
 	}
 	if taken > 0 {
@@ -213,9 +211,10 @@ func (s *Store) Authenticate(ctx context.Context, id, token string) (Source, err
 	return s.source(ctx, id)
 }
 
-// Sources lists every source by name, revoked ones included.
+// Sources lists every source by name, revoked ones included, newest first
+// within a name.
 func (s *Store) Sources(ctx context.Context) ([]Source, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM arrhook_sources ORDER BY name`)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM arrhook_sources ORDER BY name, created_at DESC, id`)
 	if err != nil {
 		return nil, err
 	}

@@ -100,6 +100,9 @@ func cmdHook(args []string, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
+		// A rotated token leaves revoked sources of the same name: each is
+		// listed, newest first, so a leaked token's history stays visible.
+		found := false
 		for _, s := range srcs {
 			if s.Name != *name {
 				continue
@@ -108,6 +111,15 @@ func cmdHook(args []string, stdout io.Writer) error {
 			if err != nil {
 				return err
 			}
+			state := "live"
+			if s.Revoked {
+				state = "revoked"
+			}
+			if found {
+				fmt.Fprintln(stdout)
+			}
+			found = true
+			fmt.Fprintf(stdout, "%s (%s)\n", s.ID, state)
 			tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 			fmt.Fprintln(tw, "RECEIVED\tEVENT\tAPP\tRESULT\tSCANS\tREASON")
 			for _, r := range rs {
@@ -118,9 +130,14 @@ func cmdHook(args []string, stdout io.Writer) error {
 				fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", r.At.Local().Format(time.DateTime), printable(r.Event), printable(r.App), r.Result,
 					printable(strings.Join(sc, "; ")), printable(r.Reason))
 			}
-			return tw.Flush()
+			if err := tw.Flush(); err != nil {
+				return err
+			}
 		}
-		return arrhook.ErrNotFound
+		if !found {
+			return arrhook.ErrNotFound
+		}
+		return nil
 	}
 	return fmt.Errorf("unknown hook command %q", args[0])
 }

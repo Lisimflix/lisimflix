@@ -95,7 +95,7 @@
     - The counter maps are bounded at 4,096 entries; when full of live entries, new peers are refused rather than the map growing.
 11. **The `hook` command until UI-6:**
     - `add --name --kind sonarr|radarr --folder F --map R=L` prints the exact Sonarr/Radarr settings, including the token once.
-    - `list`, `revoke --name`, `receipts --name [--n 20]`. `add` with a revoked source's name replaces it (token rotation, #159 review).
+    - `list`, `revoke --name`, `receipts --name [--n 20]`. `add` with a revoked source's name adds a new source and keeps the revoked one with its receipts (token rotation, #159 review); `receipts --name` lists every source of that name, newest first.
     - It shares `openForCLI` with LIB-2b's `library` command, which this plan factors out of it.
 12. **Log event** `library.hook`:
     - INFO for `queued`/`test`/`ignored`; WARN for `rejected`, `unauthenticated` and `rate_limited`.

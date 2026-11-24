@@ -78,8 +78,9 @@ func TestAddAndAuthenticate(t *testing.T) {
 	}
 }
 
-// A revoked name can be added again (token rotation): the new source
-// replaces the revoked one, whose token stays refused. A live name can't.
+// A revoked name can be added again (token rotation): the revoked source
+// stays, token refused, with its receipts (#159 review: they record what a
+// leaked token did). A live name can't be added twice.
 func TestAddReusesARevokedName(t *testing.T) {
 	st, _, _ := newStore(t)
 	ctx := context.Background()
@@ -91,9 +92,15 @@ func TestAddReusesARevokedName(t *testing.T) {
 	if _, _, err := st.Add(ctx, "sonarr", Sonarr, []string{"TV"}, ok); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("live name: %v, want ErrInvalid", err)
 	}
+	r := Receipt{ID: "rcpt-old", SourceID: old.ID, At: time.Date(2026, 10, 28, 0, 0, 0, 0, time.UTC),
+		Event: "Download", App: "Sonarr/4.0.20.3014", Result: ResultQueued}
+	if err := st.record(ctx, r); err != nil {
+		t.Fatal(err)
+	}
 	if err := st.Revoke(ctx, "sonarr"); err != nil {
 		t.Fatal(err)
 	}
+	st.now = func() time.Time { return time.Now().Add(time.Second) } // newer created_at
 	src, token, err := st.Add(ctx, "sonarr", Sonarr, []string{"TV"}, ok)
 	if err != nil {
 		t.Fatalf("revoked name: %v, want it reusable", err)
@@ -105,8 +112,14 @@ func TestAddReusesARevokedName(t *testing.T) {
 		t.Fatalf("old token: %v, want ErrUnauthorized", err)
 	}
 	all, err := st.Sources(ctx)
-	if err != nil || len(all) != 1 || all[0].ID != src.ID || all[0].Revoked {
+	if err != nil || len(all) != 2 || all[0].ID != src.ID || all[0].Revoked || all[1].ID != old.ID || !all[1].Revoked {
 		t.Fatalf("sources %+v %v", all, err)
+	}
+	if rs, err := st.Receipts(ctx, old.ID, 10); err != nil || len(rs) != 1 || rs[0].ID != "rcpt-old" {
+		t.Fatalf("old receipts %+v %v, want them kept", rs, err)
+	}
+	if _, _, err := st.Add(ctx, "sonarr", Sonarr, []string{"TV"}, ok); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("live name after rotation: %v, want ErrInvalid", err)
 	}
 }
 
