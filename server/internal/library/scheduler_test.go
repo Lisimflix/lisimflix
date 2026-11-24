@@ -674,11 +674,18 @@ func TestEmptyRootBacksOff(t *testing.T) {
 	}
 }
 
-// recheckIdle runs one recheck, as the minute's tick would, and reports
-// whether the root has no whole-root scan queued or running afterwards.
-// The tests set Recheck to an hour, so only these calls recheck.
+// recheckIdle waits for any scan to finish, runs one recheck, as the
+// minute's tick would, and reports whether the root has no whole-root scan
+// queued or running afterwards. The tests set Recheck to an hour, so only
+// these calls recheck.
 func (f *schedFixture) recheckIdle(t *testing.T) bool {
 	t.Helper()
+	// A run row says completed before finishJob clears scanning.
+	eventually(t, "no scan running", func() bool {
+		f.sch.mu.Lock()
+		defer f.sch.mu.Unlock()
+		return f.sch.scanning == nil
+	})
 	f.sch.recheck(context.Background())
 	f.sch.mu.Lock()
 	defer f.sch.mu.Unlock()
@@ -697,25 +704,21 @@ func (f *schedFixture) dropWatches() {
 	}
 }
 
-// #157: a disk mounted over a watched, empty library folder drops the watch
-// without an event, so the recheck looks for entries in the empty-marked root
-// and scans it then, not after the 15-minute backoff. A still-empty root
-// isn't rescanned meanwhile.
+// #157: a disk mounted over a watched, empty library folder keeps the watch
+// but sends no events (NoWatch stands in for that here), so the recheck looks
+// for entries in the empty-marked root and scans it then, not after the
+// 15-minute backoff. A still-empty root isn't rescanned meanwhile.
 func TestMountOverEmptyRootIsScannedAtRecheck(t *testing.T) {
 	opts := fastOpts
 	opts.FullScanEvery = 6 * time.Hour
+	opts.NoWatch = true      // files appear with no event, as on a mount
 	opts.Recheck = time.Hour // only recheckIdle rechecks
 	f := startScheduler(t, "movies", opts, &scriptedProber{})
-	eventually(t, "watching", func() bool { return f.status(t).Watch == WatchOn })
 	eventually(t, "startup scan done", func() bool { n, _ := f.emptyMark(t); return n > 0 })
-	f.dropWatches()
 	for i := range 3 {
 		if !f.recheckIdle(t) {
 			t.Fatalf("recheck %d queued a scan of a still-empty root; it must wait for its backoff", i+1)
 		}
-	}
-	if st := f.status(t); st.Watch != WatchOff {
-		t.Fatalf("watch %q after the mount, want off", st.Watch)
 	}
 	if n := f.runs(t, `1`); n != 1 {
 		t.Fatalf("%d runs: a still-empty root must wait for its backoff", n)
@@ -730,24 +733,29 @@ func TestMountOverEmptyRootIsScannedAtRecheck(t *testing.T) {
 	eventually(t, "empty mark cleared", func() bool { n, _ := f.emptyMark(t); return n == 0 })
 }
 
-// An empty-marked root that is still watched isn't read or scanned by the
-// recheck: its first file comes through the watch. Here the folder gains a
-// non-media file, so it has entries but stays empty-marked after the watch's
-// scoped scan; the recheck mustn't add a whole-root scan every minute.
-func TestWatchedEmptyRootIsNotRescannedByRecheck(t *testing.T) {
+// A watched empty-marked root is read by the recheck too (a mount keeps the
+// watch, #157), but scanned only once: the folder gains a non-media file, so
+// it has entries without a watch scan; the recheck scan clears the mark and
+// later rechecks queue nothing.
+func TestWatchedEmptyRootIsRescannedOnceByRecheck(t *testing.T) {
 	opts := fastOpts
 	opts.Recheck = time.Hour // only recheckIdle rechecks
 	f := startScheduler(t, "movies", opts, &scriptedProber{})
 	eventually(t, "watching", func() bool { return f.status(t).Watch == WatchOn })
 	eventually(t, "startup scan done", func() bool { n, _ := f.emptyMark(t); return n > 0 })
 	f.m.write("Movies/notes.txt", 10)
+	if f.recheckIdle(t) {
+		t.Fatal("the recheck didn't scan the watched empty root once it had entries")
+	}
+	eventually(t, "recheck scan", func() bool { return f.runs(t, `cause = 'recheck' AND status = 'completed'`) == 1 })
+	eventually(t, "empty mark cleared", func() bool { n, _ := f.emptyMark(t); return n == 0 })
 	for i := range 3 {
 		if !f.recheckIdle(t) {
-			t.Fatalf("recheck %d queued a whole-root scan of a watched root", i+1)
+			t.Fatalf("recheck %d after the mark cleared queued another scan", i+1)
 		}
 	}
-	if n := f.runs(t, `1`); n != 1 {
-		t.Fatalf("%d runs of a watched, empty-marked root, want only the startup scan", n)
+	if n := f.runs(t, `cause = 'recheck'`); n != 1 {
+		t.Fatalf("%d recheck runs, want 1", n)
 	}
 }
 
