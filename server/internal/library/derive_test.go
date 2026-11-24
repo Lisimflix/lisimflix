@@ -309,7 +309,8 @@ func TestOldProbeFactsCountOnlyForTheirRevision(t *testing.T) {
 }
 
 // #168: the start-up backfill derives facts only from a probe of the file's
-// current revision, so it can't bring back facts a change cleared.
+// current revision; it skips a probe of an older revision, whose facts don't
+// count.
 func TestBackfillSkipsProbeOfOlderRevision(t *testing.T) {
 	s, _, m, sc, root := setupMovies(t, "Heat (1995)/Heat (1995).mkv")
 	probeDue(t, sc, root, factsProber{})

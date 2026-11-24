@@ -109,7 +109,7 @@
     - **Streams:** mapped from the stored `probe.Result`. `language` is null for untagged or `und`. `hdr` maps `""→sdr`, `HDR10→hdr10`, `HDR10+→hdr10plus`, `HLG→hlg` and `DV→dolbyVision`. A subtitle's `kind` is `image` for `hdmv_pgs_subtitle`, `dvd_subtitle` and `dvb_subtitle`, `ass` for `ass`/`ssa`, and `text` otherwise.
     - **Other fields:**
       - `segment` is null (LIB-3 locates shared-file episodes);
-      - `container` is the stored container, or `""` before the first probe;
+      - `container` is the stored container, or `""` until the file's current revision is probed;
       - `fileName` is the path's last element for admins, and null for everyone else.
     - **When a version is listed:** shows and seasons have no versions. A movie or episode lists every live version (its file isn't retired), available or not. `MediaVersion.available` and `ItemSummary.available` carry the state; the contract's "Empty … for a movie or episode with no available file" is read as "no versions to play", and the client shows File offline from `available`.
     - **`externalIds`** stays empty until META-1c: name hints aren't validated, so they aren't served as IDs.
