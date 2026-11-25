@@ -1,10 +1,14 @@
 package playback
 
 import (
+	"bytes"
 	"errors"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/Lisimflix/lisimflix/server/internal/contracts"
 )
 
 func TestSessionLookupReturnsOwnedLiveSession(t *testing.T) {
@@ -14,8 +18,7 @@ func TestSessionLookupReturnsOwnedLiveSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	src := e.s.sessions[ps.ID].src
-	want := SessionRef{ID: ps.ID, ItemID: src.ItemID, VersionID: src.VersionID, SourceRevision: src.SourceRevision}
+	want := SessionRef{ID: ps.ID, ItemID: ps.ItemID, VersionID: ps.VersionID, SourceRevision: ps.SourceRevision}
 	if ref != want || ref.ItemID != movieID || ref.SourceRevision == "" {
 		t.Fatalf("ref = %+v, want %+v", ref, want)
 	}
@@ -26,18 +29,15 @@ func TestSessionLookupRefusesOtherPrincipal(t *testing.T) {
 	ps := e.mustStart(alice, "k-lookup-2")
 	for _, c := range []struct {
 		name string
+		p    contracts.Principal
 		id   string
-		err  error
 	}{
-		{"other principal", ps.ID, nil},
-		{"unknown id", "ps-AAAAAAAAAAAAAAAAAAAAAAAAAA", nil},
-		{"malformed id", "nope", nil},
+		{"other account", bob, ps.ID},
+		{"same profile, other sign-in", alice2, ps.ID},
+		{"unknown id", alice, "ps-AAAAAAAAAAAAAAAAAAAAAAAAAA"},
+		{"malformed id", alice, "nope"},
 	} {
-		p := alice
-		if c.name == "other principal" {
-			p = bob
-		}
-		if _, err := e.s.Session(p, c.id); !errors.Is(err, ErrSessionNotFound) {
+		if _, err := e.s.Session(c.p, c.id); !errors.Is(err, ErrSessionNotFound) {
 			t.Errorf("%s: err = %v, want ErrSessionNotFound", c.name, err)
 		}
 	}
@@ -82,6 +82,21 @@ func TestSessionLookupSourceMissing(t *testing.T) {
 	}
 }
 
+func TestSessionLookupSameMetadataDifferentFile(t *testing.T) {
+	e := newEnv(t, 4096)
+	ps := e.mustStart(alice, "k-lookup-8")
+	info, _ := os.Stat(e.path)
+	repl := filepath.Join(e.dir, "Movies", "new.mp4")
+	os.WriteFile(repl, bytes.Repeat([]byte{2}, 4096), 0o644)
+	os.Chtimes(repl, info.ModTime(), info.ModTime()) // same size and mtime: same revision
+	if err := os.Rename(repl, e.path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.Session(alice, ps.ID); !errors.Is(err, ErrSourceChanged) {
+		t.Fatalf("err = %v, want ErrSourceChanged: file identity must be checked", err)
+	}
+}
+
 func TestSessionLookupKeepsDeadline(t *testing.T) {
 	e := newEnv(t, 4096)
 	ps := e.mustStart(alice, "k-lookup-6")
@@ -109,7 +124,11 @@ func TestSessionLookupDoesNotStatUnderLock(t *testing.T) {
 	t.Cleanup(func() { testHookStat = nil })
 	done := make(chan error, 1)
 	go func() { _, err := e.s.Session(alice, ps.ID); done <- err }()
-	<-entered
+	select {
+	case <-entered:
+	case err := <-done:
+		t.Fatalf("lookup returned %v before the stat", err)
+	}
 	beat := make(chan int, 1)
 	go func() {
 		resp, _ := e.req(&alice, "POST", "/api/v1/playback/sessions/"+other.ID+"/heartbeat", `{"sequence":1}`, nil)

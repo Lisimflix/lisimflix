@@ -289,7 +289,8 @@ var (
 
 // Session returns the caller's live session and checks its file is still the
 // one the session started on. It never extends the deadline: only the
-// heartbeat keeps a session alive.
+// heartbeat keeps a session alive. An ended session is ErrSessionEnded while
+// its tombstone lasts (up to tombstoneTTL), then ErrSessionNotFound.
 func (s *Server) Session(p contracts.Principal, id string) (SessionRef, error) {
 	s.mu.Lock()
 	sess, err := s.owned(id, p)
