@@ -55,15 +55,6 @@ func TestIsWatched(t *testing.T) {
 	}
 }
 
-func TestIsPlayed(t *testing.T) {
-	if IsPlayed(29_999) {
-		t.Error("29,999 played")
-	}
-	if !IsPlayed(30_000) {
-		t.Error("30,000 not played")
-	}
-}
-
 func TestReplayCountsOnce(t *testing.T) {
 	spans := []Span{{0, 10_000}, {5_000, 20_000}, {40_000, 50_000}}
 	doubled := append(slices.Clone(spans), spans...)

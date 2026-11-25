@@ -16,6 +16,9 @@ import (
 // Planned: DATA-1b (reportProgress handler).
 func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e contracts.ProgressEvent) (contracts.ProgressResult, error) {
 	var res contracts.ProgressResult
+	if profileID == "" {
+		return res, ErrInvalid
+	}
 	if err := validate(sess, e); err != nil {
 		return res, err
 	}
@@ -107,15 +110,18 @@ func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e con
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("userdata: apply: %w", err)
+	if res.State, err = readState(ctx, tx, profileID, sess.ItemID); err != nil {
+		return res, err
 	}
+	if err := tx.Commit(); err != nil {
+		return contracts.ProgressResult{}, fmt.Errorf("userdata: apply: %w", err)
+	}
+	s.committed()
 	res.Accepted = reason == ""
 	if reason != "" {
 		res.Reason = &reason
 	}
-	res.State, err = s.Get(ctx, profileID, sess.ItemID)
-	return res, err
+	return res, nil
 }
 
 func validate(sess Session, e contracts.ProgressEvent) error {
@@ -175,7 +181,10 @@ func lastAccepted(ctx context.Context, tx *sql.Tx, profileID, sessionID string) 
 		}
 		a.exists = true
 	}
-	return a, rows.Err()
+	if err := rows.Err(); err != nil {
+		return a, fmt.Errorf("userdata: session events: %w", err)
+	}
+	return a, nil
 }
 
 func loadCoverage(ctx context.Context, tx *sql.Tx, profileID string, sess Session) ([]Span, error) {
@@ -193,7 +202,10 @@ func loadCoverage(ctx context.Context, tx *sql.Tx, profileID string, sess Sessio
 		}
 		spans = append(spans, sp)
 	}
-	return spans, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("userdata: coverage: %w", err)
+	}
+	return spans, nil
 }
 
 // saveCoverage replaces one source's coverage rows with spans.

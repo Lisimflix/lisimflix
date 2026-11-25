@@ -66,8 +66,3 @@ func Advance(prevMs, posMs int64) (Span, bool) {
 func IsWatched(coveredMs, durationMs int64) bool {
 	return durationMs > 0 && coveredMs*100 >= durationMs*WatchedPercent
 }
-
-// IsPlayed reports whether coveredMs reaches PlayedMinMs.
-//
-// Planned: DATA-1b (listContinueWatching handler; shares the 30 s rule that ContinueWatching applies in SQL via PlayedMinMs).
-func IsPlayed(coveredMs int64) bool { return coveredMs >= PlayedMinMs }

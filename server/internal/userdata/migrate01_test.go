@@ -10,14 +10,14 @@ import (
 
 func TestRoundTripKeepsMeaning(t *testing.T) {
 	e := newEnv(t)
-	s := sess("s1", "r1")
+	s := sess("s1", r1)
 	e.ticks(s, 0, 0, 90_000) // covers 90% of 100 s: auto watched on the last tick
 	at := e.clock
 	e.hide(0)
 
 	st := e.get()
 	if st.Resume == nil || st.Resume.PositionMs != 90_000 || st.Resume.DurationMs != 100_000 ||
-		st.Resume.VersionID != "v1" || st.Resume.SourceRevision != "r1" || !st.Resume.UpdatedAt.Equal(at) || st.Resume.UpdatedAt.Location() != time.UTC {
+		st.Resume.VersionID != "v1" || st.Resume.SourceRevision != r1 || !st.Resume.UpdatedAt.Equal(at) || st.Resume.UpdatedAt.Location() != time.UTC {
 		t.Fatalf("resume = %+v", st.Resume)
 	}
 	if st.Watched == nil || !st.Watched.Value || st.Watched.Origin != contracts.WatchedAuto || !st.Watched.At.Equal(at) || st.Watched.At.Location() != time.UTC {
@@ -41,7 +41,7 @@ func TestRoundTripKeepsMeaning(t *testing.T) {
 	if !h.HiddenFromContinueWatching || h.Resume != nil || h.Watched != nil || h.PlayCount != nil || h.LastPlayedAt != nil {
 		t.Fatalf("hidden-only state = %+v", h)
 	}
-	got, err := e.st.Get(ctx, "p1", "other")
+	got, err := getState(e.st, ctx, "p1", "other")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestRoundTripKeepsMeaning(t *testing.T) {
 
 func TestLastPlayedNeverMovesBackwards(t *testing.T) {
 	e := newEnv(t)
-	s := sess("s1", "r1")
+	s := sess("s1", r1)
 	e.play(s, tick, 0, 0)
 	want := e.clock
 	e.advance(-time.Hour)
@@ -80,7 +80,7 @@ func TestImportFixturesKeepIdentityAndOrigin(t *testing.T) {
 	}
 
 	for _, item := range local {
-		st, err := e.st.Get(ctx, "p1", item)
+		st, err := getState(e.st, ctx, "p1", item)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -91,7 +91,7 @@ func TestImportFixturesKeepIdentityAndOrigin(t *testing.T) {
 	}
 
 	// A local tick on itemA moves LastPlayedAt and Resume only; itemB is untouched.
-	s := Session{ID: "s1", ItemID: "itemA", VersionID: "v1", SourceRevision: "r1", DurationMs: 100_000}
+	s := Session{ID: "s1", ItemID: "itemA", VersionID: "v1", SourceRevision: r1, DurationMs: 100_000}
 	res, err := e.st.Apply(ctx, "p1", s, contracts.ProgressEvent{Sequence: 0, Kind: tick, PositionMs: 5_000})
 	if err != nil || !res.Accepted {
 		t.Fatalf("tick: %+v %v", res, err)
@@ -103,7 +103,7 @@ func TestImportFixturesKeepIdentityAndOrigin(t *testing.T) {
 	if a.Watched == nil || !a.Watched.Value || a.Watched.Origin != contracts.WatchedImport || !a.Watched.At.Equal(importedAt) || a.PlayCount != nil {
 		t.Fatalf("itemA watched/count changed: %+v", a)
 	}
-	b, err := e.st.Get(ctx, "p1", "itemB")
+	b, err := getState(e.st, ctx, "p1", "itemB")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
 )
@@ -51,6 +52,9 @@ func (s *Store) Hide(ctx context.Context, profileID, itemID string, expectedRevi
 func (s *Store) mark(ctx context.Context, profileID, itemID string, expected int64,
 	write func(tx *sql.Tx, now, eventID int64) error) (contracts.UserItemState, error) {
 	st := contracts.UserItemState{ItemID: itemID}
+	if profileID == "" || itemID == "" {
+		return st, ErrInvalid
+	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return st, fmt.Errorf("userdata: mark: %w", err)
@@ -66,37 +70,64 @@ func (s *Store) mark(ctx context.Context, profileID, itemID string, expected int
 	if err := write(tx, s.now().UTC().UnixMilli(), eventID); err != nil {
 		return st, fmt.Errorf("userdata: mark: %w", err)
 	}
-	if err := tx.Commit(); err != nil {
-		return st, fmt.Errorf("userdata: mark: %w", err)
+	if st, err = readState(ctx, tx, profileID, itemID); err != nil {
+		return st, err
 	}
-	return s.Get(ctx, profileID, itemID)
+	if err := tx.Commit(); err != nil {
+		return contracts.UserItemState{ItemID: itemID}, fmt.Errorf("userdata: mark: %w", err)
+	}
+	s.committed()
+	return st, nil
 }
 
-// ContinueWatching lists the profile's partly played items, newest first:
-// resume present, at least PlayedMinMs covered, not watched, not hidden.
+// Cursor is a position in Continue Watching: the last item of a page.
+//
+// Planned: DATA-1b (listContinueWatching handler, Task 7).
+type Cursor struct {
+	LastPlayedAt time.Time
+	ItemID       string
+}
+
+// ContinueWatching lists the profile's partly played items, newest first with
+// ties by item ID: resume present, at least PlayedMinMs covered, not watched,
+// not hidden. after == nil starts at the newest; next is nil on the last page.
 // limit <= 0 means 50 and is capped at 200.
 //
-// Planned: DATA-1b (listContinueWatching handler).
-func (s *Store) ContinueWatching(ctx context.Context, profileID string, limit int) ([]contracts.UserItemState, error) {
+// Planned: DATA-1b (listContinueWatching handler, Task 7).
+func (s *Store) ContinueWatching(ctx context.Context, profileID string, limit int, after *Cursor) (items []contracts.UserItemState, next *Cursor, err error) {
 	if limit <= 0 {
 		limit = 50
 	}
 	limit = min(limit, 200)
+	keyset, args := "", []any{profileID, PlayedMinMs}
+	if after != nil {
+		at := after.LastPlayedAt.UTC().UnixMilli()
+		keyset = ` AND (last_played_at < ? OR (last_played_at = ? AND item_id > ?))`
+		args = append(args, at, at, after.ItemID)
+	}
 	rows, err := s.db.QueryContext(ctx, `SELECT item_id, `+stateCols+` FROM userdata_state
 		WHERE profile_id = ? AND hidden = 0 AND resume_position_ms IS NOT NULL AND covered_ms >= ?
-		AND COALESCE(watched_value, 0) = 0
-		ORDER BY last_played_at DESC, item_id LIMIT ?`, profileID, PlayedMinMs, limit)
+		AND COALESCE(watched_value, 0) = 0`+keyset+`
+		ORDER BY last_played_at DESC, item_id LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
-		return nil, fmt.Errorf("userdata: continue watching: %w", err)
+		return nil, nil, fmt.Errorf("userdata: continue watching: %w", err)
 	}
 	defer rows.Close()
-	out := []contracts.UserItemState{}
+	items = []contracts.UserItemState{}
 	for rows.Next() {
 		var st contracts.UserItemState
 		if err := scanState(rows, &st, &st.ItemID); err != nil {
-			return nil, fmt.Errorf("userdata: continue watching: %w", err)
+			return nil, nil, fmt.Errorf("userdata: continue watching: %w", err)
 		}
-		out = append(out, st)
+		items = append(items, st)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, nil, fmt.Errorf("userdata: continue watching: %w", err)
+	}
+	if len(items) > limit {
+		items = items[:limit]
+		last := items[limit-1]
+		next = &Cursor{LastPlayedAt: *last.LastPlayedAt, ItemID: last.ItemID}
+	}
+	return items, next, nil
 }
