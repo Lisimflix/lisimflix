@@ -3,6 +3,7 @@ package library
 import (
 	"context"
 	"database/sql"
+	"slices"
 	"strings"
 
 	"github.com/Lisimflix/lisimflix/server/internal/library/naming"
@@ -14,7 +15,10 @@ import (
 // full path, so climbing would reach other movies. The first folder with
 // matching rows decides; it must give exactly one item. A suffix name with a
 // year counts only the row with its own key, so "Marvel/Thor (2011)-trailer"
-// never attaches to Iron Man. Residual risk: a trailer titled differently from
+// never attaches to Iron Man. Any other extra counts only an item the folder
+// itself names (naming.NamesFolder), so "Marvel/Thor-trailer" stays unplaced
+// next to a loose "Marvel/Iron Man (2008).mkv" (#238 review); so does
+// "Marvel/Iron Man-trailer.mkv", which the admin places. Residual risk: a trailer titled differently from
 // its folder's movie ("Star Wars (1977)-trailer" in "Star Wars Episode IV -
 // A New Hope (1977)/") stays unplaced; the admin sees it in the unplaced list.
 func (s *Store) placeExtra(ctx context.Context, tx *sql.Tx, root Root, fileID, rel string) (bool, error) {
@@ -23,24 +27,24 @@ func (s *Store) placeExtra(ctx context.Context, tx *sql.Tx, root Root, fileID, r
 		return false, nil
 	}
 	for _, folder := range x.Folders {
-		q := `SELECT DISTINCT item_id FROM library_folders WHERE root_id = ? AND folder = ?`
-		args := []any{root.ID, folder}
-		if x.Key != "" {
-			q += ` AND scan_key IN (?, ?)`
-			args = append(args, "movie:"+x.Key, "show:"+x.Key)
-		}
-		rows, err := tx.QueryContext(ctx, q, args...)
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT item_id, scan_key FROM library_folders WHERE root_id = ? AND folder = ?`, root.ID, folder)
 		if err != nil {
 			return false, err
 		}
 		var items []string
 		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
+			var id, k string
+			if err := rows.Scan(&id, &k); err != nil {
 				rows.Close()
 				return false, err
 			}
-			items = append(items, id)
+			// A name with a year must match the item's key; one without must be
+			// in the item's own folder, not a collection folder it's loose in.
+			if x.Key != "" && (k == "movie:"+x.Key || k == "show:"+x.Key) || x.Key == "" && naming.NamesFolder(folder, k) {
+				if !slices.Contains(items, id) {
+					items = append(items, id)
+				}
+			}
 		}
 		rows.Close()
 		if err := rows.Err(); err != nil {
@@ -73,22 +77,32 @@ func (s *Store) placeExtra(ctx context.Context, tx *sql.Tx, root Root, fileID, r
 
 // adopt is the post-walk pass of every scan, scoped ones included: it runs
 // after settle so a file walked before its movie or show is attached in the
-// same scan. Each present file of the root still unplaced as 'extra' goes
-// back through place, so Classify decides again (decision 6c): an episode or
-// movie misread before LIB-3 is placed normally and a real extra reaches
-// placeExtra. A file healed here goes through grouping after settle, so a
-// duplicate pair it opens stays pending until the next scan (accepted).
+// same scan. Each present file still unplaced as 'extra' goes back through
+// place, so Classify decides again (decision 6c): an episode or movie misread
+// before LIB-3 is placed normally and a real extra reaches placeExtra. A
+// whole-root scan ("." scope) tries every such file of the root; a scoped scan
+// only those under its scope's top folder, the widest folder an extra there
+// could attach to, so stuck extras elsewhere aren't classified again on every
+// file event (#238 review). A file healed here goes through grouping after
+// settle, so a duplicate pair it opens stays pending until the next scan
+// (accepted). It returns how many files it tried, for tests.
 //
-// shortcut: Run.Unplaced counts a file when first seen unplaced and isn't decremented by adoption, fine because the file's own unplaced column is the truth; if the admin view ever shows the run counter, have adopt return a count for Scan to subtract.
-func (s *Store) adopt(ctx context.Context, rootID string, full bool) error {
+// shortcut: Run.Unplaced counts a file when first seen unplaced and isn't decremented by adoption, fine because the file's own unplaced column is the truth; if the admin view ever shows the run counter, count the files adopt heals for Scan to subtract.
+func (s *Store) adopt(ctx context.Context, rootID, scope string) (int, error) {
 	root, libType, err := s.root(ctx, rootID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id, path, size, mtime_ns FROM library_files
-		WHERE root_id = ? AND state = 'present' AND unplaced = 'extra' ORDER BY path`, rootID)
+	q := `SELECT id, path, size, mtime_ns FROM library_files WHERE root_id = ? AND state = 'present' AND unplaced = 'extra'`
+	args := []any{rootID}
+	if scope != "." {
+		top, _, _ := strings.Cut(scope, "/")
+		q += ` AND path >= ? AND path < ?` // under top ('0' sorts right after '/')
+		args = append(args, top+"/", top+"0")
+	}
+	rows, err := s.db.QueryContext(ctx, q+` ORDER BY path`, args...)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	type file struct {
 		id string
@@ -99,32 +113,33 @@ func (s *Store) adopt(ctx context.Context, rootID string, full bool) error {
 		var x file
 		if err := rows.Scan(&x.id, &x.f.Path, &x.f.Rev.Size, &x.f.Rev.ModTime); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		files = append(files, x)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
+	n := len(files)
 	for len(files) > 0 {
 		batch := files[:min(500, len(files))]
 		files = files[len(batch):]
 		tx, err := s.db.BeginTx(ctx, nil)
 		if err != nil {
-			return err
+			return 0, err
 		}
 		var scratch Run // adoption is not counted again
 		for _, x := range batch {
 			if err := s.place(ctx, tx, root, libType, x.id, x.f, &scratch); err != nil {
 				tx.Rollback()
-				return err
+				return 0, err
 			}
 		}
 		if err := tx.Commit(); err != nil {
-			return err
+			return 0, err
 		}
 	}
 	// After healing, so a healed file's fresh version can pair in this scan.
-	return s.adoptVersions(ctx, rootID, full)
+	return n, s.adoptVersions(ctx, rootID, scope == ".")
 }

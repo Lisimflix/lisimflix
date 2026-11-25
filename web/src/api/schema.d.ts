@@ -570,7 +570,7 @@ export interface components {
             externalIds: components["schemas"]["ExternalId"][];
             /** @description Playable versions. Empty for shows and seasons. A movie or episode lists every version whose file isn't retired, except that a version whose file is missing is listed only when no version is available or its root is offline (LIB-3 decision 2); `available` says which can play now. */
             versions: components["schemas"]["MediaVersion"][];
-            /** @description Trailers, featurettes and other extras of a movie or show, ordered by type name (alphabetical: behindTheScenes, deletedScene, featurette, …), then title. Empty for seasons and episodes. */
+            /** @description Trailers, featurettes and other extras of a movie or show, ordered by type name (alphabetical: behindTheScenes, deletedScene, featurette, …), then title, ignoring case and accents. Empty for seasons and episodes. */
             extras: components["schemas"]["Extra"][];
         } & (unknown & unknown);
         /**

@@ -979,3 +979,22 @@ func TestRenumberKeepsFlagsBelow(t *testing.T) {
 	}
 	noBadFlags(t, g.s)
 }
+
+// #238 review: a returning multi-episode file whose first episode's version
+// was adopted by its replacement is placed again, so that episode lists it.
+func TestReturnedMultiEpisodeFileIsPlacedAgain(t *testing.T) {
+	const both, one = "Show (2019)/Season 01/Show - S01E01-E02.mkv", "Show (2019)/Season 01/Show - S01E01.mkv"
+	s, m, sc, l := lib(t, "tv", "TV", both)
+	root := l.Roots[0].ID
+	scan(t, sc, root)
+	m.mv("TV/"+both, "TV/"+one)
+	scan(t, sc, root)
+	if v := s.vers(t, "show:show|2019|s1|e1"); len(v) != 1 || v[0].Path != one {
+		t.Fatalf("E1 versions %+v, want adopted by %s", v, one)
+	}
+	m.write("TV/"+both, 10)
+	scan(t, sc, root)
+	if v := s.vers(t, "show:show|2019|s1|e1"); len(v) != 2 || v[1].Path != both {
+		t.Fatalf("E1 versions %+v, want %s placed again", v, both)
+	}
+}

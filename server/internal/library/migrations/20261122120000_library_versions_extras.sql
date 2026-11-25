@@ -15,6 +15,7 @@ ALTER TABLE library_versions ADD COLUMN ordinal INTEGER NOT NULL DEFAULT 1; -- o
 ALTER TABLE library_versions ADD COLUMN seq INTEGER NOT NULL DEFAULT 0;     -- placement order within the item, never reused; 0 = not yet numbered by Task 3's BackfillVersions
 ALTER TABLE library_versions ADD COLUMN fresh INTEGER NOT NULL DEFAULT 0; -- placed since the last whole-root scan; see Task 3
 CREATE INDEX library_versions_fresh ON library_versions(file_id) WHERE fresh = 1;
+CREATE INDEX library_versions_unnumbered ON library_versions(item_id) WHERE seq = 0; -- BackfillVersions runs at every start; empty once done
 CREATE TABLE library_version_flags (
     version_id TEXT PRIMARY KEY REFERENCES library_versions(id) ON DELETE CASCADE,
     of_id TEXT NOT NULL REFERENCES library_versions(id) ON DELETE CASCADE,

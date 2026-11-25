@@ -1,6 +1,7 @@
 package library
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
 	"github.com/Lisimflix/lisimflix/server/internal/probe"
+	"github.com/Lisimflix/lisimflix/server/internal/textfold"
 )
 
 // Item returns one item with its genres, a movie's or show's extras, and, for
@@ -160,7 +162,14 @@ func (s *Store) itemExtras(ctx context.Context, tx *sql.Tx, g Grant, itemID stri
 		s.fileVersion(&x.Version, g, f)
 		out = append(out, x)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Titles compare folded, as item titles do: "behind the camera" before "Zebra Unit" (#238 review).
+	slices.SortStableFunc(out, func(a, b contracts.Extra) int {
+		return cmp.Or(strings.Compare(string(a.Type), string(b.Type)), strings.Compare(textfold.Sort(a.Title), textfold.Sort(b.Title)), strings.Compare(a.ID, b.ID))
+	})
+	return out, nil
 }
 
 // fileCols are a version's or extra's file columns as read.

@@ -9,11 +9,11 @@ import (
 	"github.com/Lisimflix/lisimflix/server/internal/library/naming"
 )
 
-// BackfillVersions numbers the versions placed before LIB-3 (seq = 0), once,
-// at serve start, 500 items per transaction; a crash resumes where it
-// stopped. Per item it recomputes each label from the file's path (placed
-// files are never placed again, so stored labels predate the canonical
-// ones), numbers seq and ordinal with missing or retired files first, flags
+// BackfillVersions numbers the versions placed before LIB-3 (seq = 0), at
+// every serve start (a partial index keeps that cheap once done), 500 items
+// per transaction; a crash resumes where it stopped. Per item it recomputes
+// each label from the file's path (version() never relabels, so stored
+// labels predate the canonical ones), numbers seq and ordinal with missing or retired files first, flags
 // every ordinal above 1, and marks fresh each present version with an older
 // dead version in its adoption class, so the first whole-root scan adopts a
 // rename made before LIB-3 and keeps the old version ID. It reports how many
@@ -29,13 +29,17 @@ func (s *Store) BackfillVersions(ctx context.Context) (int, error) {
 	}
 }
 
+// unnumberedQuery finds items with versions not yet numbered; it reads the
+// library_versions_unnumbered partial index.
+const unnumberedQuery = `SELECT DISTINCT item_id FROM library_versions WHERE seq = 0 LIMIT ?`
+
 func (s *Store) backfillVersions(ctx context.Context) (versions, items int, err error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT item_id FROM library_versions WHERE seq = 0 LIMIT ?`, backfillBatch)
+	rows, err := tx.QueryContext(ctx, unnumberedQuery, backfillBatch)
 	if err != nil {
 		return 0, 0, err
 	}

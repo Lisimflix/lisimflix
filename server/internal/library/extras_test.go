@@ -239,8 +239,8 @@ func TestExtraNeverClimbsIntoAnotherMovieFolder(t *testing.T) {
 	}
 }
 
-// Files misread as extras before LIB-3 are classified again by adopt, on any
-// scan of the root, scoped ones included (decision 6c).
+// Files misread as extras before LIB-3 are classified again by adopt (decision
+// 6c): on a whole-root scan, or a scoped scan under the same top folder.
 func TestAdoptHealsMisreadEpisode(t *testing.T) {
 	s, _ := newStore(t)
 	m := newMedia(t)
@@ -263,6 +263,11 @@ func TestAdoptHealsMisreadEpisode(t *testing.T) {
 	if _, err := sc.Scan(ctx, lib.Roots[0].ID, "Other (2020)", CauseWatch); err != nil {
 		t.Fatal(err)
 	}
+	// A scoped scan elsewhere leaves it (#238 review); a whole-root scan heals it.
+	if u := s.unplaced(t); len(u) != 1 {
+		t.Fatalf("after a scoped scan of another folder: unplaced %v", u)
+	}
+	scan(t, sc, lib.Roots[0].ID)
 	if u := s.unplaced(t); len(u) != 0 {
 		t.Fatalf("unplaced %v", u)
 	}
@@ -271,5 +276,75 @@ func TestAdoptHealsMisreadEpisode(t *testing.T) {
 		WHERE i.scan_key = 'show:show|2019|s1|e2'`).Scan(&n)
 	if n != 1 || len(s.extras(t)) != 0 {
 		t.Fatalf("episode 2 versions %d, extras %v", n, s.extras(t))
+	}
+}
+
+// #238 review: a movie loose in a collection folder doesn't own that folder,
+// so an extra without a year in its name stays unplaced there. A movie whose
+// own folder has no year still owns it.
+func TestExtraWithoutKeyNeedsTheMovieFolder(t *testing.T) {
+	s, _, sc, l := movieLib(t, "Marvel/Iron Man (2008).mkv", "Marvel/Thor-trailer.mkv", "Marvel/Trailers/Thor.mkv",
+		"Heat/Heat (1995).mkv", "Heat/Featurettes/a.mkv")
+	scan(t, sc, l.Roots[0].ID)
+	u := s.unplaced(t)
+	if len(u) != 2 || u["Marvel/Thor-trailer.mkv"] != "extra" || u["Marvel/Trailers/Thor.mkv"] != "extra" {
+		t.Fatalf("unplaced %v", u)
+	}
+	if got := s.extras(t); !slices.Equal(got, []string{"movie:heat|1995 featurette a"}) {
+		t.Fatalf("extras %v", got)
+	}
+}
+
+// #238 review: a scoped scan re-places only the unplaced extras under its
+// scope's top folder; a whole-root scan re-places them all.
+func TestScopedAdoptStaysInItsTopFolder(t *testing.T) {
+	s, _, sc, l := lib(t, "tv", "TV", "Show (2019)/Season 01/S01E01.mkv", "Extras/x.mkv", "Other/Featurettes/y.mkv",
+		"Show (2019)/Season 02/Featurettes/z.mkv")
+	root := l.Roots[0].ID
+	scan(t, sc, root)
+	ctx := context.Background()
+	if n, err := s.adopt(ctx, root, "Show (2019)/Season 01"); err != nil || n != 0 {
+		t.Fatalf("scoped adopt re-placed %d (%v), want 0: z is already placed", n, err)
+	}
+	if n, err := s.adopt(ctx, root, "Other/Featurettes"); err != nil || n != 1 {
+		t.Fatalf("scoped adopt re-placed %d (%v), want only y", n, err)
+	}
+	if n, err := s.adopt(ctx, root, "."); err != nil || n != 2 {
+		t.Fatalf("whole-root adopt re-placed %d (%v), want x and y", n, err)
+	}
+}
+
+// #238 review: a returning extra that no longer places loses its old
+// attachment, so it isn't both listed and unplaced.
+func TestReturnedExtraThatNoLongerPlacesIsDetached(t *testing.T) {
+	s, m, sc, l := movieLib(t, "Dune/Dune (1984).mkv", "Dune/Trailers/t.mkv")
+	root := l.Roots[0].ID
+	scan(t, sc, root)
+	if got := s.extras(t); !slices.Equal(got, []string{"movie:dune|1984 trailer t"}) {
+		t.Fatalf("extras %v", got)
+	}
+	m.mv("Movies/Dune/Trailers/t.mkv", "away/t.mkv")
+	scan(t, sc, root)
+	m.write("Movies/Dune/Dune (2021).mkv", 10)
+	scan(t, sc, root)
+	m.mv("away/t.mkv", "Movies/Dune/Trailers/t.mkv")
+	scan(t, sc, root)
+	if got, u := s.extras(t), s.unplaced(t); len(got) != 0 || len(u) != 1 || u["Dune/Trailers/t.mkv"] != "extra" {
+		t.Fatalf("extras %v, unplaced %v: want only unplaced", got, u)
+	}
+}
+
+// #238 review: a scoped scan that adds a show's first episode adopts the
+// show's waiting extra, which sits under the scope's top folder, not the scope.
+func TestScopedScanAdoptsExtraUnderItsTopFolder(t *testing.T) {
+	s, m, sc, l := lib(t, "tv", "TV", "Show (2019)/Featurettes/x.mkv")
+	root := l.Roots[0].ID
+	scan(t, sc, root)
+	m.write("TV/Show (2019)/Season 01/S01E01.mkv", 10)
+	if _, err := sc.Scan(context.Background(), root, "Show (2019)/Season 01", CauseWatch); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.extras(t); !slices.Equal(got, []string{"show:show|2019 featurette x"}) {
+		t.Fatalf("extras %v", got)
 	}
 }

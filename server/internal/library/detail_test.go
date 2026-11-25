@@ -597,3 +597,13 @@ func TestItemDetailShowsNumberedAndSegmentedVersions(t *testing.T) {
 		}
 	}
 }
+
+// #238 review: extras of one type list by title whatever its case.
+func TestItemExtrasTitleOrderIgnoresCase(t *testing.T) {
+	e := newBrowse(t)
+	e.library("TV", "tv", []string{"TV"}, showEp, "TV/Show (2019)/Featurettes/Zebra Unit.mkv", "TV/Show (2019)/Featurettes/behind the camera.mkv")
+	xs := e.s.extrasOf(t, grantAll, e.itemID("Show"))
+	if len(xs) != 2 || xs[0].Title != "behind the camera" || xs[1].Title != "Zebra Unit" {
+		t.Fatalf("extras %+v", xs)
+	}
+}

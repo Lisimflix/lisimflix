@@ -138,3 +138,14 @@ func FoldLabel(label string) string {
 		return r
 	}, label)
 }
+
+// NamesFolder reports whether folder's own name names the movie or show with
+// scan key scanKey ("movie:heat|1995"): same title, and the same year unless
+// the folder has none. A movie loose in a collection folder ("Marvel/Iron Man
+// (2008).mkv") doesn't, so an extra without a year can't attach to it there.
+func NamesFolder(folder, scanKey string) bool {
+	_, k, _ := strings.Cut(scanKey, ":")
+	title, year, _ := strings.Cut(k, "|")
+	ni := parseName(path.Base(folder))
+	return key(ni.Title) == title && (ni.Year == 0 || strconv.Itoa(ni.Year) == year)
+}

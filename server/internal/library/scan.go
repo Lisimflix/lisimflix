@@ -235,7 +235,7 @@ func (sc *Scanner) Scan(ctx context.Context, rootID, scope, cause string) (Run, 
 	if err := st.settle(bg, rootID, full); err != nil {
 		return dbFailed(err)
 	}
-	if err := st.adopt(bg, rootID, full); err != nil {
+	if _, err := st.adopt(bg, rootID, scope); err != nil {
 		return dbFailed(err)
 	}
 	return sc.finish(bg, root, run, full, RunCompleted, "", RootAvailable)
@@ -403,20 +403,12 @@ func (s *Store) applyFiles(ctx context.Context, root Root, libType, runID string
 				last_seen_run = ? WHERE id = ?`, f.Rev.Size, f.Rev.ModTime, runID, id); err != nil {
 				return err
 			}
-			if !unplaced.Valid {
-				if state == "present" {
-					continue // already placed
-				}
-				// A returning file whose version was adopted by its
-				// replacement has no row left: place it again (LIB-3).
-				var placed bool
-				if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM library_versions WHERE file_id = ?)
-					OR EXISTS (SELECT 1 FROM library_extras WHERE file_id = ?)`, id, id).Scan(&placed); err != nil {
-					return err
-				}
-				if placed {
-					continue
-				}
+			// A returning file goes back through place even if it still has
+			// rows: its replacement may have adopted only some of them (one
+			// episode of a multi-episode file, #238 review); version() skips
+			// an item that already has the file.
+			if !unplaced.Valid && state == "present" {
+				continue // already placed
 			}
 		}
 		if err := s.place(ctx, tx, root, libType, id, f, run); err != nil {
@@ -438,6 +430,11 @@ func (s *Store) place(ctx context.Context, tx *sql.Tx, root Root, libType, fileI
 			reason = "extra"
 			placed, err := s.placeExtra(ctx, tx, root, fileID, f.Path)
 			if placed || err != nil {
+				return err
+			}
+			// A returning extra that no longer places (its folder now holds two
+			// movies) loses its old attachment: it's listed as unplaced only.
+			if _, err := tx.ExecContext(ctx, `DELETE FROM library_extras WHERE file_id = ?`, fileID); err != nil {
 				return err
 			}
 		case errors.Is(err, naming.ErrSample):
