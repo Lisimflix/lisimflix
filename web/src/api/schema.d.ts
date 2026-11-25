@@ -158,6 +158,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/items/{itemId}/continue-watching-hidden": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Remove a movie or episode from the current profile's Continue Watching. This is an explicit change, so it bumps UserItemState.revision (progress never does). The item comes back on the first accepted progress event of a playback session started after the hide; there is no un-hide call. expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
+        put: operations["hideContinueWatching"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/playback/sessions/{sessionId}/progress": {
         parameters: {
             query?: never;
@@ -382,7 +399,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
-        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched (and hiding from Continue Watching, once DATA-1b adds it). Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Writes send it back as expectedRevision. */
+        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched, and hiding from Continue Watching. Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Writes send it back as expectedRevision. */
         UserItemState: {
             itemId: string;
             /** Format: int64 */
@@ -438,6 +455,10 @@ export interface components {
         };
         WatchedRequest: {
             watched: boolean;
+            /** Format: int64 */
+            expectedRevision: number;
+        };
+        HideRequest: {
             /** Format: int64 */
             expectedRevision: number;
         };
@@ -752,7 +773,7 @@ export interface components {
         HDR: boolean;
         /** @description ISO 639-2/T, e.g. deu, fra, zho */
         AudioLanguage: string;
-        /** @description Reads DATA-1's data; 400 invalid_request until DATA-1 is live */
+        /** @description Reads DATA-1's data; 400 invalid_request until the watched-filter slice ships (#247) */
         Watched: boolean;
         ParentIdQuery: string;
         Range: string;
@@ -1159,6 +1180,41 @@ export interface operations {
             500: components["responses"]["Error"];
         };
     };
+    hideContinueWatching: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Token from AuthState.csrfToken; mismatch is 403 csrf_failed */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                itemId: components["parameters"]["ItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HideRequest"];
+            };
+        };
+        responses: {
+            /** @description New state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserItemState"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
     reportProgress: {
         parameters: {
             query?: never;
@@ -1320,7 +1376,7 @@ export interface operations {
                 hdr?: components["parameters"]["HDR"];
                 /** @description ISO 639-2/T, e.g. deu, fra, zho */
                 audioLanguage?: components["parameters"]["AudioLanguage"];
-                /** @description Reads DATA-1's data; 400 invalid_request until DATA-1 is live */
+                /** @description Reads DATA-1's data; 400 invalid_request until the watched-filter slice ships (#247) */
                 watched?: components["parameters"]["Watched"];
                 /** @description nextCursor from the previous page; opaque */
                 cursor?: components["parameters"]["Cursor"];

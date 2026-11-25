@@ -98,6 +98,7 @@ const userDataFixtures = {
   "progress-seek.json": "ProgressEvent",
   "progress-duplicate.json": "ProgressResult",
   "watched-request.json": "WatchedRequest",
+  "hide-request.json": "HideRequest",
 };
 
 checkFixtures(userDataFixtures, [
@@ -112,6 +113,9 @@ checkFixtures(userDataFixtures, [
   ["unknown watched origin", "progress-duplicate.json", (d) => { d.state.watched = { value: true, origin: "plex", at: "2026-10-27T08:15:00Z" }; }],
   ["negative play count", "progress-duplicate.json", (d) => { d.state.playCount = -1; }],
   ["fractional expected revision", "watched-request.json", (d) => { d.expectedRevision = 1.5; }],
+  ["negative hide revision", "hide-request.json", (d) => { d.expectedRevision = -1; }],
+  ["hide request with an extra field", "hide-request.json", (d) => { d.hidden = true; }],
+  ["hide request without a revision", "hide-request.json", (d) => { delete d.expectedRevision; }],
 ]);
 
 const catalogueFixtures = {

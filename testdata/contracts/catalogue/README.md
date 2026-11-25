@@ -14,6 +14,7 @@ provider keys or personal data here.
 | `progress-seek.json` | `ProgressEvent` | A seek from 30:30 to 40:00 |
 | `progress-duplicate.json` | `ProgressResult` | A duplicate event: not applied, state unchanged |
 | `watched-request.json` | `WatchedRequest` | Mark watched, expecting revision 7 |
+| `hide-request.json` | `HideRequest` | Hide from Continue Watching, expecting revision 3 |
 | `libraries.json` | `LibraryList` | A movie library (idle scan, `partial` availability) and an anime library (scanning, 1,204 of 3,410 files, `available`) |
 | `items-movies.json` | `ItemPage` | A first page (`total` 412, a next page): a partly watched movie with a resume position (`matched` null), and an unmatched movie whose file is offline (`matched` and `available` false) |
 | `items-episodes.json` | `ItemPage` | A later page (`total` null): episodes 1–2 of a season, with `showTitle` and `seasonIndex`. Both live in one file with unknown boundaries, so neither has a duration; episode 1 was marked watched by hand |

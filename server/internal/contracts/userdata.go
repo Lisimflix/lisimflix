@@ -28,8 +28,8 @@ const (
 )
 
 // UserItemState is the current profile's state for one movie or episode.
-// Revision counts explicit changes: marking watched or unwatched (and hiding
-// from Continue Watching, once DATA-1b adds it). Progress never changes
+// Revision counts explicit changes: marking watched or unwatched, and hiding
+// from Continue Watching. Progress never changes
 // Revision, so a row with only progress is still 0, but progress can still
 // change Resume, Watched (the automatic mark), PlayCount, LastPlayedAt and
 // HiddenFromContinueWatching (a later session clears a hide): an unchanged
@@ -84,5 +84,10 @@ type ProgressResult struct {
 
 type WatchedRequest struct {
 	Watched          bool  `json:"watched"`
+	ExpectedRevision int64 `json:"expectedRevision"`
+}
+
+// HideRequest removes an item from Continue Watching (hideContinueWatching).
+type HideRequest struct {
 	ExpectedRevision int64 `json:"expectedRevision"`
 }
