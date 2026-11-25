@@ -55,7 +55,7 @@ export function Library({ client, library: initial }: { client: Client; library:
   const [library, setLibrary] = useState(initial); // Empty's scan polls update it
   const search = useSearch();
   const params = new URLSearchParams(search);
-  const [noWatched, setNoWatched] = useState(false); // LIB-2c answers `watched` with 400 until DATA-1 is live
+  const [noWatched, setNoWatched] = useState(false); // LIB-2c answers `watched` with 400 until the watched-filter slice ships (#247)
   const query = queryFrom(library.id, params, noWatched);
   const key = JSON.stringify(query);
   const [facets, setFacets] = useState<LibraryFacets | null>(null);
