@@ -147,3 +147,23 @@ func TestSessionLookupDoesNotStatUnderLock(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// A file that can't be read for another reason (here: permissions) is not
+// "changed": the lookup returns a plain error (a 500 the player ignores), not
+// ErrSourceChanged, which ends playback in the browser.
+func TestSessionLookupUnreadableIsNotSourceChanged(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	e := newEnv(t, 4096)
+	ps := e.mustStart(alice, "k-lookup-9")
+	dir := filepath.Dir(e.path)
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0o755) })
+	_, err := e.s.Session(alice, ps.ID)
+	if err == nil || errors.Is(err, ErrSourceChanged) || errors.Is(err, ErrSessionNotFound) || errors.Is(err, ErrSessionEnded) {
+		t.Fatalf("err = %v, want a plain error", err)
+	}
+}

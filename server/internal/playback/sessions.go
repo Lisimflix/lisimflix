@@ -308,7 +308,14 @@ func (s *Server) Session(p contracts.Principal, id string) (SessionRef, error) {
 		testHookStat()
 	}
 	info, err := statSource(s.root, src)
-	if err != nil || !os.SameFile(info, started) { // a missing file reads as changed (DATA-1b Decision 7)
+	if errors.Is(err, errSourceUnavailable) {
+		// Missing reads as changed (DATA-1b Decision 7); any other failure (a
+		// brief I/O or permission error) is not a reason to end playback.
+		if _, serr := s.root.Stat(src.RelativePath); !errors.Is(serr, fs.ErrNotExist) {
+			return SessionRef{}, errors.New("playback: the source file could not be checked")
+		}
+	}
+	if err != nil || !os.SameFile(info, started) {
 		return SessionRef{}, ErrSourceChanged
 	}
 	return SessionRef{ID: sess.id, ItemID: src.ItemID, VersionID: src.VersionID, SourceRevision: src.SourceRevision}, nil
