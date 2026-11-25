@@ -208,7 +208,7 @@ Most likely first; each has its test in the owning task.
   // (setWatched, hide); progress passes the session's, so a probe duration is used only for that file revision (#177 note 1).
   // ok=false means "not a catalogue movie or episode" (Decision 3).
   type ItemFacts func(ctx context.Context, p contracts.Principal, itemID, versionID, sourceRevision string) (durationMs int64, noAutoWatched, ok bool, err error)
-  func NewAPI(store *Store, sessions SessionLookup, facts ItemFacts) *API
+  func NewAPI(store *Store, sessions SessionLookup, facts ItemFacts, log *slog.Logger) *API // nil log discards, as library.NewAPI
   func (a *API) Handler() http.Handler // full-path method patterns; requests carry a principal
   ```
 - Routes: `POST /api/v1/playback/sessions/{sessionId}/progress`, `PUT /api/v1/items/{itemId}/watched`, `PUT /api/v1/items/{itemId}/continue-watching-hidden`.
@@ -288,7 +288,7 @@ Most likely first; each has its test in the owning task.
   ```go
   // Summaries returns the summaries of the items the profile may see, keyed by id; others are absent.
   type Summaries func(ctx context.Context, p contracts.Principal, ids []string) (map[string]contracts.ItemSummary, error)
-  func NewAPI(store *Store, sessions SessionLookup, facts ItemFacts, sums Summaries) *API // gains the last parameter; Task 5's call is updated
+  func NewAPI(store *Store, sessions SessionLookup, facts ItemFacts, sums Summaries, log *slog.Logger) *API // gains sums before log; Task 5's call is updated
   ```
   Route: `GET /api/v1/continue-watching?cursor=&limit=` → `ItemPage` with `total: null`. The cursor is base64url JSON of `Cursor` plus the profile ID, at most 512 bytes.
 
