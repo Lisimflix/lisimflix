@@ -235,6 +235,9 @@ func (sc *Scanner) Scan(ctx context.Context, rootID, scope, cause string) (Run, 
 	if err := st.settle(bg, rootID, full); err != nil {
 		return dbFailed(err)
 	}
+	if _, err := st.adopt(bg, rootID, scope); err != nil {
+		return dbFailed(err)
+	}
 	return sc.finish(bg, root, run, full, RunCompleted, "", RootAvailable)
 }
 
@@ -400,7 +403,11 @@ func (s *Store) applyFiles(ctx context.Context, root Root, libType, runID string
 				last_seen_run = ? WHERE id = ?`, f.Rev.Size, f.Rev.ModTime, runID, id); err != nil {
 				return err
 			}
-			if !unplaced.Valid {
+			// A returning file goes back through place even if it still has
+			// rows: its replacement may have adopted only some of them (one
+			// episode of a multi-episode file, #238 review); version() skips
+			// an item that already has the file.
+			if !unplaced.Valid && state == "present" {
 				continue // already placed
 			}
 		}
@@ -417,15 +424,24 @@ func (s *Store) place(ctx context.Context, tx *sql.Tx, root Root, libType, fileI
 	libID := root.LibraryID
 	e, err := naming.Classify(libType, f.Path, f.Rev.Size)
 	if err != nil {
-		run.Unplaced++
 		reason := "unrecognised"
 		switch {
 		case errors.Is(err, naming.ErrExtra):
 			reason = "extra"
+			placed, err := s.placeExtra(ctx, tx, root, fileID, f.Path)
+			if placed || err != nil {
+				return err
+			}
+			// A returning extra that no longer places (its folder now holds two
+			// movies) loses its old attachment: it's listed as unplaced only.
+			if _, err := tx.ExecContext(ctx, `DELETE FROM library_extras WHERE file_id = ?`, fileID); err != nil {
+				return err
+			}
 		case errors.Is(err, naming.ErrSample):
 			reason = "sample"
 		}
-		_, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = ? WHERE id = ?`, reason, fileID)
+		run.Unplaced++
+		_, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = ? WHERE id = ? AND unplaced IS NOT ?`, reason, fileID, reason) // no-op when unchanged: adopt re-places unplaced extras every scan
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE library_files SET unplaced = NULL WHERE id = ?`, fileID); err != nil {
@@ -524,12 +540,6 @@ func (s *Store) item(ctx context.Context, tx *sql.Tx, libID string, it item) (st
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM library_items WHERE library_id = ? AND scan_key = ?`, libID, it.key).Scan(&id)
 	return id, err
-}
-
-func (s *Store) version(ctx context.Context, tx *sql.Tx, itemID, fileID, label string) error {
-	_, err := tx.ExecContext(ctx, `INSERT INTO library_versions(id, item_id, file_id, label) VALUES(?, ?, ?, NULLIF(?, ''))
-		ON CONFLICT(item_id, file_id) DO NOTHING`, newID("ver"), itemID, fileID, label)
-	return err
 }
 
 func (s *Store) hints(ctx context.Context, tx *sql.Tx, itemID string, ids map[string]string) error {

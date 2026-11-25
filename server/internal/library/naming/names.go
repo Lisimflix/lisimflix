@@ -105,10 +105,11 @@ func cleanTitle(s string) string {
 
 // versionLabel names one of several files of a movie: an {edition-...} tag,
 // else the text after " - " following the year ("Director's Cut", "1080p"),
-// else the resolution anywhere in the name, else "".
+// else the resolution anywhere in the name, else "". Quality labels are
+// canonical ("Bluray-1080p Proper" → "1080p") so an upgrade keeps its label.
 func versionLabel(stem string) string {
 	if m := editionRe.FindStringSubmatch(stem); m != nil {
-		return strings.TrimSpace(m[1])
+		return cutLabel(strings.TrimSpace(m[1])) // a cut may be literally named "Remux" or "4K"
 	}
 	rest := ""
 	if ms := parenYearRe.FindAllStringIndex(stem, -1); len(ms) > 0 {
@@ -119,11 +120,52 @@ func versionLabel(stem string) string {
 	rest = strings.TrimSpace(idHintRe.ReplaceAllString(rest, ""))
 	if strings.HasPrefix(rest, "- ") || rest == "-" {
 		label := strings.TrimSpace(bracketRe.ReplaceAllString(strings.TrimSpace(rest[1:]), " "))
-		if label = cleanTitle(releaseGroupRe.ReplaceAllString(label, "")); label != "" {
+		if label = canonicalLabel(cleanTitle(releaseGroupRe.ReplaceAllString(label, ""))); label != "" {
 			return label
 		}
 	}
 	return resolution(stem)
+}
+
+var (
+	realRe = regexp.MustCompile(`\bREAL\b`) // Servarr's {Quality Real}; case-sensitive, "Real" is a word
+	// noResQualities are Servarr quality titles that name no resolution.
+	noResQualities = map[string]bool{"unknown": true, "workprint": true, "cam": true, "telesync": true, "telecine": true,
+		"dvdscr": true, "regional": true, "sdtv": true, "dvd": true, "dvd-r": true, "br-disk": true, "raw-hd": true}
+	// qualityWords are Servarr source words and unbracketed codecs. HDR and DV
+	// are not here: an SDR and an HDR copy must stay apart in the picker.
+	qualityWords = map[string]bool{"bluray": true, "webdl": true, "web": true, "dl": true, "webrip": true, "hdtv": true,
+		"remux": true, "bdrip": true, "brrip": true, "dvdrip": true, "dvd": true, "sdtv": true,
+		"x264": true, "x265": true, "h264": true, "h265": true, "hevc": true, "avc": true, "xvid": true,
+		"proper": true, "repack": true}
+)
+
+// canonicalLabel drops proper/repack/REAL and reduces a label made only of
+// Servarr quality words to its one resolution, or "" when it has none.
+func canonicalLabel(label string) string {
+	label = realRe.ReplaceAllString(junkRe.ReplaceAllString(label, ""), "")
+	label = cleanTitle(label) // "Director's Cut - REPACK" leaves a dash
+	if noResQualities[strings.ToLower(label)] {
+		return ""
+	}
+	res := ""
+	for _, w := range strings.FieldsFunc(label, func(r rune) bool { return r == ' ' || r == '-' || r == '.' || r == '_' }) {
+		if r := resolution(w); r != "" && (res == "" || r == res) {
+			res = r
+		} else if !qualityWords[strings.ToLower(w)] {
+			return cutLabel(label)
+		}
+	}
+	return res
+}
+
+const maxLabelRunes = 90
+
+func cutLabel(label string) string {
+	if r := []rune(label); len(r) > maxLabelRunes {
+		return strings.TrimRight(string(r[:maxLabelRunes]), " -_.") // the cut may land inside " - "
+	}
+	return label
 }
 
 func resolution(stem string) string {

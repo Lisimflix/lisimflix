@@ -95,3 +95,82 @@ func TestResolverRefusesOfflineRoot(t *testing.T) {
 		t.Fatalf("degraded root: %v", err)
 	}
 }
+
+const (
+	filmTrailer = "Movies/Film (2001)/Film (2001)-trailer.mkv"
+)
+
+// extraOf returns the ID and file ID of the item's only extra.
+func (e *benv) extraOf(itemID string) (id, fileID string) {
+	e.t.Helper()
+	if err := e.s.db.QueryRow(`SELECT id, file_id FROM library_extras WHERE item_id = ?`, itemID).Scan(&id, &fileID); err != nil {
+		e.t.Fatal(err)
+	}
+	return id, fileID
+}
+
+func TestResolverPlaysExtra(t *testing.T) {
+	e := newBrowse(t)
+	e.library("Movies", "movies", []string{"Movies"}, filmHD, filmTrailer)
+	x, fileID := e.extraOf(e.itemID("Film"))
+
+	src, err := NewResolver(e.s, M1Access(m1Viewer())).Resolve(viewer, x, x)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := playback.Source{ItemID: x, VersionID: x, FileID: fileID,
+		RelativePath: filmTrailer, SourceRevision: e.revisionOf(fileID)}
+	if src != want {
+		t.Fatalf("got %+v\nwant %+v", src, want)
+	}
+}
+
+func TestResolverRefusesExtraInHiddenLibrary(t *testing.T) {
+	e := newBrowse(t)
+	e.library("Movies", "movies", []string{"Movies"}, filmHD, filmTrailer)
+	x, _ := e.extraOf(e.itemID("Film"))
+	r := NewResolver(e.s, func(contracts.Principal) Grant { return Grant{LibraryIDs: []string{"lib-other"}} })
+	if _, err := r.Resolve(viewer, x, x); !errors.Is(err, playback.ErrNotFound) {
+		t.Fatalf("hidden library: %v, want playback.ErrNotFound", err)
+	}
+}
+
+func TestResolverRefusesExtraWithOtherVersionID(t *testing.T) {
+	e := newBrowse(t)
+	e.library("Movies", "movies", []string{"Movies"}, filmHD, filmTrailer)
+	film := e.itemID("Film")
+	x, _ := e.extraOf(film)
+	v := e.versionOf(film)
+	r := NewResolver(e.s, M1Access(m1Viewer()))
+	for name, c := range map[string][2]string{
+		"extra with the movie's version": {x, v.ID},
+		"extra with an unknown version":  {x, "ver-unknown"},
+		"movie with the extra's ID":      {film, x},
+		"unknown item with the extra":    {"item-unknown", x},
+	} {
+		if _, err := r.Resolve(viewer, c[0], c[1]); !errors.Is(err, playback.ErrNotFound) {
+			t.Errorf("%s: %v, want playback.ErrNotFound", name, err)
+		}
+	}
+}
+
+func TestResolverRefusesMissingExtraFile(t *testing.T) {
+	e := newBrowse(t)
+	lib := e.library("Movies", "movies", []string{"Movies"}, filmHD, filmTrailer)
+	x, _ := e.extraOf(e.itemID("Film"))
+	r := NewResolver(e.s, M1Access(m1Viewer()))
+	if _, err := e.s.db.Exec(`UPDATE library_roots SET state = 'offline' WHERE id = ?`, lib.Roots[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Resolve(viewer, x, x); !errors.Is(err, playback.ErrNotFound) {
+		t.Fatalf("root offline: %v, want playback.ErrNotFound", err)
+	}
+	if _, err := e.s.db.Exec(`UPDATE library_roots SET state = 'available' WHERE id = ?`, lib.Roots[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	e.m.rm(filmTrailer)
+	e.scan(lib.Roots[0].ID)
+	if _, err := r.Resolve(viewer, x, x); !errors.Is(err, playback.ErrNotFound) {
+		t.Fatalf("file missing: %v, want playback.ErrNotFound", err)
+	}
+}

@@ -121,6 +121,7 @@ const catalogueFixtures = {
   "item-movie.json": "ItemDetail",
   "item-movie-admin.json": "ItemDetail",
   "item-episode-shared-file.json": "ItemDetail",
+  "item-episode-chaptered.json": "ItemDetail",
   "item-show.json": "ItemDetail",
   "facets.json": "LibraryFacets",
   "continue-watching.json": "ItemPage",
@@ -154,6 +155,11 @@ checkFixtures(catalogueFixtures, [
   ["unknown facet resolution", "facets.json", (d) => { d.resolutions = ["8k"]; }],
   ["movie with a showTitle", "items-movies.json", (d) => { d.items[0].showTitle = "Synthetic Show"; }],
   ["negative childCount", "item-show.json", (d) => { d.item.childCount = -1; }],
+  ["extra with unknown type", "item-movie.json", (d) => { d.extras[0].type = "bonus"; }],
+  ["path in extra fileName", "item-movie-admin.json", (d) => { d.extras[0].version.fileName = "/media/x.mkv"; }],
+  ["extras on an episode", "item-episode-shared-file.json", (d) => { d.extras = catalogue("item-movie.json").extras; }],
+  ["extra without version", "item-movie.json", (d) => { delete d.extras[0].version; }],
+  ["extras on a season", "item-show.json", (d) => { Object.assign(d.item, { kind: "season", parentId: "shw-synthetic-0001", showTitle: "Synthetic Show" }); }],
 ]);
 
 const profileFixtures = { "profiles.json": "ProfileList" };

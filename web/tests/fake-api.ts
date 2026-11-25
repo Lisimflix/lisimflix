@@ -157,7 +157,7 @@ export class FakeAPI {
         return json(200, { itemId: "x", revision: b.expectedRevision + 1, resume: null, watched: b.watched ? { value: true, origin: "manual", at } : null, playCount: 0, lastPlayedAt: null, hiddenFromContinueWatching: false });
       }
       const id = call.path.slice("/api/v1/items/".length);
-      if (id === "sea-synthetic-0001") return json(200, { item: season(), originalTitle: null, overview: null, genres: [], communityRating: null, directors: [], studios: [], externalIds: [], versions: [] });
+      if (id === "sea-synthetic-0001") return json(200, { item: season(), originalTitle: null, overview: null, genres: [], communityRating: null, directors: [], studios: [], externalIds: [], versions: [], extras: [] });
       for (const f of ["item-movie", "item-show", "item-episode-shared-file"]) {
         const detail = catalogue(`${f}.json`);
         if (detail.item.id === id) return json(200, detail);

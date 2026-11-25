@@ -250,3 +250,37 @@ func TestServeWithoutCatalogueWhenSortKeyBackfillFails(t *testing.T) {
 		t.Fatalf("no backfill error logged: %s", logs.String())
 	}
 }
+
+// LIB-3: if the version backfill fails, nothing scans or lists against
+// unnumbered versions: the scheduler stays stopped, the catalogue routes
+// answer 404 and the server is not ready, but it still answers.
+func TestServeKeepsSchedulerStoppedWhenBackfillFails(t *testing.T) {
+	f := newFixture(t)
+	f.s.shutdown(context.Background(), nil)
+	orig := backfillVersions
+	t.Cleanup(func() { backfillVersions = orig })
+	boom := errors.New("disk I/O error")
+	backfillVersions = func(*library.Store, context.Context) (int, error) { return 0, boom }
+	var logs bytes.Buffer
+	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, nil, slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.shutdown(context.Background(), nil)
+	if s.scans != nil {
+		t.Fatal("the scheduler was started")
+	}
+	if !errors.Is(s.versionsErr, boom) {
+		t.Fatalf("versionsErr = %v", s.versionsErr)
+	}
+	for path, want := range map[string]int{"/api/v1/libraries": 404, "/health/ready": 503, "/health/live": 200} {
+		rec := httptest.NewRecorder()
+		s.handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		if rec.Code != want {
+			t.Fatalf("%s = %d, want %d", path, rec.Code, want)
+		}
+	}
+	if !strings.Contains(logs.String(), `"msg":"library.backfill_versions"`) || !strings.Contains(logs.String(), "disk I/O error") {
+		t.Fatalf("no backfill error logged: %s", logs.String())
+	}
+}

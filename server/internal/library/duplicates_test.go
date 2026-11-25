@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -111,16 +112,24 @@ func TestRenamedFolderKeepsItemIDs(t *testing.T) {
 	sc := m.scanner(s)
 	scan(t, sc, lib.Roots[0].ID)
 	show, ep := itemID(t, s, "show:show name|0"), itemID(t, s, "show:show name|0|s1|e1")
+	ver := s.vers(t, "show:show name|0|s1|e1")[0].ID
 
-	os.RemoveAll(filepath.Join(m.dir, "TV/Show.Name"))
-	m.write("TV/Show Name/Season 01/Show Name - S01E01.mkv", 10)
-	scan(t, sc, lib.Roots[0].ID)
-	if itemID(t, s, "show:show name|0") != show || itemID(t, s, "show:show name|0|s1|e1") != ep {
-		t.Fatal("rename changed the item IDs")
-	}
-	want := []string{"episode Episode 1 1 v2", "season Season 1 1 v0", "show Show Name - v0"}
-	if got := s.tree(t, lib.ID); !slices.Equal(got, want) || len(dups(t, s, lib.ID)) != 0 {
-		t.Fatalf("after rename %v, flags %v", got, dups(t, s, lib.ID))
+	// Renamed back and forth, so a random-ID order can't hide a wrong ordinal.
+	names := []string{"Show.Name/Season 1/Show.Name.S01E01.mkv", "Show Name/Season 01/Show Name - S01E01.mkv"}
+	for i := range 4 {
+		from, to := names[i%2], names[(i+1)%2]
+		os.RemoveAll(filepath.Join(m.dir, "TV", strings.SplitN(from, "/", 2)[0]))
+		m.write("TV/"+to, 10)
+		scan(t, sc, lib.Roots[0].ID)
+		if itemID(t, s, "show:show name|0") != show || itemID(t, s, "show:show name|0|s1|e1") != ep {
+			t.Fatal("rename changed the item IDs")
+		}
+		// LIB-3: the version follows the file too.
+		want := []string{"episode Episode 1 1 v1", "season Season 1 1 v0", "show Show Name - v0"}
+		if got := s.tree(t, lib.ID); !slices.Equal(got, want) || len(dups(t, s, lib.ID)) != 0 {
+			t.Fatalf("after rename %v, flags %v", got, dups(t, s, lib.ID))
+		}
+		only(t, s.vers(t, "show:show name|0|s1|e1"), ver, to)
 	}
 }
 
@@ -267,20 +276,25 @@ func TestMergedFolderCanBeRenamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := shows(t, s, lib.ID)
+	ver := s.vers(t, "show:doctor who|0|s1|e2")[0].ID
 
-	os.Rename(filepath.Join(m.dir, "TV/Doctor.Who"), filepath.Join(m.dir, "TV/Doctor Who {tvdb-2}"))
-	scan(t, sc, lib.Roots[0].ID)
-	if got := shows(t, s, lib.ID); len(before) != 1 || !slices.Equal(got, before) {
-		t.Fatalf("shows %v, want the merged one %v", got, before)
-	}
-	if d := dups(t, s, lib.ID); len(d) != 0 {
-		t.Fatalf("the merge didn't stick: %+v", d)
-	}
-	// Episode 2 has the renamed file plus its old, now missing, path (kept
-	// until retirement), as for any rename.
-	want := []string{"episode Episode 1 1 v1", "episode Episode 2 2 v2", "season Season 1 1 v0", "show Doctor Who - v0"}
-	if got := s.tree(t, lib.ID); !slices.Equal(got, want) {
-		t.Fatalf("tree %v, want %v", got, want)
+	// Renamed back and forth, so a random-ID order can't hide a wrong ordinal.
+	names := []string{"TV/Doctor.Who", "TV/Doctor Who {tvdb-2}"}
+	for i := range 4 {
+		os.Rename(filepath.Join(m.dir, names[i%2]), filepath.Join(m.dir, names[(i+1)%2]))
+		scan(t, sc, lib.Roots[0].ID)
+		if got := shows(t, s, lib.ID); len(before) != 1 || !slices.Equal(got, before) {
+			t.Fatalf("shows %v, want the merged one %v", got, before)
+		}
+		if d := dups(t, s, lib.ID); len(d) != 0 {
+			t.Fatalf("the merge didn't stick: %+v", d)
+		}
+		// LIB-3: episode 2's version follows the renamed file, as for any rename.
+		want := []string{"episode Episode 1 1 v1", "episode Episode 2 2 v1", "season Season 1 1 v0", "show Doctor Who - v0"}
+		if got := s.tree(t, lib.ID); !slices.Equal(got, want) {
+			t.Fatalf("tree %v, want %v", got, want)
+		}
+		only(t, s.vers(t, "show:doctor who|0|s1|e2"), ver, names[(i+1)%2][len("TV/"):]+"/Season 01/Doctor.Who.S01E02.mkv")
 	}
 }
 
@@ -358,5 +372,83 @@ func TestLooseFileMoveFoldsWhenAnotherLibraryHasTheSameShow(t *testing.T) {
 	}
 	if got := shows(t, s, tv.ID); len(before) != 1 || !slices.Equal(got, before) {
 		t.Fatalf("TV shows %v, want %v", got, before)
+	}
+}
+
+// A fold, by rename or by the admin's merge, carries the other item's extras
+// into the surviving item (decision 6a).
+func TestFoldCarriesExtras(t *testing.T) {
+	t.Run("rename", func(t *testing.T) {
+		s, _ := newStore(t)
+		m := newMedia(t)
+		m.write("Movies/Heat (1995)/Heat (1995).mkv", 10)
+		m.write("Movies/Heat (1995)/Featurettes/a.mkv", 10)
+		lib, _ := s.CreateLibrary(context.Background(), "Movies", "movies", []string{"Movies"})
+		sc := m.scanner(s)
+		scan(t, sc, lib.Roots[0].ID)
+		heat := itemID(t, s, "movie:heat|1995")
+
+		os.RemoveAll(filepath.Join(m.dir, "Movies/Heat (1995)"))
+		m.write("Movies/Heat (1995) {imdb-tt0113277}/Heat (1995).mkv", 10)
+		// Walked after the movie, so it is placed on the new folder's provisional item.
+		m.write("Movies/Heat (1995) {imdb-tt0113277}/Trailers/b.mkv", 10)
+		scan(t, sc, lib.Roots[0].ID)
+		want := []string{"movie:heat|1995 featurette a", "movie:heat|1995 trailer b"}
+		if got := s.extras(t); itemID(t, s, "movie:heat|1995") != heat || !slices.Equal(got, want) {
+			t.Fatalf("extras %v, want %v", got, want)
+		}
+	})
+	t.Run("merge", func(t *testing.T) {
+		s, _ := newStore(t)
+		m := newMedia(t)
+		m.write("Movies/Heat (1995)/Heat (1995).mkv", 10)
+		m.write("Movies/Heat (1995)/Trailers/a.mkv", 10)
+		m.write("Movies/Heat.1995/Heat.1995.mkv", 20)
+		m.write("Movies/Heat.1995/Trailers/b.mkv", 20)
+		ctx := context.Background()
+		lib, _ := s.CreateLibrary(ctx, "Movies", "movies", []string{"Movies"})
+		scan(t, m.scanner(s), lib.Roots[0].ID)
+		d := dups(t, s, lib.ID)
+		if len(d) != 1 {
+			t.Fatalf("duplicates %+v", d)
+		}
+		if err := s.Decide(ctx, d[0].ID, true); err != nil {
+			t.Fatal(err)
+		}
+		want := []string{"movie:heat|1995 trailer a", "movie:heat|1995 trailer b"}
+		if got := s.extras(t); !slices.Equal(got, want) {
+			t.Fatalf("extras %v, want %v", got, want)
+		}
+	})
+}
+
+// Decision 6a: Radarr moves the movie file and leaves Featurettes/ behind.
+// The old folder holding only extras is gone, so this is a rename; a real
+// second copy appearing there later is still flagged (#111).
+func TestRenameLeavingExtrasBehindIsFolded(t *testing.T) {
+	s, _ := newStore(t)
+	m := newMedia(t)
+	m.write("Movies/Heat (1995)/Heat (1995).mkv", 10)
+	m.write("Movies/Heat (1995)/Featurettes/a.mkv", 10)
+	lib, _ := s.CreateLibrary(context.Background(), "Movies", "movies", []string{"Movies"})
+	sc := m.scanner(s)
+	scan(t, sc, lib.Roots[0].ID)
+	heat := itemID(t, s, "movie:heat|1995")
+	ver := s.vers(t, "movie:heat|1995")[0].ID
+
+	m.mv("Movies/Heat (1995)/Heat (1995).mkv", "Movies/Heat (1995) Remastered/Heat (1995).mkv")
+	scan(t, sc, lib.Roots[0].ID)
+	if itemID(t, s, "movie:heat|1995") != heat || countItems(t, s) != 1 || len(dups(t, s, lib.ID)) != 0 {
+		t.Fatalf("items %d, duplicates %+v, want the rename folded", countItems(t, s), dups(t, s, lib.ID))
+	}
+	only(t, s.vers(t, "movie:heat|1995"), ver, "Heat (1995) Remastered/Heat (1995).mkv")
+	if got := s.extras(t); !slices.Equal(got, []string{"movie:heat|1995 featurette a"}) {
+		t.Fatalf("extras %v", got)
+	}
+
+	m.write("Movies/Heat (1995)/Heat (1995).mkv", 20)
+	scan(t, sc, lib.Roots[0].ID)
+	if d := dups(t, s, lib.ID); len(d) != 1 || d[0].ItemID != heat {
+		t.Fatalf("duplicates %+v, want the second copy flagged", d)
 	}
 }

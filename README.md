@@ -12,7 +12,9 @@ The browse app (UI-2) now browses and plays real libraries through the catalogue
 falling back to the M1 movie when storage is down.
 
 Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
-anime, and the server keeps it scanned and probed for the browse app. The admin screens follow (LIB-2d).
+anime, and the server keeps it scanned and probed for the browse app. Several versions of a title
+(1080p, 4K, a director's cut) stay under one item, and extras such as trailers attach to their movie or
+show (LIB-3). The admin screens follow (LIB-2d).
 
 To run it, see [`deploy/README.md`](deploy/README.md). M1 is for one viewer on a trusted
 private network only, over plain HTTP.

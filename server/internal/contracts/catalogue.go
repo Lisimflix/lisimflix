@@ -214,6 +214,7 @@ type ItemDetail struct {
 	Genres        []string       `json:"genres"`
 	ExternalIDs   []ExternalID   `json:"externalIds"`
 	Versions      []MediaVersion `json:"versions"` // empty for shows and seasons
+	Extras        []Extra        `json:"extras"`   // movies and shows; empty otherwise
 
 	CommunityRating *CommunityRating `json:"communityRating"`
 	Directors       []string         `json:"directors"`
@@ -227,9 +228,30 @@ func (d ItemDetail) MarshalJSON() ([]byte, error) {
 	d.Genres = nonNil(d.Genres)
 	d.ExternalIDs = nonNil(d.ExternalIDs)
 	d.Versions = nonNil(d.Versions)
+	d.Extras = nonNil(d.Extras)
 	d.Directors = nonNil(d.Directors)
 	d.Studios = nonNil(d.Studios)
 	return json.Marshal(plain(d))
+}
+
+// Extra types (Extra.type).
+const (
+	ExtraTrailer         = "trailer"
+	ExtraFeaturette      = "featurette"
+	ExtraBehindTheScenes = "behindTheScenes"
+	ExtraDeletedScene    = "deletedScene"
+	ExtraInterview       = "interview"
+	ExtraScene           = "scene"
+	ExtraShort           = "short"
+	ExtraOther           = "other"
+)
+
+// Extra is a trailer, featurette or other bonus video of a movie or show.
+type Extra struct {
+	ID      string       `json:"id"`   // also Version.ID; the extra's own playback item ID
+	Type    string       `json:"type"` // one of the Extra* constants
+	Title   string       `json:"title"`
+	Version MediaVersion `json:"version"`
 }
 
 // MediaVersion is one playable version of a movie or episode: a cut or

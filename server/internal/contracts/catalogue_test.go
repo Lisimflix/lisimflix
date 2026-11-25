@@ -12,6 +12,7 @@ var catalogueFixtures = map[string]func() any{
 	"item-movie.json":               func() any { return &ItemDetail{} },
 	"item-movie-admin.json":         func() any { return &ItemDetail{} },
 	"item-episode-shared-file.json": func() any { return &ItemDetail{} },
+	"item-episode-chaptered.json":   func() any { return &ItemDetail{} },
 	"item-show.json":                func() any { return &ItemDetail{} },
 	"facets.json":                   func() any { return &LibraryFacets{} },
 	"continue-watching.json":        func() any { return &ItemPage{} },
@@ -19,6 +20,22 @@ var catalogueFixtures = map[string]func() any{
 }
 
 func TestCatalogueFixturesRoundTrip(t *testing.T) { roundTripFixtures(t, catalogueFixtures) }
+
+// Decision 4: an extra's ID is its version's ID (the extra's playback itemId).
+func TestExtraIDIsVersionID(t *testing.T) {
+	for name, newValue := range catalogueFixtures {
+		d, ok := newValue().(*ItemDetail)
+		if !ok {
+			continue
+		}
+		decodeStrict(t, loadCatalogueFixture(t, name), d)
+		for _, e := range d.Extras {
+			if e.ID != e.Version.ID {
+				t.Errorf("%s: extra %s has version %s", name, e.ID, e.Version.ID)
+			}
+		}
+	}
+}
 
 func TestEmptyPagesEncodeItemsAsArray(t *testing.T) {
 	for _, c := range []struct {
@@ -47,4 +64,5 @@ func TestCatalogueEnumsMatchOpenAPI(t *testing.T) {
 	checkEnum(t, "Library", "availability", AvailabilityAvailable, AvailabilityPartial, AvailabilityOffline)
 	checkSchemaEnum(t, "Resolution", ResolutionSD, Resolution720, Resolution1080, Resolution4K)
 	checkParamEnum(t, "Sort", SortTitle, SortAdded, SortYear)
+	checkSchemaEnum(t, "ExtraType", ExtraTrailer, ExtraFeaturette, ExtraBehindTheScenes, ExtraDeletedScene, ExtraInterview, ExtraScene, ExtraShort, ExtraOther)
 }

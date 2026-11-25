@@ -2,8 +2,11 @@ package library
 
 import (
 	"context"
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -106,14 +109,15 @@ func TestItemDetailVersionsAndStreams(t *testing.T) {
 		t.Fatalf("descriptive fields %+v", d)
 	}
 
-	// The 1080p file goes missing: the cut is now the default, the missing
-	// version stays listed as unavailable, and listItems agrees on durationMs.
+	// The 1080p file goes missing: the cut is now the default and the only
+	// version listed (LIB-3 decision 2 hides a missing version beside a present
+	// one), and listItems agrees on durationMs.
 	if err := os.Remove(filepath.Join(e.m.dir, filmHD)); err != nil {
 		t.Fatal(err)
 	}
 	e.scan(lib.Roots[0].ID)
 	d = e.detail(grantAll, id)
-	if len(d.Versions) != 2 || d.Versions[0].FileID != cut.FileID || !d.Versions[0].Available || d.Versions[1].Available {
+	if len(d.Versions) != 1 || d.Versions[0].FileID != cut.FileID || !d.Versions[0].Available {
 		t.Fatalf("after missing: %+v", d.Versions)
 	}
 	if d.Item.DurationMs == nil || *d.Item.DurationMs != 6000 || d.Item.Available == nil || !*d.Item.Available {
@@ -254,4 +258,352 @@ func TestRetiredVersionIsLeftOut(t *testing.T) {
 	}
 	e.scan(root)
 	check("cut missing", false)
+}
+
+// versionsOf and extrasOf run the two reads in one read transaction.
+func (s *Store) versionsOf(t testing.TB, g Grant, itemID string) []contracts.MediaVersion {
+	t.Helper()
+	var out []contracts.MediaVersion
+	if err := s.read(context.Background(), func(tx *sql.Tx) (err error) {
+		out, err = s.itemVersions(context.Background(), tx, g, itemID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func (s *Store) extrasOf(t testing.TB, g Grant, itemID string) []contracts.Extra {
+	t.Helper()
+	var out []contracts.Extra
+	if err := s.read(context.Background(), func(tx *sql.Tx) (err error) {
+		out, err = s.itemExtras(context.Background(), tx, g, itemID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+func labels(vs []contracts.MediaVersion) []string {
+	out := []string{}
+	for _, v := range vs {
+		if v.Label == nil {
+			out = append(out, "<nil>")
+		} else {
+			out = append(out, *v.Label)
+		}
+	}
+	return out
+}
+
+const sharedEp = "TV/Show (2019)/Season 01/Show - S01E01-E02.mkv"
+
+// sharedFile is a season with two episodes on one probed file of two
+// 25-minute chapters. Their numbers are then swapped, so insertion order
+// disagrees with episode order: first is the episode now numbered 1 (placed
+// second), and the read must follow idx, not row order.
+func sharedFile(t *testing.T) (e *benv, first, second string) {
+	t.Helper()
+	e = newBrowse(t)
+	lib := e.library("TV", "tv", []string{"TV"}, sharedEp)
+	e.probe(lib.Roots[0].ID, resProber{"Show - S01E01-E02.mkv": {Container: "matroska,webm", DurationMs: 3_000_000,
+		Video:    []probe.VideoStream{{Index: 0, Codec: "h264", Width: 1920, Height: 1080, Default: true}},
+		Chapters: []probe.Chapter{{StartMs: 0, EndMs: 1_500_000}, {StartMs: 1_500_000, EndMs: 3_000_000}}}})
+	placed1, placed2 := e.itemID("Episode 1"), e.itemID("Episode 2")
+	if _, err := e.s.db.Exec(`UPDATE library_items SET idx = 3 - idx WHERE id IN (?, ?)`, placed1, placed2); err != nil {
+		t.Fatal(err)
+	}
+	return e, placed2, placed1
+}
+
+func TestItemVersionsSharedFile(t *testing.T) {
+	e, ep1, ep2 := sharedFile(t)
+	want := map[string]contracts.Segment{ep1: {StartMs: 0, EndMs: 1_500_000}, ep2: {StartMs: 1_500_000, EndMs: 3_000_000}}
+	for id, w := range want {
+		vs := e.s.versionsOf(t, grantAll, id)
+		if len(vs) != 1 || vs[0].Segment == nil || *vs[0].Segment != w {
+			t.Fatalf("%s: %+v, want segment %v", id, vs, w)
+		}
+	}
+	// Episode 2 moves to another season: the file no longer holds two
+	// episodes of one season, so neither gets a range.
+	if _, err := e.s.db.Exec(`INSERT INTO library_items(id, library_id, kind, parent_id, scan_key, title, sort_title, idx, created_at)
+		SELECT 'sea-2', library_id, 'season', parent_id, scan_key || '-2', 'Season 2', 'Season 2', 2, created_at FROM library_items WHERE title = 'Season 1'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.db.Exec(`UPDATE library_items SET parent_id = 'sea-2' WHERE id = ?`, ep2); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{ep1, ep2} {
+		if vs := e.s.versionsOf(t, grantAll, id); len(vs) != 1 || vs[0].Segment != nil {
+			t.Fatalf("%s across seasons: %+v", id, vs)
+		}
+	}
+}
+
+// Decision 6d: a stale probe still serves the container and streams but not
+// the segment, which needs the probe to match the file's revision.
+func TestItemVersionsStaleProbeHasNoSegment(t *testing.T) {
+	e, ep1, _ := sharedFile(t)
+	if _, err := e.s.db.Exec(`UPDATE library_files SET probe_size = probe_size + 1`); err != nil {
+		t.Fatal(err)
+	}
+	vs := e.s.versionsOf(t, grantAll, ep1)
+	if len(vs) != 1 || vs[0].Segment != nil || vs[0].Container != "matroska,webm" || len(vs[0].Video) != 1 {
+		t.Fatalf("stale probe: %+v", vs)
+	}
+}
+
+func TestItemVersionsMovieHasNoSegment(t *testing.T) {
+	e := newBrowse(t)
+	lib := e.library("Movies", "movies", []string{"Movies"}, filmHD)
+	e.probe(lib.Roots[0].ID, resProber{"Film (2001).mkv": {Container: "matroska,webm", DurationMs: 3_000_000,
+		Chapters: []probe.Chapter{{StartMs: 0, EndMs: 1_500_000}, {StartMs: 1_500_000, EndMs: 3_000_000}}}})
+	vs := e.s.versionsOf(t, grantAll, e.itemID("Film"))
+	if len(vs) != 1 || vs[0].Segment != nil || vs[0].Container == "" {
+		t.Fatalf("movie: %+v", vs)
+	}
+}
+
+// Decision 2: a cut change leaves the old cut's file missing; while the new
+// one is present on an available root, only the new one is listed.
+func TestItemVersionsHidesMissingWhenAPresentOneExists(t *testing.T) {
+	const theatrical = "Movies/Film (2001)/Film (2001) {edition-Theatrical}.mkv"
+	const cut = "Movies/Film (2001)/Film (2001) {edition-Director's Cut}.mkv"
+	e := newBrowse(t)
+	lib := e.library("Movies", "movies", []string{"Movies"}, theatrical)
+	root := lib.Roots[0].ID
+	e.m.rm(theatrical)
+	e.m.write(cut, 10)
+	e.scan(root)
+	id := e.itemID("Film")
+	if got := labels(e.s.versionsOf(t, grantAll, id)); !slices.Equal(got, []string{"Director's Cut"}) {
+		t.Fatalf("root available: %v", got)
+	}
+	if got := labels(e.detail(grantAll, id).Versions); !slices.Equal(got, []string{"Director's Cut"}) {
+		t.Fatalf("getItem: %v", got)
+	}
+	setRoot := func(state string) {
+		t.Helper()
+		if _, err := e.s.db.Exec(`UPDATE library_roots SET state = ? WHERE id = ?`, state, root); err != nil {
+			t.Fatal(err)
+		}
+	}
+	setRoot("offline")
+	if vs := e.s.versionsOf(t, grantAll, id); len(vs) != 2 || vs[0].Available || vs[1].Available {
+		t.Fatalf("root offline: %+v", vs)
+	}
+	setRoot("available")
+	e.m.rm(cut)
+	e.scan(root)
+	if got := labels(e.s.versionsOf(t, grantAll, id)); len(got) != 2 {
+		t.Fatalf("none present: %v", got)
+	}
+}
+
+func TestItemVersionsLoneSurvivorShowsPlainLabel(t *testing.T) {
+	t.Run("dead sibling", func(t *testing.T) {
+		g := newGrp(t)
+		v1 := g.add(g.it, "1080p", "")
+		g.add(g.it, "1080p", "")
+		g.gone(v1)
+		if got := labels(g.s.versionsOf(t, grantAll, g.it)); !slices.Equal(got, []string{"1080p"}) {
+			t.Fatalf("%v", got)
+		}
+	})
+	t.Run("backfill case", func(t *testing.T) {
+		g := newGrp(t)
+		v1 := g.add(g.it, "1080p", "")
+		v2 := g.add(g.it, "1080p", "")
+		v3 := g.add(g.it, "1080p", "")
+		g.gone(v1)
+		g.gone(v2)
+		vs := g.s.versionsOf(t, grantAll, g.it)
+		if got := labels(vs); !slices.Equal(got, []string{"1080p"}) || vs[0].ID != v3 {
+			t.Fatalf("%v", got)
+		}
+	})
+	t.Run("two present", func(t *testing.T) {
+		g := newGrp(t)
+		v1 := g.add(g.it, "1080p", "")
+		v2 := g.add(g.it, "1080p", "")
+		check := func(first, second string) {
+			t.Helper()
+			vs := g.s.versionsOf(t, grantAll, g.it)
+			if got := labels(vs); !slices.Equal(got, []string{"1080p", "1080p (2)"}) || vs[0].ID != first || vs[1].ID != second {
+				t.Fatalf("%v %+v", got, vs)
+			}
+		}
+		check(v1, v2)
+		// The ordinal ranks before the ID: swap the ordinals, swap the order.
+		if _, err := g.s.db.Exec(`UPDATE library_versions SET ordinal = 3 - ordinal WHERE item_id = ?`, g.it); err != nil {
+			t.Fatal(err)
+		}
+		check(v2, v1)
+	})
+	t.Run("null label", func(t *testing.T) {
+		g := newGrp(t)
+		v1 := g.add(g.it, "", "")
+		g.add(g.it, "", "")
+		g.gone(v1)
+		if got := labels(g.s.versionsOf(t, grantAll, g.it)); !slices.Equal(got, []string{"<nil>"}) {
+			t.Fatalf("%v", got)
+		}
+	})
+	t.Run("ascii fold", func(t *testing.T) {
+		g := newGrp(t)
+		a := g.add(g.it, "Édition", "")
+		b := g.add(g.it, "édition", "")
+		for _, v := range []string{a, b} {
+			if ord, of := g.at(v); ord != 1 || of != "" {
+				t.Fatalf("%s placed with ordinal %d against %q", v, ord, of)
+			}
+		}
+		got := labels(g.s.versionsOf(t, grantAll, g.it))
+		slices.Sort(got)
+		if !slices.Equal(got, []string{"Édition", "édition"}) {
+			t.Fatalf("%v", got)
+		}
+	})
+}
+
+const (
+	showEp    = "TV/Show (2019)/Season 01/Show - S01E01.mkv"
+	showExtra = "TV/Show (2019)/Featurettes/Making Of.mkv"
+)
+
+func TestItemExtrasForShow(t *testing.T) {
+	e := newBrowse(t)
+	e.library("TV", "tv", []string{"TV"}, showEp, showExtra)
+	show := e.itemID("Show")
+	xs := e.s.extrasOf(t, Grant{All: true, Admin: true}, show)
+	if len(xs) != 1 {
+		t.Fatalf("extras %+v", xs)
+	}
+	x := xs[0]
+	if x.ID == "" || x.ID != x.Version.ID || x.Type != contracts.ExtraFeaturette || x.Title != "Making Of" ||
+		!x.Version.Available || x.Version.FileID == "" || x.Version.SourceRevision != e.revisionOf(x.Version.FileID) ||
+		x.Version.FileName == nil || *x.Version.FileName != "Making Of.mkv" {
+		t.Fatalf("extra %+v", x)
+	}
+	if v := e.s.extrasOf(t, grantAll, show); len(v) != 1 || v[0].Version.FileName != nil {
+		t.Fatalf("viewer extra %+v", v)
+	}
+	for _, title := range []string{"Season 1", "Episode 1"} {
+		if xs := e.s.extrasOf(t, grantAll, e.itemID(title)); xs == nil || len(xs) != 0 {
+			t.Fatalf("%s extras %+v", title, xs)
+		}
+	}
+}
+
+func TestItemExtrasOfflineRoot(t *testing.T) {
+	e := newBrowse(t)
+	lib := e.library("TV", "tv", []string{"TV"}, showEp, showExtra)
+	if _, err := e.s.db.Exec(`UPDATE library_roots SET state = 'offline' WHERE id = ?`, lib.Roots[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if xs := e.s.extrasOf(t, grantAll, e.itemID("Show")); len(xs) != 1 || xs[0].Version.Available {
+		t.Fatalf("offline extras %+v", xs)
+	}
+}
+
+func TestItemExtrasSkipMissingAfterRename(t *testing.T) {
+	e := newBrowse(t)
+	lib := e.library("TV", "tv", []string{"TV"}, showEp, showExtra)
+	e.m.mv(showExtra, "TV/Show (2019)/Featurettes/Making-Of.mkv")
+	e.scan(lib.Roots[0].ID)
+	xs := e.s.extrasOf(t, grantAll, e.itemID("Show"))
+	if len(xs) != 1 || xs[0].Title != "Making-Of" || !xs[0].Version.Available {
+		t.Fatalf("extras after rename %+v", xs)
+	}
+	if _, err := e.s.db.Exec(`UPDATE library_files SET state = 'retired' WHERE state = 'missing'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.db.Exec(`UPDATE library_roots SET state = 'offline'`); err != nil {
+		t.Fatal(err)
+	}
+	if xs := e.s.extrasOf(t, grantAll, e.itemID("Show")); len(xs) != 1 {
+		t.Fatalf("retired extra listed on an offline root %+v", xs)
+	}
+}
+
+func TestItemDetailListsExtras(t *testing.T) {
+	e := newBrowse(t)
+	const featurette = "Movies/Film (2001)/Featurettes/Making Of.mkv"
+	e.library("Movies", "movies", []string{"Movies"}, filmHD, "Movies/Film (2001)/Film (2001)-trailer.mkv", featurette)
+	e.library("TV", "tv", []string{"TV"}, showEp, showExtra)
+	// The featurette's file sits on a second root that is offline.
+	if _, err := e.s.db.Exec(`INSERT INTO library_roots(id, library_id, path, state)
+		SELECT 'root-off', library_id, 'Elsewhere', 'offline' FROM library_roots WHERE path = 'Movies'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.s.db.Exec(`UPDATE library_files SET root_id = 'root-off' WHERE path = ?`, strings.TrimPrefix(featurette, "Movies/")); err != nil {
+		t.Fatal(err)
+	}
+	type shape struct {
+		typ, title string
+		available  bool
+	}
+	check := func(id string, want []shape) {
+		t.Helper()
+		d := e.detail(grantAll, id)
+		raw, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wire struct {
+			Extras []json.RawMessage `json:"extras"`
+		}
+		if err := json.Unmarshal(raw, &wire); err != nil || wire.Extras == nil || len(wire.Extras) != len(want) {
+			t.Fatalf("%s: wire extras %s (%v)", id, raw, err)
+		}
+		if len(d.Extras) != len(want) {
+			t.Fatalf("%s: extras %+v, want %+v", id, d.Extras, want)
+		}
+		for i, x := range d.Extras {
+			if (shape{x.Type, x.Title, x.Version.Available}) != want[i] || x.ID == "" || x.ID != x.Version.ID ||
+				x.Version.FileID == "" || x.Version.SourceRevision != e.revisionOf(x.Version.FileID) || x.Version.FileName != nil {
+				t.Fatalf("%s: extra %d %+v, want %+v", id, i, x, want[i])
+			}
+		}
+	}
+	check(e.itemID("Film"), []shape{{contracts.ExtraFeaturette, "Making Of", false}, {contracts.ExtraTrailer, "Trailer", true}})
+	check(e.itemID("Show"), []shape{{contracts.ExtraFeaturette, "Making Of", true}})
+	check(e.itemID("Season 1"), nil)
+	check(e.itemID("Episode 1"), nil)
+}
+
+// LIB-3's integration proof through getItem: a second same-label copy is
+// numbered, and episodes sharing a file carry their segment.
+func TestItemDetailShowsNumberedAndSegmentedVersions(t *testing.T) {
+	e := newBrowse(t)
+	e.library("Movies", "movies", []string{"Movies"}, "Movies/Heat (1995)/Heat.1995.2160p.mkv")
+	e.m.write("Movies/Heat (1995)/Heat (1995) - 4K.mkv", 10)
+	var root string
+	if err := e.s.db.QueryRow(`SELECT id FROM library_roots WHERE path = 'Movies'`).Scan(&root); err != nil {
+		t.Fatal(err)
+	}
+	e.scan(root)
+	if got := labels(e.detail(grantAll, e.itemID("Heat")).Versions); !slices.Equal(got, []string{"2160p", "2160p (2)"}) {
+		t.Fatalf("labels %v", got)
+	}
+
+	se, ep1, ep2 := sharedFile(t)
+	for id, w := range map[string]contracts.Segment{ep1: {StartMs: 0, EndMs: 1_500_000}, ep2: {StartMs: 1_500_000, EndMs: 3_000_000}} {
+		vs := se.detail(grantAll, id).Versions
+		if len(vs) != 1 || vs[0].Segment == nil || *vs[0].Segment != w {
+			t.Fatalf("%s: %+v, want segment %v", id, vs, w)
+		}
+	}
+}
+
+// #238 review: extras of one type list by title whatever its case.
+func TestItemExtrasTitleOrderIgnoresCase(t *testing.T) {
+	e := newBrowse(t)
+	e.library("TV", "tv", []string{"TV"}, showEp, "TV/Show (2019)/Featurettes/Zebra Unit.mkv", "TV/Show (2019)/Featurettes/behind the camera.mkv")
+	xs := e.s.extrasOf(t, grantAll, e.itemID("Show"))
+	if len(xs) != 2 || xs[0].Title != "behind the camera" || xs[1].Title != "Zebra Unit" {
+		t.Fatalf("extras %+v", xs)
+	}
 }

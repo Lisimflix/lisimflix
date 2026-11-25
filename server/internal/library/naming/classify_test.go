@@ -62,6 +62,8 @@ func TestClassifyMovies(t *testing.T) {
 		{"Amélie (2001)/Amélie (2001).mkv", Entry{Kind: Movie, Key: "movie:amélie|2001", Title: "Amélie", Year: 2001}},
 		{"No Year Movie.mkv", Entry{Kind: Movie, Key: "movie:no year movie|0", Title: "No Year Movie"}},
 		{"Bad ID {imdb-123}.mkv", Entry{Kind: Movie, Key: "movie:bad id|0", Title: "Bad ID"}},
+		// Decision 6c: named after its folder, so not a "-scene" extra.
+		{"The Crime-Scene (2019)/The Crime-Scene.mkv", Entry{Kind: Movie, Key: "movie:the crime scene|2019", Title: "The Crime-Scene", Year: 2019}},
 	} {
 		t.Run(c.rel, func(t *testing.T) { check(t, Movies, c.rel, c.want) })
 	}
@@ -90,6 +92,11 @@ func TestClassifyTV(t *testing.T) {
 			Entry{Kind: Episode, Key: "show:the daily show|0", Title: "The Daily Show", Season: 2024, AirDate: "2024-03-01", EpisodeTitle: "Guest Name"}},
 		{"Loose.Show.S01E01.720p.HDTV.x264-GRP.mkv",
 			Entry{Kind: Episode, Key: "show:loose show|0", Title: "Loose Show", Season: 1, Episodes: []int{1}, Version: "720p"}},
+		// Decision 6c: an episode whose title ends in an extras word is still the episode.
+		{"Show (2019)/Season 01/Show - S01E02 - The Crime-Scene.mkv",
+			Entry{Kind: Episode, Key: "show:show|2019", Title: "Show", Year: 2019, Season: 1, Episodes: []int{2}, EpisodeTitle: "The Crime-Scene"}},
+		{"Show (2019)/Season 01/Show - 1x02 - The Significant-Other.mkv",
+			Entry{Kind: Episode, Key: "show:show|2019", Title: "Show", Year: 2019, Season: 1, Episodes: []int{2}, EpisodeTitle: "The Significant-Other"}},
 	} {
 		t.Run(c.rel, func(t *testing.T) { check(t, TV, c.rel, c.want) })
 	}
@@ -116,6 +123,9 @@ func TestClassifyAnime(t *testing.T) {
 		// No episode number and no season folder: an anime film.
 		{"Your Name (2016)/Your Name (2016) - 1080p.mkv",
 			Entry{Kind: Movie, Key: "movie:your name|2016", Title: "Your Name", Year: 2016, Version: "1080p"}},
+		// Decision 6c: the anime number forms win over the "-scene" suffix.
+		{"Show/Show - 05 - The Crime-Scene.mkv",
+			Entry{Kind: Episode, Key: "show:show|0", Title: "Show", Season: 1, Episodes: []int{5}, Absolute: abs(5), EpisodeTitle: "The Crime-Scene"}},
 	} {
 		t.Run(c.rel, func(t *testing.T) { check(t, Anime, c.rel, c.want) })
 	}
@@ -131,6 +141,12 @@ func TestClassifyRefusesWhatItCannotPlace(t *testing.T) {
 		{Movies, "Movie (2010)/Movie (2010)-trailer.mkv", 2 << 30, ErrExtra},
 		{Movies, "Movie (2010)/trailer.mp4", 2 << 30, ErrExtra},
 		{TV, "Show/Extras/Gag Reel.mkv", 2 << 30, ErrExtra},
+		{Movies, "Extras/x.mkv", 2 << 30, ErrExtra},
+		{Movies, "Others/x.mkv", 2 << 30, ErrExtra},
+		// Decision 6c: no episode in the name, so the suffix still makes it an extra.
+		{TV, "Show (2019)/Show (2019)-trailer.mkv", 2 << 30, ErrExtra},
+		// A movies library never tries the episode forms.
+		{Movies, "Star Wars (1977)/Star Wars Episode 4 - Deleted-scene.mkv", 2 << 30, ErrExtra},
 		{Movies, "Movie (2010)/movie-sample.mkv", 50 << 20, ErrSample},
 		{TV, "Show/Season 01/Some Random Clip.mkv", 2 << 30, ErrUnrecognised},
 		{Anime, "Show/Season 01/Not An Episode.mkv", 2 << 30, ErrUnrecognised},
