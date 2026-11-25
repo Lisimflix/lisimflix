@@ -158,15 +158,15 @@ func TestStopCountsLikePause(t *testing.T) {
 	}
 }
 
-func TestWatchedAt90PercentCoverage(t *testing.T) {
+func TestWatchedPastPositionWithHalfCovered(t *testing.T) {
 	e := newEnv(t)
 	s := sess("s1", r1)
-	seq := e.ticks(s, 1, 0, 80_000)
+	seq := e.ticks(s, 1, 0, 90_000) // 90% covered, but the position is not past 95%
 	if w := e.get().Watched; w != nil {
 		t.Fatalf("watched early: %+v", w)
 	}
 	e.advance(time.Minute)
-	r := e.play(s, tick, seq, 90_000)
+	r := e.play(s, tick, seq, 100_000)
 	w := r.State.Watched
 	if w == nil || !w.Value || w.Origin != contracts.WatchedAuto || !w.At.Equal(e.clock) || *r.State.PlayCount != 1 {
 		t.Fatalf("state = %+v", r.State)
@@ -304,7 +304,7 @@ func TestTwoSourcesKeepOwnCoverage(t *testing.T) {
 	if c := e.covered(); c != 50_000 || e.get().Watched != nil {
 		t.Fatalf("covered = %d", c)
 	}
-	e.ticks(a, seqA, 60_000, 90_000)
+	e.ticks(a, seqA, 60_000, 100_000)
 	st := e.get()
 	if st.Watched == nil || *st.PlayCount != 1 {
 		t.Fatalf("not watched once: %+v", st)
@@ -334,5 +334,113 @@ func TestShortForwardSeekDoesNotCount(t *testing.T) {
 	e.play(s, tick, 4, 30_000)
 	if c := e.covered(); c != 15_000 {
 		t.Fatalf("covered = %d, want 15000 (0-10 s and 25-30 s)", c)
+	}
+}
+
+func TestSeekToEndOfUnplayedItem(t *testing.T) {
+	e := newEnv(t)
+	s := sess("s1", r1)
+	seq := e.ticks(s, 1, 0, 40_000)
+	from := int64(40_000)
+	r, err := e.st.Apply(context.Background(), "p1", s, contracts.ProgressEvent{Sequence: seq, Kind: seek, PositionMs: 100_000, FromPositionMs: &from})
+	if err != nil || !r.Accepted || r.State.Watched != nil || r.State.Resume == nil || r.State.Resume.PositionMs != 100_000 {
+		t.Fatalf("seek to end: %+v %v", r, err)
+	}
+	items, _, err := e.st.ContinueWatching(context.Background(), "p1", 10, nil)
+	if err != nil || len(items) != 1 || items[0].ItemID != "item" {
+		t.Fatalf("continue watching = %+v %v", items, err)
+	}
+}
+
+func TestSkipIntroAndCreditsMarksWatched(t *testing.T) {
+	e := newEnv(t)
+	s := sess("s1", r1)
+	ctx := context.Background()
+	zero, ninety := int64(0), int64(90_000)
+	e.play(s, tick, 1, 0)
+	if r, _ := e.st.Apply(ctx, "p1", s, contracts.ProgressEvent{Sequence: 2, Kind: seek, PositionMs: 10_000, FromPositionMs: &zero}); !r.Accepted {
+		t.Fatal("intro skip rejected")
+	}
+	seq := e.ticks(s, 3, 20_000, 90_000)
+	r, err := e.st.Apply(ctx, "p1", s, contracts.ProgressEvent{Sequence: seq, Kind: seek, PositionMs: 100_000, FromPositionMs: &ninety})
+	st := r.State
+	if err != nil || !r.Accepted || st.Watched == nil || st.Watched.Origin != contracts.WatchedAuto || *st.PlayCount != 1 || st.Resume != nil {
+		t.Fatalf("credits skip: %+v %v (covered %d)", st, err, e.covered())
+	}
+}
+
+func TestWatchedWhenCoverageReachesHalfAfterPosition(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	a, b := sess("a", r1), sess("b", r1) // same version and source: coverage is shared
+	seq := e.ticks(a, 0, 0, 40_000)
+	e.play(a, tick, seq, 47_000)
+	e.play(b, tick, 0, 0)
+	from := int64(0)
+	r, _ := e.st.Apply(ctx, "p1", b, contracts.ProgressEvent{Sequence: 1, Kind: seek, PositionMs: 96_000, FromPositionMs: &from})
+	if !r.Accepted || r.State.Watched != nil {
+		t.Fatalf("watched at 47%% covered: %+v", r.State)
+	}
+	r = e.play(b, tick, 2, 100_000)
+	if r.State.Watched == nil || e.covered() != 51_000 {
+		t.Fatalf("not watched at 51%% covered: %+v (covered %d)", r.State, e.covered())
+	}
+}
+
+func TestWatchedClearsResume(t *testing.T) {
+	e := newEnv(t)
+	s := sess("s1", r1)
+	seq := e.ticks(s, 0, 0, 100_000)
+	if st := e.get(); st.Watched == nil || st.Resume != nil {
+		t.Fatalf("after auto watched: %+v", st)
+	}
+	if r := e.play(s, pause, seq, 100_000); r.State.Resume != nil {
+		t.Fatalf("credits event wrote resume: %+v", r.State.Resume)
+	}
+	e.ticks(sess("s2", r1), 0, 0, 20_000)
+	if st := e.get(); st.Resume == nil || st.Resume.PositionMs != 20_000 {
+		t.Fatalf("rewatch resume = %+v", st.Resume)
+	}
+
+	m := Session{ID: "m1", ItemID: "manual", VersionID: "v1", SourceRevision: r1, DurationMs: 100_000}
+	ctx := context.Background()
+	for i, p := range []int64{0, 10_000, 20_000, 30_000} {
+		if _, err := e.st.Apply(ctx, "p1", m, contracts.ProgressEvent{Sequence: int64(i), Kind: tick, PositionMs: p}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	st, err := e.setWatched("manual", true, 0)
+	if err != nil || st.Resume == nil || st.Resume.PositionMs != 30_000 {
+		t.Fatalf("manual mark: %+v %v", st, err)
+	}
+	var last contracts.ProgressResult
+	for i, p := int64(4), int64(40_000); p <= 100_000; i, p = i+1, p+10_000 {
+		if last, err = e.st.Apply(ctx, "p1", m, contracts.ProgressEvent{Sequence: i, Kind: tick, PositionMs: p}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if last.State.Resume == nil || last.State.Resume.PositionMs != 100_000 || last.State.Watched.Origin != contracts.WatchedManual {
+		t.Fatalf("manual mark lost resume in the credits: %+v", last.State)
+	}
+}
+
+func TestLatePauseWithinTolerance(t *testing.T) {
+	e := newEnv(t)
+	s := sess("s1", r1)
+	e.play(s, tick, 1, 10_000)
+	e.play(s, tick, 2, 20_000)
+	before := e.covered()
+	if r := e.play(s, pause, 3, 19_500); !r.Accepted || r.State.Resume.PositionMs != 19_500 || e.covered() != before {
+		t.Fatalf("pause 500 ms behind: %s, %+v, covered %d", reason(r), r.State.Resume, e.covered())
+	}
+	t2 := sess("s2", r1)
+	e.play(t2, tick, 1, 20_000)
+	if r := e.play(t2, stop, 2, 18_999); reason(r) != "stale" {
+		t.Fatalf("stop 1,001 ms behind = %s", reason(r))
+	}
+	t3 := sess("s3", r1)
+	e.play(t3, tick, 1, 20_000)
+	if r := e.play(t3, tick, 2, 19_500); reason(r) != "stale" {
+		t.Fatalf("tick 500 ms behind = %s", reason(r))
 	}
 }

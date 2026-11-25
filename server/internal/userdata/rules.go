@@ -6,14 +6,19 @@ import "slices"
 
 // Positions and durations are milliseconds.
 const (
-	// WatchedPercent is the share of the duration that must be covered for
-	// an item to count as watched.
-	WatchedPercent = 90
+	// WatchedPositionPercent: the position must be past this share of the
+	// duration (the end always is: positions are clamped to it).
+	WatchedPositionPercent = 95
+	// WatchedCoveredPercent: at least this share must be covered (§3.8, D11).
+	WatchedCoveredPercent = 50
 	// PlayedMinMs is the covered time that makes an item count as played.
 	PlayedMinMs int64 = 30_000
 	// MaxTickAdvanceMs is the largest forward jump a progress tick may
 	// credit; bigger jumps are seeks, not watching.
 	MaxTickAdvanceMs int64 = 30_000
+	// StopToleranceMs is how far behind the last accepted position a pause or
+	// stop may land (player rounding) and still be accepted.
+	StopToleranceMs int64 = 1_000
 )
 
 // Span is a half-open playback range [StartMs, EndMs).
@@ -61,8 +66,14 @@ func Advance(prevMs, posMs int64) (Span, bool) {
 	return Span{prevMs, posMs}, true
 }
 
-// IsWatched reports whether coveredMs reaches WatchedPercent of durationMs.
-// An unknown (non-positive) duration is never watched.
-func IsWatched(coveredMs, durationMs int64) bool {
-	return durationMs > 0 && coveredMs*100 >= durationMs*WatchedPercent
+// IsWatched reports whether an item is watched (§3.8): the position is past
+// WatchedPositionPercent of the duration and coveredMs reaches
+// WatchedCoveredPercent of it. An unknown (non-positive) duration is never watched.
+func IsWatched(positionMs, coveredMs, durationMs int64) bool {
+	return durationMs > 0 && pastWatchedPosition(positionMs, durationMs) && coveredMs*100 >= durationMs*WatchedCoveredPercent
+}
+
+// pastWatchedPosition reports whether positionMs is past WatchedPositionPercent of a known duration.
+func pastWatchedPosition(positionMs, durationMs int64) bool {
+	return durationMs > 0 && positionMs*100 >= durationMs*WatchedPositionPercent
 }

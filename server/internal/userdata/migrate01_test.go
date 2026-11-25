@@ -10,17 +10,19 @@ import (
 
 func TestRoundTripKeepsMeaning(t *testing.T) {
 	e := newEnv(t)
-	s := sess("s1", r1)
-	e.ticks(s, 0, 0, 90_000) // covers 90% of 100 s: auto watched on the last tick
+	e.ticks(sess("s1", r1), 0, 0, 100_000) // past 95%, all covered: auto watched, resume cleared
+	watchedAt := e.clock
+	e.advance(time.Minute)
+	e.ticks(sess("s2", r1), 0, 0, 30_000) // a rewatch from the start records resume again
 	at := e.clock
 	e.hide(0)
 
 	st := e.get()
-	if st.Resume == nil || st.Resume.PositionMs != 90_000 || st.Resume.DurationMs != 100_000 ||
+	if st.Resume == nil || st.Resume.PositionMs != 30_000 || st.Resume.DurationMs != 100_000 ||
 		st.Resume.VersionID != "v1" || st.Resume.SourceRevision != r1 || !st.Resume.UpdatedAt.Equal(at) || st.Resume.UpdatedAt.Location() != time.UTC {
 		t.Fatalf("resume = %+v", st.Resume)
 	}
-	if st.Watched == nil || !st.Watched.Value || st.Watched.Origin != contracts.WatchedAuto || !st.Watched.At.Equal(at) || st.Watched.At.Location() != time.UTC {
+	if st.Watched == nil || !st.Watched.Value || st.Watched.Origin != contracts.WatchedAuto || !st.Watched.At.Equal(watchedAt) || st.Watched.At.Location() != time.UTC {
 		t.Fatalf("watched = %+v", st.Watched)
 	}
 	if st.PlayCount == nil || *st.PlayCount != 1 {

@@ -84,7 +84,7 @@ func TestManualWatchedSurvivesLateEvents(t *testing.T) {
 func TestUnwatchedIsAReset(t *testing.T) {
 	e := newEnv(t)
 	a := sess("a", r1)
-	e.ticks(a, 0, 0, 90_000)
+	e.ticks(a, 0, 0, 100_000)
 	st := e.get()
 	if st.Watched == nil || st.Watched.Origin != contracts.WatchedAuto || *st.PlayCount != 1 {
 		t.Fatalf("not auto-watched: %+v", st)
@@ -96,7 +96,7 @@ func TestUnwatchedIsAReset(t *testing.T) {
 	if n := e.count(`SELECT COUNT(*) FROM userdata_intervals`); n != 0 || e.covered() != 0 {
 		t.Fatalf("coverage left: %d rows, covered %d", n, e.covered())
 	}
-	if r := e.play(a, tick, 10, 95_000); reason(r) != "stale" {
+	if r := e.play(a, tick, 11, 95_000); reason(r) != "stale" {
 		t.Fatalf("old session = %s", reason(r))
 	}
 	e.ticks(sess("b", r1), 0, 0, 100_000)

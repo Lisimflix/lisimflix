@@ -149,7 +149,7 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning and finishing it marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
+        /** Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning, and playing it past 95% with at least half of it played marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
         put: operations["setWatched"];
         post?: never;
         delete?: never;
@@ -399,7 +399,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
-        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched, and hiding from Continue Watching. Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Writes send it back as expectedRevision. */
+        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched, and hiding from Continue Watching. Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. When progress marks an item watched (origin auto), resume becomes null, so a finished item offers Play, not Resume in the credits; a manual mark keeps resume. Writes send revision back as expectedRevision. */
         UserItemState: {
             itemId: string;
             /** Format: int64 */

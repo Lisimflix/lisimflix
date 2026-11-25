@@ -33,8 +33,10 @@ const (
 // Revision, so a row with only progress is still 0, but progress can still
 // change Resume, Watched (the automatic mark), PlayCount, LastPlayedAt and
 // HiddenFromContinueWatching (a later session clears a hide): an unchanged
-// Revision does not mean unchanged state. Writes send it back as
-// expectedRevision.
+// Revision does not mean unchanged state. When progress marks an item watched
+// (origin auto), Resume becomes nil, so a finished item offers Play, not
+// Resume in the credits; a manual mark keeps Resume. Writes send Revision
+// back as expectedRevision.
 type UserItemState struct {
 	ItemID                     string     `json:"itemId"`
 	Revision                   int64      `json:"revision"`
@@ -56,8 +58,8 @@ type Resume struct {
 
 // Watched is the watched state and where it came from. A manual watched mark
 // is never undone by later playback. Marking unwatched is a reset instead:
-// watched and resume become null, so finishing the item marks it watched again
-// (origin auto).
+// watched and resume become null, so playing it past 95% with at least half
+// of it played marks it watched again (origin auto).
 type Watched struct {
 	Value  bool      `json:"value"`
 	Origin string    `json:"origin"`
