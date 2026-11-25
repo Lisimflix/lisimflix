@@ -91,7 +91,7 @@ Mockups: [`docs/design/ui-2/`](../../design/ui-2/README.md). Notes from their re
    - The player sends `reportProgress` (planned, DATA-1) every 10 s and on pause, seek and stop. A 404 means DATA-1 isn't live yet; other failures are ignored, except 401 (sign-in ended) and 409 `source_changed` (ends playback with its message).
 10. **Until LIB-2c serves `listLibraries`, the app falls back to M1.** `main.tsx` calls `listLibraries` once. A 404 `not_found` (route not registered) renders `M1App`; anything else renders the browse app.
     - `// shortcut: M1 fallback until LIB-2c registers listLibraries; delete M1App, /movies and Movie in LIB-2c's PR` (CTR-2 decision 12 gives that retirement to UI-2/PLY-2; LIB-2c's PR does it once items are served).
-11. **A–Z jump restarts the grid at that letter.** It doesn't scroll back through unloaded pages. A "Back to top" button clears it.
+11. **A–Z jump restarts the grid at that letter.** It doesn't scroll back through unloaded pages. A "Back to top" button clears it. *Superseded by the [A–Z jump plan](2026-11-18-az-jump.md) (#188): a jump scrolls within the full list and loads both ways.*
     - `// shortcut: jump restarts the list; upgrade to bidirectional paging if Pete finds it awkward at 5k titles`.
 12. **Scroll and focus restore** (§5.7) use an in-memory cache keyed by `history.state.key`. It holds the loaded pages, cursor, scroll position and focused item ID. Back restores them without refetching. That covers layout only: user-state reads are invalidated by writes (playback, Mark watched), as #142 built it. A reload refetches the first page.
 13. **Out of scope, each with its owner:**
