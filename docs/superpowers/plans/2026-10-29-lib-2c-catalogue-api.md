@@ -73,6 +73,8 @@
      - `gre→ell`, `ice→isl`, `mac→mkd`, `mao→mri`, `may→msa`
      - `per→fas`, `rum→ron`, `slo→slk`, `tib→bod`, `wel→cym`
    - Untagged and `und` aren't stored.
+   - **Only listed streams count:** facts come from the streams `getItem` lists (video with a codec and a size, audio with a codec and channels), so a filter never matches a track the detail leaves out (#181 review).
+   - **Only the current revision counts:** facts and `probe_json` are read only while `probe_size`/`probe_mtime_ns` match the file's `size`/`mtime_ns`. A change doesn't clear them; a file restored to its probed revision gets them back without a new probe (#168, #181 review).
    - A movie or episode matches when **one** of its present files meets every selected filter (`resolution=4k&audioLanguage=deu` needs a 4k German file, not a 4k English file plus a 1080p German one). A show or season matches when each filter is met by some episode's file.
 7. **`listItems` details the contract leaves to the producer:**
    - **What a `libraryId` listing contains:** movies for a `movies` library, shows for `tv` and `anime` (the top-level items, `parent_id IS NULL`).
@@ -107,7 +109,7 @@
     - **Streams:** mapped from the stored `probe.Result`. `language` is null for untagged or `und`. `hdr` maps `""→sdr`, `HDR10→hdr10`, `HDR10+→hdr10plus`, `HLG→hlg` and `DV→dolbyVision`. A subtitle's `kind` is `image` for `hdmv_pgs_subtitle`, `dvd_subtitle` and `dvb_subtitle`, `ass` for `ass`/`ssa`, and `text` otherwise.
     - **Other fields:**
       - `segment` is null (LIB-3 locates shared-file episodes);
-      - `container` is the stored container, or `""` before the first probe;
+      - `container` is the stored container, or `""` until the file's current revision is probed;
       - `fileName` is the path's last element for admins, and null for everyone else.
     - **When a version is listed:** shows and seasons have no versions. A movie or episode lists every live version (its file isn't retired), available or not. `MediaVersion.available` and `ItemSummary.available` carry the state; the contract's "Empty … for a movie or episode with no available file" is read as "no versions to play", and the client shows File offline from `available`.
     - **`externalIds`** stays empty until META-1c: name hints aren't validated, so they aren't served as IDs.

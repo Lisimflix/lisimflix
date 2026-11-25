@@ -587,7 +587,7 @@ export interface components {
             /** @description Lowercase hex SHA-256 of fileId, size and modification time (contracts.SourceRevision). Changes exactly when the file's size or modification time changes. */
             sourceRevision: string;
             segment: components["schemas"]["Segment"] | null;
-            /** @description ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm; "" until the file is first probed */
+            /** @description ffprobe format name, e.g. mov,mp4,m4a,3gp,3g2,mj2 or matroska,webm; "" until the file's current revision is probed */
             container: string;
             video: components["schemas"]["VideoStream"][];
             audio: components["schemas"]["AudioStream"][];
@@ -625,7 +625,7 @@ export interface components {
             /** @description ffprobe profile, e.g. LC, Dolby TrueHD + Dolby Atmos, DTS-HD MA. Null when none is reported. */
             profile: string | null;
             channels: number;
-            /** @description ISO 639-2 as tagged; null when untagged or und */
+            /** @description ISO 639-2/T, the code the audioLanguage filter and facets use (/B tags are mapped, e.g. ger to deu; case is folded); null when untagged, und or not a three-letter code */
             language: string | null;
             title: string | null;
             default: boolean;
@@ -636,6 +636,7 @@ export interface components {
             codec: string;
             /** @enum {string} */
             kind: "text" | "image" | "ass";
+            /** @description ISO 639-2/T, mapped as for audio streams; null when untagged, und or not a three-letter code */
             language: string | null;
             title: string | null;
             default: boolean;

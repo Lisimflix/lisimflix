@@ -30,7 +30,6 @@ func NewAPI(st *Store, access Access, log *slog.Logger) *API {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	st.log = log
 	return &API{st: st, access: access, log: log}
 }
 
