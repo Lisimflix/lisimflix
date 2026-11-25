@@ -23,6 +23,7 @@ import (
 	"github.com/Lisimflix/lisimflix/server/internal/m1config"
 	"github.com/Lisimflix/lisimflix/server/internal/playback"
 	"github.com/Lisimflix/lisimflix/server/internal/storage"
+	"github.com/Lisimflix/lisimflix/server/internal/userdata"
 	"github.com/Lisimflix/lisimflix/server/internal/webassets"
 )
 
@@ -183,7 +184,16 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		// LIB-4: Sonarr/Radarr import notifications queue scoped scans.
 		mounts = append(mounts, app.Mount{Pattern: arrhook.Path, Handler: arrhook.NewHandler(arrhook.NewStore(s.db), s.scans, log)})
 	}
-	s.handler, err = app.New(cfg, am, pb.Handler(), catalogue, web, ready, log, mounts...)
+	var progress http.Handler // nil without storage: its routes answer 404
+	if s.db != nil {
+		// DATA-1b PR A: progress for the M1 movie. Catalogue facts come in PR B.
+		facts := func(_ context.Context, p contracts.Principal, itemID, _, _ string) (int64, bool, bool, error) {
+			ok := itemID == cfg.MovieID && p.AccountID == v.AccountID && p.ProfileID == v.ProfileID
+			return cfg.DurationMS, false, ok, nil
+		}
+		progress = userdata.NewAPI(userdata.NewStore(s.db), sessionLookup{pb}, facts, log).Handler()
+	}
+	s.handler, err = app.New(cfg, am, pb.Handler(), catalogue, progress, web, ready, log, mounts...)
 	if err != nil {
 		s.shutdown(ctx, nil)
 		return nil, err
@@ -196,7 +206,7 @@ func openStorage(ctx context.Context, path string, snap storage.SnapshotOptions,
 	if err != nil {
 		return nil, err
 	}
-	srcs := append([]storage.Source{storage.Core(), library.Migrations(), arrhook.Migrations()}, extra...)
+	srcs := append([]storage.Source{storage.Core(), library.Migrations(), arrhook.Migrations(), userdata.Migrations()}, extra...)
 	if _, err := db.MigrateWithBackup(ctx, srcs, snap, time.Now); err != nil {
 		db.Close()
 		return nil, err
@@ -298,4 +308,23 @@ func cmdBackupNow(args []string) error {
 	defer d.Close()
 	n := &storage.Nightly{DB: d, Opts: storage.SnapshotOptions{Dir: dir, AppVersion: version, ExtraFiles: []string{*cfgPath}}}
 	return n.RunOnce(ctx)
+}
+
+// sessionLookup adapts playback's session lookup to userdata's, translating
+// the sentinels so neither package imports the other.
+type sessionLookup struct{ pb *playback.Server }
+
+func (l sessionLookup) Session(p contracts.Principal, id string) (userdata.SessionRef, error) {
+	ref, err := l.pb.Session(p, id)
+	switch {
+	case errors.Is(err, playback.ErrSessionNotFound):
+		return userdata.SessionRef{}, userdata.ErrSessionNotFound
+	case errors.Is(err, playback.ErrSessionEnded):
+		return userdata.SessionRef{}, userdata.ErrSessionEnded
+	case errors.Is(err, playback.ErrSourceChanged):
+		return userdata.SessionRef{}, userdata.ErrSourceChanged
+	case err != nil:
+		return userdata.SessionRef{}, err
+	}
+	return userdata.SessionRef(ref), nil
 }

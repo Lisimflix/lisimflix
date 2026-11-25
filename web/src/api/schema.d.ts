@@ -149,8 +149,25 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning and finishing it marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
+        /** Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning, and playing it past 95% with at least half of it played marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
         put: operations["setWatched"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/items/{itemId}/continue-watching-hidden": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Remove a movie or episode from the current profile's Continue Watching. This is an explicit change, so it bumps UserItemState.revision (progress never does). Progress, resume and watched are kept. The item comes back on the first accepted progress event of a playback session whose first progress event comes after the hide; there is no un-hide call. expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes. */
+        put: operations["hideContinueWatching"];
         post?: never;
         delete?: never;
         options?: never;
@@ -254,7 +271,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter with parentId, and any combination the server can't apply (including watched until DATA-1 is live, or yearFrom greater than yearTo) are also 400 invalid_request. A library or parent the profile may not see is 404.
+         * Items the current profile may see, sorted by sort (default title). Pass exactly one of libraryId (the library's movies or shows) or parentId (a show's seasons or a season's episodes, in the chosen order); otherwise 400 invalid_request. from without sort=title, any filter with parentId, and any combination the server can't apply (including watched until the watched-filter slice ships (#247), or yearFrom greater than yearTo) are also 400 invalid_request. A library or parent the profile may not see is 404.
          * @description Title collation is fixed in the contract: titles compare by the sort title, whose leading "the", "a" or "an" was dropped once when the title was parsed, folded with META-1a's Normalize fold (META-1a plan (#121), decision 6) but without dropping a second article, so sorting and the A–Z jump compare titles the same way and The A-Team sorts under A. The fold: lower case; Latin accents folded with a built-in table (é → e, ß → ss, æ → ae), and a combining mark dropped only after a Latin letter (#123); & → "and"; apostrophes (', ’, ʼ) are dropped; other punctuation becomes a space and spaces collapse. Other scripts compare as written. So Élite sorts and jumps as elite. Sorting with sort=title puts the # group first (folded sortTitle not starting with a–z, including non-Latin titles, which compare as written within the group), then a–z; within each group items sort by folded sortTitle, and ties break by item ID. from (A–Z jump): one letter A–Z or #, only valid with sort=title. A letter starts the page at the first item whose folded sortTitle begins with that letter or a later one. # covers every item whose folded sortTitle doesn't start with a–z: digits, symbols and non-Latin titles such as Japanese. These sort before A, so # is the first page. Send # percent-encoded as %23. Filters (genre, yearFrom, yearTo, resolution, hdr, audioLanguage, watched) apply only to libraryId listings. For a movie or episode, the file filters (resolution, hdr, audioLanguage) must all be met by one of its present files; for a show or season, each may be met by a different episode's file. audioLanguage uses ISO 639-2/T (deu, fra, zho); the producer maps /B tags (ger, fre, chi) to /T so German is listed once. total is set on the first page (no cursor) of a listing and is null on later pages.
          */
         get: operations["listItems"];
@@ -382,7 +399,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
-        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched (and hiding from Continue Watching, once DATA-1b adds it). Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Writes send it back as expectedRevision. */
+        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched, and hiding from Continue Watching. Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Progress past 95% on an item watched automatically sets resume to null, so a finished item offers Play, not Resume in the credits; a rewatch records resume again until it passes 95%. A manual or imported mark keeps resume. Writes send revision back as expectedRevision. */
         UserItemState: {
             itemId: string;
             /** Format: int64 */
@@ -438,6 +455,10 @@ export interface components {
         };
         WatchedRequest: {
             watched: boolean;
+            /** Format: int64 */
+            expectedRevision: number;
+        };
+        HideRequest: {
             /** Format: int64 */
             expectedRevision: number;
         };
@@ -752,7 +773,7 @@ export interface components {
         HDR: boolean;
         /** @description ISO 639-2/T, e.g. deu, fra, zho */
         AudioLanguage: string;
-        /** @description Reads DATA-1's data; 400 invalid_request until DATA-1 is live */
+        /** @description Reads DATA-1's data; 400 invalid_request until the watched-filter slice ships (#247) */
         Watched: boolean;
         ParentIdQuery: string;
         Range: string;
@@ -1159,6 +1180,41 @@ export interface operations {
             500: components["responses"]["Error"];
         };
     };
+    hideContinueWatching: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Token from AuthState.csrfToken; mismatch is 403 csrf_failed */
+                "X-CSRF-Token": components["parameters"]["CSRFToken"];
+            };
+            path: {
+                itemId: components["parameters"]["ItemId"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["HideRequest"];
+            };
+        };
+        responses: {
+            /** @description New state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UserItemState"];
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
     reportProgress: {
         parameters: {
             query?: never;
@@ -1320,7 +1376,7 @@ export interface operations {
                 hdr?: components["parameters"]["HDR"];
                 /** @description ISO 639-2/T, e.g. deu, fra, zho */
                 audioLanguage?: components["parameters"]["AudioLanguage"];
-                /** @description Reads DATA-1's data; 400 invalid_request until DATA-1 is live */
+                /** @description Reads DATA-1's data; 400 invalid_request until the watched-filter slice ships (#247) */
                 watched?: components["parameters"]["Watched"];
                 /** @description nextCursor from the previous page; opaque */
                 cursor?: components["parameters"]["Cursor"];

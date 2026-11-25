@@ -160,10 +160,9 @@ func (s *Server) replayed(w http.ResponseWriter, r *http.Request, prev *session,
 	writeJSON(w, http.StatusOK, out)
 }
 
-// owned returns the caller's session with the path's ID, or errNotFound for
-// unknown IDs and sessions owned by anyone else.
-func (s *Server) owned(r *http.Request, p contracts.Principal) (*session, error) {
-	id := r.PathValue("id")
+// owned returns the caller's session with this ID, or errNotFound for
+// unknown IDs and sessions owned by anyone else. The caller holds s.mu.
+func (s *Server) owned(id string, p contracts.Principal) (*session, error) {
 	if !idPattern.MatchString(id) {
 		return nil, errNotFound
 	}
@@ -183,7 +182,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, p contracts.P
 	s.mu.Lock()
 	defer s.unlock()
 	now := s.now()
-	sess, err := s.owned(r, p)
+	sess, err := s.owned(r.PathValue("id"), p)
 	switch {
 	case err != nil:
 		contracts.WriteError(w, r, contracts.CodeNotFound, "Playback session not found.")
@@ -203,7 +202,7 @@ func (s *Server) heartbeat(w http.ResponseWriter, r *http.Request, p contracts.P
 func (s *Server) stop(w http.ResponseWriter, r *http.Request, p contracts.Principal) {
 	s.mu.Lock()
 	defer s.unlock()
-	sess, err := s.owned(r, p)
+	sess, err := s.owned(r.PathValue("id"), p)
 	if err != nil {
 		contracts.WriteError(w, r, contracts.CodeNotFound, "Playback session not found.")
 		return
@@ -216,7 +215,7 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 	s.inflight.Add(1)
 	defer s.inflight.Add(-1)
 	s.mu.Lock()
-	sess, err := s.owned(r, p)
+	sess, err := s.owned(r.PathValue("id"), p)
 	if err == nil && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("grant")), []byte(sess.grant)) != 1 {
 		err = errNotFound
 	}
@@ -272,6 +271,10 @@ func (s *Server) content(w http.ResponseWriter, r *http.Request, p contracts.Pri
 	}}
 	http.ServeContent(dw, r.WithContext(ctx), "", info.ModTime(), f)
 }
+
+// testHookStat, when set by a test, runs in Session just before the source is
+// stat-ed, after s.mu is released.
+var testHookStat func()
 
 // testHookAfterAlive, when set by a test, runs between a write's liveness
 // check and its deadline, the window where a revoke can race the write.

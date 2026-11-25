@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"strings"
 	"time"
 
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
@@ -17,7 +18,6 @@ import (
 var migrationsFS embed.FS
 
 // Migrations is the progress schema, for storage.Migrate.
-// Planned: DATA-1b (serve registers the userdata migrations).
 func Migrations() storage.Source {
 	sub, err := fs.Sub(migrationsFS, "migrations")
 	if err != nil {
@@ -27,16 +27,12 @@ func Migrations() storage.Source {
 }
 
 var (
-	// Planned: DATA-1b (setWatched and hideContinueWatching handlers map it to 409).
 	ErrRevisionConflict = errors.New("userdata: revision conflict")
-	// Planned: DATA-1b (reportProgress handler maps it to 400).
-	ErrInvalid = errors.New("userdata: invalid")
+	ErrInvalid          = errors.New("userdata: invalid")
 )
 
 // Session is a live playback session, which fixes the item, version and
 // source revision its events apply to.
-//
-// Planned: DATA-1b (reportProgress handler supplies it).
 type Session struct {
 	ID, ItemID, VersionID, SourceRevision string
 	DurationMs                            int64
@@ -44,29 +40,69 @@ type Session struct {
 }
 
 // Store keeps per-profile progress in the shared database.
-//
-// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
 type Store struct {
-	db  *storage.DB
-	now func() time.Time
+	db          *storage.DB
+	now         func() time.Time
+	afterCommit func() // test seam: runs after a write commits; nil in production
 }
 
-// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
+// committed runs the afterCommit test seam.
+func (s *Store) committed() {
+	if s.afterCommit != nil {
+		s.afterCommit()
+	}
+}
+
 func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
 
-// Get returns the profile's state for the item, or the zero state (revision 0)
-// when nothing is recorded.
+// States returns one state per requested item for the profile, the zero
+// state (revision 0, nulls, hidden false) when there is no row. One query for
+// the whole batch; callers pass at most a page of IDs.
 //
-// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
-func (s *Store) Get(ctx context.Context, profileID, itemID string) (contracts.UserItemState, error) {
+// Planned: DATA-1b (library UserStates hook, Task 6).
+func (s *Store) States(ctx context.Context, profileID string, itemIDs []string) (map[string]contracts.UserItemState, error) {
+	if profileID == "" {
+		return nil, ErrInvalid
+	}
+	out := make(map[string]contracts.UserItemState, len(itemIDs))
+	if len(itemIDs) == 0 {
+		return out, nil
+	}
+	args := make([]any, 0, len(itemIDs)+1)
+	args = append(args, profileID)
+	for _, id := range itemIDs {
+		out[id] = contracts.UserItemState{ItemID: id}
+		args = append(args, id)
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT item_id, `+stateCols+` FROM userdata_state WHERE profile_id = ?
+		AND item_id IN (?`+strings.Repeat(", ?", len(itemIDs)-1)+`)`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("userdata: states: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var st contracts.UserItemState
+		if err := scanState(rows, &st, &st.ItemID); err != nil {
+			return nil, fmt.Errorf("userdata: states: %w", err)
+		}
+		out[st.ItemID] = st
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("userdata: states: %w", err)
+	}
+	return out, nil
+}
+
+// readState reads the profile's state for the item inside tx, or the zero state.
+func readState(ctx context.Context, tx *sql.Tx, profileID, itemID string) (contracts.UserItemState, error) {
 	st := contracts.UserItemState{ItemID: itemID}
-	err := scanState(s.db.QueryRowContext(ctx, `SELECT `+stateCols+` FROM userdata_state
+	err := scanState(tx.QueryRowContext(ctx, `SELECT `+stateCols+` FROM userdata_state
 		WHERE profile_id = ? AND item_id = ?`, profileID, itemID), &st)
 	if errors.Is(err, sql.ErrNoRows) {
 		return st, nil
 	}
 	if err != nil {
-		return st, fmt.Errorf("userdata: get: %w", err)
+		return st, fmt.Errorf("userdata: read state: %w", err)
 	}
 	return st, nil
 }

@@ -17,7 +17,7 @@ import (
 var contractTypes = map[string]any{
 	"Principal": Principal{}, "Profile": Profile{}, "ProfilePolicy": ProfilePolicy{},
 	"UserItemState": UserItemState{}, "Resume": Resume{}, "Watched": Watched{},
-	"ProgressEvent": ProgressEvent{}, "ProgressResult": ProgressResult{}, "WatchedRequest": WatchedRequest{},
+	"ProgressEvent": ProgressEvent{}, "ProgressResult": ProgressResult{}, "WatchedRequest": WatchedRequest{}, "HideRequest": HideRequest{},
 	"ItemMetadata": ItemMetadata{}, "MetadataFields": MetadataFields{}, "Field": Field[[]string]{},
 	"Provenance": Provenance{}, "MetadataExternalID": MetadataExternalID{},
 	"Page": Page[Movie]{}, "Library": Library{}, "LibraryScan": LibraryScan{}, "LibraryFacets": LibraryFacets{},

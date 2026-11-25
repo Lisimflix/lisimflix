@@ -41,26 +41,21 @@ func TestAdvance(t *testing.T) {
 }
 
 func TestIsWatched(t *testing.T) {
-	if IsWatched(89_999, 100_000) {
-		t.Error("89,999 of 100,000 watched")
-	}
-	if !IsWatched(90_000, 100_000) {
-		t.Error("90,000 of 100,000 not watched")
-	}
-	if IsWatched(1_000_000, 0) || IsWatched(0, 0) {
-		t.Error("zero duration watched")
-	}
-	if IsWatched(1_000_000, -5) {
-		t.Error("negative duration watched")
-	}
-}
-
-func TestIsPlayed(t *testing.T) {
-	if IsPlayed(29_999) {
-		t.Error("29,999 played")
-	}
-	if !IsPlayed(30_000) {
-		t.Error("30,000 not played")
+	for _, c := range []struct {
+		pos, cov, dur int64
+		want          bool
+	}{
+		{95_000, 50_000, 100_000, true},
+		{100_000, 100_000, 100_000, true},
+		{94_999, 100_000, 100_000, false}, // position not past 95%
+		{100_000, 49_999, 100_000, false}, // under half covered
+		{1_000_000, 1_000_000, 0, false},
+		{0, 0, 0, false},
+		{1_000_000, 1_000_000, -5, false},
+	} {
+		if got := IsWatched(c.pos, c.cov, c.dur); got != c.want {
+			t.Errorf("IsWatched(%d, %d, %d) = %v, want %v", c.pos, c.cov, c.dur, got, c.want)
+		}
 	}
 }
 

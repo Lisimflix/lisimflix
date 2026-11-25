@@ -276,3 +276,47 @@ func (s *Server) tombstoneCount() int {
 }
 
 func newID() string { return "ps-" + rand.Text() }
+
+// SessionRef is what progress reporting needs from a live playback session.
+type SessionRef struct{ ID, ItemID, VersionID, SourceRevision string }
+
+// Session lookup errors.
+var (
+	ErrSessionNotFound = errors.New("playback: session not found")
+	ErrSessionEnded    = errors.New("playback: session ended")
+	ErrSourceChanged   = errors.New("playback: the session's source file changed or is missing")
+)
+
+// Session returns the caller's live session and checks its file is still the
+// one the session started on. It never extends the deadline: only the
+// heartbeat keeps a session alive. An ended session is ErrSessionEnded while
+// its tombstone lasts (up to tombstoneTTL), then ErrSessionNotFound.
+func (s *Server) Session(p contracts.Principal, id string) (SessionRef, error) {
+	s.mu.Lock()
+	sess, err := s.owned(id, p)
+	if err != nil {
+		s.unlock()
+		return SessionRef{}, ErrSessionNotFound
+	}
+	if !s.liveLocked(sess, s.now()) {
+		s.unlock()
+		return SessionRef{}, ErrSessionEnded
+	}
+	src, started := sess.src, sess.info
+	s.unlock()
+	if testHookStat != nil {
+		testHookStat()
+	}
+	info, err := statSource(s.root, src)
+	if errors.Is(err, errSourceUnavailable) {
+		// Missing reads as changed (DATA-1b Decision 7); any other failure (a
+		// brief I/O or permission error) is not a reason to end playback.
+		if _, serr := s.root.Stat(src.RelativePath); !errors.Is(serr, fs.ErrNotExist) {
+			return SessionRef{}, errors.New("playback: the source file could not be checked")
+		}
+	}
+	if err != nil || !os.SameFile(info, started) {
+		return SessionRef{}, ErrSourceChanged
+	}
+	return SessionRef{ID: sess.id, ItemID: src.ItemID, VersionID: src.VersionID, SourceRevision: src.SourceRevision}, nil
+}

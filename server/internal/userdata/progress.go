@@ -12,10 +12,11 @@ import (
 // one transaction. A duplicate or stale event is stored as a rejected row and
 // answered Accepted: false with the unchanged state, not an error. Event times
 // are the server's receipt time. Progress never bumps the revision.
-//
-// Planned: DATA-1b (reportProgress handler).
 func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e contracts.ProgressEvent) (contracts.ProgressResult, error) {
 	var res contracts.ProgressResult
+	if profileID == "" {
+		return res, ErrInvalid
+	}
 	if err := validate(sess, e); err != nil {
 		return res, err
 	}
@@ -36,10 +37,11 @@ func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e con
 	var (
 		hidden                                          bool
 		hideEvent, resetEvent, watched, count, lastPlay sql.NullInt64
+		origin                                          sql.NullString
 	)
-	if err := tx.QueryRowContext(ctx, `SELECT hidden, hide_event_id, reset_event_id, watched_value, play_count, last_played_at
+	if err := tx.QueryRowContext(ctx, `SELECT hidden, hide_event_id, reset_event_id, watched_value, watched_origin, play_count, last_played_at
 		FROM userdata_state WHERE profile_id = ? AND item_id = ?`, profileID, sess.ItemID).
-		Scan(&hidden, &hideEvent, &resetEvent, &watched, &count, &lastPlay); err != nil {
+		Scan(&hidden, &hideEvent, &resetEvent, &watched, &origin, &count, &lastPlay); err != nil {
 		return res, fmt.Errorf("userdata: apply: %w", err)
 	}
 	first, hasFirst, err := firstEventID(ctx, tx, profileID, sess.ID)
@@ -56,7 +58,9 @@ func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e con
 	case prev.exists && prev.seqs[e.Sequence]:
 		reason = contracts.ProgressDuplicate
 	case prev.exists && e.Sequence <= prev.maxSeq,
-		prev.exists && e.Kind != contracts.ProgressSeek && e.PositionMs < prev.pos,
+		prev.exists && e.Kind == contracts.ProgressTick && e.PositionMs < prev.pos,
+		prev.exists && (e.Kind == contracts.ProgressPause || e.Kind == contracts.ProgressStop) &&
+			e.PositionMs < prev.pos-StopToleranceMs, // player rounding (DATA-1b Decision 12)
 		isLate(first, hasFirst, resetEvent):
 		reason = contracts.ProgressStale
 	}
@@ -91,7 +95,22 @@ func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e con
 			covered, lastPlayed, clearHidden, profileID, sess.ItemID); err != nil {
 			return res, fmt.Errorf("userdata: apply: %w", err)
 		}
-		if sess.DurationMs > 0 {
+		markAuto := !sess.NoAutoWatched && !watched.Valid && IsWatched(e.PositionMs, covered, sess.DurationMs)
+		autoWatched := markAuto || (watched.Int64 == 1 && origin.String == contracts.WatchedAuto)
+		// A late pause or stop just after the mark counts from where playback had got to.
+		reached := e.PositionMs
+		if prev.exists && (e.Kind == contracts.ProgressPause || e.Kind == contracts.ProgressStop) {
+			reached = max(reached, prev.pos)
+		}
+		switch {
+		case !sess.NoAutoWatched && autoWatched && pastWatchedPosition(reached, sess.DurationMs):
+			// No "Resume from the credits" on an item watched automatically (DATA-1b Decision 11).
+			if _, err := tx.ExecContext(ctx, `UPDATE userdata_state SET resume_position_ms = NULL, resume_duration_ms = NULL,
+				resume_version_id = NULL, resume_source_revision = NULL, resume_updated_at = NULL
+				WHERE profile_id = ? AND item_id = ?`, profileID, sess.ItemID); err != nil {
+				return res, fmt.Errorf("userdata: apply: %w", err)
+			}
+		case sess.DurationMs > 0:
 			if _, err := tx.ExecContext(ctx, `UPDATE userdata_state SET resume_position_ms = ?, resume_duration_ms = ?,
 				resume_version_id = ?, resume_source_revision = ?, resume_updated_at = ?
 				WHERE profile_id = ? AND item_id = ?`, e.PositionMs, sess.DurationMs, sess.VersionID,
@@ -99,7 +118,7 @@ func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e con
 				return res, fmt.Errorf("userdata: apply: %w", err)
 			}
 		}
-		if !sess.NoAutoWatched && !watched.Valid && IsWatched(covered, sess.DurationMs) {
+		if markAuto {
 			if _, err := tx.ExecContext(ctx, `UPDATE userdata_state SET watched_value = 1, watched_origin = ?, watched_at = ?,
 				play_count = COALESCE(play_count, 0) + 1 WHERE profile_id = ? AND item_id = ?`,
 				contracts.WatchedAuto, now, profileID, sess.ItemID); err != nil {
@@ -107,15 +126,18 @@ func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e con
 			}
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return res, fmt.Errorf("userdata: apply: %w", err)
+	if res.State, err = readState(ctx, tx, profileID, sess.ItemID); err != nil {
+		return res, err
 	}
+	if err := tx.Commit(); err != nil {
+		return contracts.ProgressResult{}, fmt.Errorf("userdata: apply: %w", err)
+	}
+	s.committed()
 	res.Accepted = reason == ""
 	if reason != "" {
 		res.Reason = &reason
 	}
-	res.State, err = s.Get(ctx, profileID, sess.ItemID)
-	return res, err
+	return res, nil
 }
 
 func validate(sess Session, e contracts.ProgressEvent) error {
@@ -175,7 +197,10 @@ func lastAccepted(ctx context.Context, tx *sql.Tx, profileID, sessionID string) 
 		}
 		a.exists = true
 	}
-	return a, rows.Err()
+	if err := rows.Err(); err != nil {
+		return a, fmt.Errorf("userdata: session events: %w", err)
+	}
+	return a, nil
 }
 
 func loadCoverage(ctx context.Context, tx *sql.Tx, profileID string, sess Session) ([]Span, error) {
@@ -193,7 +218,10 @@ func loadCoverage(ctx context.Context, tx *sql.Tx, profileID string, sess Sessio
 		}
 		spans = append(spans, sp)
 	}
-	return spans, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("userdata: coverage: %w", err)
+	}
+	return spans, nil
 }
 
 // saveCoverage replaces one source's coverage rows with spans.

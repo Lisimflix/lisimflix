@@ -6,6 +6,7 @@ var userDataFixtures = map[string]func() any{
 	"progress-seek.json":      func() any { return &ProgressEvent{} },
 	"progress-duplicate.json": func() any { return &ProgressResult{} },
 	"watched-request.json":    func() any { return &WatchedRequest{} },
+	"hide-request.json":       func() any { return &HideRequest{} },
 }
 
 func TestUserDataFixturesRoundTrip(t *testing.T) { roundTripFixtures(t, userDataFixtures) }

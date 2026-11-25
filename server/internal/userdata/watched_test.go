@@ -39,7 +39,7 @@ func (e *env) hide(rev int64) contracts.UserItemState {
 // playItem plays one session on the given item up to coveredMs (10 s ticks from 0).
 func (e *env) playItem(item, session string, coveredMs int64) {
 	e.t.Helper()
-	s := Session{ID: session, ItemID: item, VersionID: "v1", SourceRevision: "r1", DurationMs: 100_000}
+	s := Session{ID: session, ItemID: item, VersionID: "v1", SourceRevision: r1, DurationMs: 100_000}
 	for seq, p := int64(0), int64(0); p <= coveredMs; seq, p = seq+1, p+10_000 {
 		if r, err := e.st.Apply(ctx, "p1", s, contracts.ProgressEvent{Sequence: seq, Kind: tick, PositionMs: p}); err != nil || !r.Accepted {
 			e.t.Fatalf("%s tick %d: %+v %v", item, seq, r, err)
@@ -49,7 +49,7 @@ func (e *env) playItem(item, session string, coveredMs int64) {
 
 func (e *env) list(limit int) []string {
 	e.t.Helper()
-	got, err := e.st.ContinueWatching(ctx, "p1", limit)
+	got, _, err := e.st.ContinueWatching(ctx, "p1", limit, nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func (e *env) list(limit int) []string {
 
 func TestManualWatchedSurvivesLateEvents(t *testing.T) {
 	e := newEnv(t)
-	s := sess("s1", "r1")
+	s := sess("s1", r1)
 	e.ticks(s, 0, 0, 40_000)
 	marked := e.mustSetWatched(true, 0)
 	if marked.Watched == nil || !marked.Watched.Value || marked.Watched.Origin != contracts.WatchedManual || marked.PlayCount != nil {
@@ -83,8 +83,8 @@ func TestManualWatchedSurvivesLateEvents(t *testing.T) {
 
 func TestUnwatchedIsAReset(t *testing.T) {
 	e := newEnv(t)
-	a := sess("a", "r1")
-	e.ticks(a, 0, 0, 90_000)
+	a := sess("a", r1)
+	e.ticks(a, 0, 0, 100_000)
 	st := e.get()
 	if st.Watched == nil || st.Watched.Origin != contracts.WatchedAuto || *st.PlayCount != 1 {
 		t.Fatalf("not auto-watched: %+v", st)
@@ -96,10 +96,10 @@ func TestUnwatchedIsAReset(t *testing.T) {
 	if n := e.count(`SELECT COUNT(*) FROM userdata_intervals`); n != 0 || e.covered() != 0 {
 		t.Fatalf("coverage left: %d rows, covered %d", n, e.covered())
 	}
-	if r := e.play(a, tick, 10, 95_000); reason(r) != "stale" {
+	if r := e.play(a, tick, 11, 100_000); reason(r) != "stale" { // same position: only the reset makes it stale
 		t.Fatalf("old session = %s", reason(r))
 	}
-	e.ticks(sess("b", "r1"), 0, 0, 100_000)
+	e.ticks(sess("b", r1), 0, 0, 100_000)
 	st = e.get()
 	if st.Watched == nil || st.Watched.Origin != contracts.WatchedAuto || *st.PlayCount != 2 {
 		t.Fatalf("not re-watched: %+v", st)
@@ -108,21 +108,21 @@ func TestUnwatchedIsAReset(t *testing.T) {
 
 func TestLateSessionAfterResetIsStale(t *testing.T) {
 	e := newEnv(t)
-	a := sess("a", "r1")
+	a := sess("a", r1)
 	e.play(a, tick, 0, 0)
 	e.play(a, tick, 1, 10_000)
 	e.mustSetWatched(false, 0)
 	if r := e.play(a, tick, 2, 20_000); reason(r) != "stale" {
 		t.Fatalf("late tick = %s", reason(r))
 	}
-	if r := e.play(sess("b", "r1"), tick, 0, 0); !r.Accepted {
+	if r := e.play(sess("b", r1), tick, 0, 0); !r.Accepted {
 		t.Fatalf("new session = %s", reason(r))
 	}
 }
 
 func TestProgressDoesNotBumpRevision(t *testing.T) {
 	e := newEnv(t)
-	s := sess("s1", "r1")
+	s := sess("s1", r1)
 	s.DurationMs = 40_000
 	e.ticks(s, 0, 0, 40_000)
 	st := e.get()
@@ -167,7 +167,7 @@ func TestContinueWatching(t *testing.T) {
 		t.Fatal(err)
 	}
 	// F has an unknown duration (Decision 11): resume is never written, so it is not listed.
-	f := Session{ID: "sF", ItemID: "F", VersionID: "v1", SourceRevision: "r1"}
+	f := Session{ID: "sF", ItemID: "F", VersionID: "v1", SourceRevision: r1}
 	for seq, p := int64(0), int64(0); p <= 60_000; seq, p = seq+1, p+10_000 {
 		if r, err := e.st.Apply(ctx, "p1", f, contracts.ProgressEvent{Sequence: seq, Kind: tick, PositionMs: p}); err != nil || !r.Accepted {
 			t.Fatalf("F tick %d: %+v %v", seq, r, err)
@@ -177,11 +177,11 @@ func TestContinueWatching(t *testing.T) {
 	if got := e.list(10); !slices.Equal(got, []string{"E", "A"}) {
 		t.Fatalf("list = %v", got)
 	}
-	got, _ := e.st.ContinueWatching(ctx, "p1", 10)
+	got, _, _ := e.st.ContinueWatching(ctx, "p1", 10, nil)
 	if got[0].Resume == nil || got[0].Resume.PositionMs != 60_000 {
 		t.Fatalf("state not mapped: %+v", got[0])
 	}
-	if other, _ := e.st.ContinueWatching(ctx, "p2", 10); len(other) != 0 {
+	if other, _, _ := e.st.ContinueWatching(ctx, "p2", 10, nil); len(other) != 0 {
 		t.Fatalf("other profile sees %v", other)
 	}
 }
@@ -214,7 +214,7 @@ func TestContinueWatchingTieBreak(t *testing.T) {
 
 func TestHideThenPlayAgainRestores(t *testing.T) {
 	e := newEnv(t)
-	a := sess("a", "r1")
+	a := sess("a", r1)
 	e.ticks(a, 0, 0, 40_000)
 	if st := e.hide(0); !st.HiddenFromContinueWatching || st.Revision != 1 {
 		t.Fatalf("hide: %+v", st)
@@ -223,7 +223,7 @@ func TestHideThenPlayAgainRestores(t *testing.T) {
 		t.Fatalf("hidden item listed: %v", got)
 	}
 	e.advance(time.Second)
-	e.play(sess("b", "r1"), tick, 0, 40_000)
+	e.play(sess("b", r1), tick, 0, 40_000)
 	if st := e.get(); st.HiddenFromContinueWatching {
 		t.Fatalf("still hidden: %+v", st)
 	}
@@ -234,7 +234,7 @@ func TestHideThenPlayAgainRestores(t *testing.T) {
 
 func TestLateTickDoesNotUnhide(t *testing.T) {
 	e := newEnv(t)
-	a := sess("a", "r1")
+	a := sess("a", r1)
 	e.ticks(a, 0, 0, 40_000)
 	e.hide(0)
 	if r := e.play(a, tick, 5, 50_000); !r.Accepted {
@@ -250,13 +250,13 @@ func TestLateTickDoesNotUnhide(t *testing.T) {
 
 func TestMarkOrderingUsesEventIDsNotTime(t *testing.T) {
 	e := newEnv(t) // clock never advances
-	a := sess("a", "r1")
+	a := sess("a", r1)
 	e.play(a, tick, 0, 0)
 	e.mustSetWatched(false, 0)
 	if r := e.play(a, tick, 1, 10_000); reason(r) != "stale" {
 		t.Fatalf("second tick = %s", reason(r))
 	}
-	b := sess("b", "r1")
+	b := sess("b", r1)
 	if r := e.play(b, tick, 0, 0); !r.Accepted {
 		t.Fatalf("new session = %s", reason(r))
 	}
@@ -268,11 +268,22 @@ func TestMarkOrderingUsesEventIDsNotTime(t *testing.T) {
 
 func TestHideKeepsHistory(t *testing.T) {
 	e := newEnv(t)
-	e.ticks(sess("a", "r1"), 0, 0, 40_000)
+	e.ticks(sess("a", r1), 0, 0, 40_000)
 	before := e.count(`SELECT COUNT(*) FROM userdata_events`)
 	e.hide(0)
 	e.mustSetWatched(true, 1)
 	if after := e.count(`SELECT COUNT(*) FROM userdata_events`); after != before || before != 5 {
 		t.Fatalf("events %d -> %d", before, after)
+	}
+}
+
+// playItemFor is playItem for another profile.
+func (e *env) playItemFor(profile, item, session string, coveredMs int64) {
+	e.t.Helper()
+	s := Session{ID: session, ItemID: item, VersionID: "v1", SourceRevision: r1, DurationMs: 100_000}
+	for seq, p := int64(0), int64(0); p <= coveredMs; seq, p = seq+1, p+10_000 {
+		if r, err := e.st.Apply(ctx, profile, s, contracts.ProgressEvent{Sequence: seq, Kind: tick, PositionMs: p}); err != nil || !r.Accepted {
+			e.t.Fatalf("%s tick %d: %+v %v", item, seq, r, err)
+		}
 	}
 }

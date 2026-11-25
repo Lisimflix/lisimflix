@@ -70,3 +70,15 @@ func (e *env) count(query string) int {
 	}
 	return n
 }
+
+// Fixture source revisions in the contract's 64-hex form (#172 note 4).
+var (
+	r1 = contracts.SourceRevision("file-1", 1_000, 1)
+	r2 = contracts.SourceRevision("file-1", 2_000, 2)
+)
+
+// getState reads one item's state through States (Get was removed in DATA-1b).
+func getState(st *Store, ctx context.Context, profileID, itemID string) (contracts.UserItemState, error) {
+	m, err := st.States(ctx, profileID, []string{itemID})
+	return m[itemID], err
+}
