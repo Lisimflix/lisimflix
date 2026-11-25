@@ -414,6 +414,8 @@ playback speed changes elapsed wall time rather than media coverage. Record adva
 intervals from bounded progress events, excluding explicit seeks and implausible jumps.
 An item below the coverage floor is not marked watched by position alone: it keeps its
 resume position and stays in Continue Watching, so the viewer does not lose their place.
+When an item becomes watched automatically its resume position is cleared, so a finished
+item offers Play, not Resume in the credits; an explicit mark keeps the resume position.
 Explicit mark watched/unwatched overrides automation. Different timelines require
 confirmation before copying a resume position between versions.
 
@@ -426,7 +428,8 @@ floor are accepted (D11).
 Clients send progress every 10 seconds and on pause/seek/stop/exit when possible.
 Session ID, monotonic event sequence and source revision reject stale/duplicate events.
 A late heartbeat cannot undo an explicit user action. Backwards progress within one
-session requires a seek event. For concurrent sessions, latest server-accepted active
+session requires a seek event, except a pause or stop at most 1 second behind the last
+accepted position (player rounding), which is accepted. For concurrent sessions, latest server-accepted active
 session event wins; retain both histories. Client wall clocks are not authoritative.
 Proposed crash-resume accuracy: within 15 seconds of the last viewed position.
 
@@ -1612,7 +1615,7 @@ small smoke runs report individual samples instead of misleading percentiles.
 | PERF-03 | Stability | Rebuffer ≤1% of played time in each 30-minute supported-path run with adequate sustained bandwidth |
 | PERF-04 | Capacity | Sustain the declared stream/conversion mix for each published deployment profile for 60 minutes; no unbounded queue/memory growth; deliberate excess load is rejected safely |
 | PERF-05 | Interactive browsing and search | p95 ≤1 second from user action to usable, correct results visible in the browser on LAN at the actual-scale baseline below, including during scan and metadata-update workloads; report server/query timing separately |
-| PERF-06 | Progress | Resume within 15s after client crash; explicit watched override survives stale/replayed events |
+| PERF-06 | Progress | Resume within 15s after client crash; explicit watched override survives stale/replayed events; automatic watched only once the position is past 95% (or at the end) and at least 50% is covered, in either order, so seeking to the end of a barely started item keeps its resume; the skip-credits undo case waits for EXT-2 |
 | PERF-07 | Recovery | Backup ≤24h RPO; restore rehearsal ≤30min under documented dataset conditions |
 
 Cold scan/probe/match throughput cannot have an honest target until the actual file
