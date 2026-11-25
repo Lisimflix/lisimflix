@@ -1,0 +1,3 @@
+{"movie":{"id":5,"title":"Heat","year":1995,"folderPath":"/movies/Heat (1995)"},
+ "renamedMovieFiles":[{"id":7,"relativePath":"Heat (1995) {tmdb-949}.mkv","path":"/movies/Heat (1995)/Heat (1995) {tmdb-949}.mkv","previousRelativePath":"Heat (1995).mkv","previousPath":"/movies/Heat (1995)/Heat (1995).mkv"}],
+ "eventType":"Rename","instanceName":"Radarr"}

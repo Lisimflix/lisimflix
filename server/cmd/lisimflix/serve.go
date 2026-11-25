@@ -19,6 +19,7 @@ import (
 	"github.com/Lisimflix/lisimflix/server/internal/auth"
 	"github.com/Lisimflix/lisimflix/server/internal/contracts"
 	"github.com/Lisimflix/lisimflix/server/internal/library"
+	"github.com/Lisimflix/lisimflix/server/internal/library/arrhook"
 	"github.com/Lisimflix/lisimflix/server/internal/m1config"
 	"github.com/Lisimflix/lisimflix/server/internal/playback"
 	"github.com/Lisimflix/lisimflix/server/internal/storage"
@@ -176,7 +177,12 @@ func compose(ctx context.Context, cfgPath, dbPath, backups string, web fs.FS, ex
 		}
 		return single.Check(root)
 	}
-	s.handler, err = app.New(cfg, am, pb.Handler(), catalogue, web, ready, log)
+	var mounts []app.Mount
+	if s.scans != nil {
+		// LIB-4: Sonarr/Radarr import notifications queue scoped scans.
+		mounts = append(mounts, app.Mount{Pattern: arrhook.Path, Handler: arrhook.NewHandler(arrhook.NewStore(s.db), s.scans, log)})
+	}
+	s.handler, err = app.New(cfg, am, pb.Handler(), catalogue, web, ready, log, mounts...)
 	if err != nil {
 		s.shutdown(ctx, nil)
 		return nil, err
@@ -189,7 +195,7 @@ func openStorage(ctx context.Context, path string, snap storage.SnapshotOptions,
 	if err != nil {
 		return nil, err
 	}
-	srcs := append([]storage.Source{storage.Core(), library.Migrations()}, extra...)
+	srcs := append([]storage.Source{storage.Core(), library.Migrations(), arrhook.Migrations()}, extra...)
 	if _, err := db.MigrateWithBackup(ctx, srcs, snap, time.Now); err != nil {
 		db.Close()
 		return nil, err
