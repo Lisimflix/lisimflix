@@ -38,6 +38,7 @@ type apiEnv struct {
 	*env
 	sessions *fakeSessions
 	known    map[string]bool // catalogue items ItemFacts knows
+	asked    []string        // "item|version|revision" per ItemFacts call
 	h        http.Handler
 }
 
@@ -49,7 +50,8 @@ func newAPIEnv(t *testing.T) *apiEnv {
 		"ps-2": {ID: "ps-2", ItemID: "item", VersionID: "v1", SourceRevision: r1},
 		"ps-x": {ID: "ps-x", ItemID: "extra", VersionID: "vx", SourceRevision: r1},
 	}}
-	facts := func(_ context.Context, _ contracts.Principal, itemID, _, _ string) (int64, bool, bool, error) {
+	facts := func(_ context.Context, _ contracts.Principal, itemID, versionID, rev string) (int64, bool, bool, error) {
+		a.asked = append(a.asked, itemID+"|"+versionID+"|"+rev)
 		return 100_000, false, a.known[itemID], nil
 	}
 	a.h = NewAPI(a.st, a.sessions, facts, nil).Handler()
@@ -127,7 +129,12 @@ func TestReportProgressBodyRules(t *testing.T) {
 		"unknown field":          `{"sequence":1,"kind":"tick","positionMs":1,"fromPositionMs":null,"extra":1}`,
 		"unknown kind":           `{"sequence":1,"kind":"rewind","positionMs":1,"fromPositionMs":null}`,
 		"not json":               `tick`,
-		"over 4 KiB":             `{"sequence":1,"kind":"tick","positionMs":1,"fromPositionMs":null,"pad":"` + strings.Repeat("x", 4096) + `"}`,
+		"over 4 KiB":             `{"sequence":1,"kind":"tick","positionMs":1,"fromPositionMs":null` + strings.Repeat(" ", 4096) + `}`,
+		"null sequence":          `{"sequence":null,"kind":"tick","positionMs":1,"fromPositionMs":null}`,
+		"null positionMs":        `{"sequence":1,"kind":"tick","positionMs":null,"fromPositionMs":null}`,
+		"null kind":              `{"sequence":1,"kind":null,"positionMs":1,"fromPositionMs":null}`,
+		"case-variant key":       `{"sequence":1,"kind":"tick","positionMs":5,"fromPositionMs":null,"PositionMs":0}`,
+		"trailing data":          `{"sequence":1,"kind":"tick","positionMs":1,"fromPositionMs":null} {}`,
 	} {
 		if code, b := a.progress(alice, "ps-1", body); code != 400 || errorCode(t, b) != contracts.CodeInvalidRequest {
 			t.Errorf("%s: %d %s", name, code, b)
@@ -191,10 +198,19 @@ func TestSetWatchedRevisionConflict(t *testing.T) {
 		"missing watched":   `{"expectedRevision":2}`,
 		"negative revision": `{"watched":true,"expectedRevision":-1}`,
 		"unknown field":     `{"watched":true,"expectedRevision":2,"x":1}`,
+		"null watched":      `{"watched":null,"expectedRevision":2}`,
+		"null revision":     `{"watched":false,"expectedRevision":null}`,
+		"case-variant key":  `{"watched":true,"expectedRevision":2,"WATCHED":false}`,
 	} {
-		if code, b := a.do(&alice, "PUT", "/api/v1/items/item/watched", body); code != 400 {
+		if code, b := a.do(&alice, "PUT", "/api/v1/items/item/watched", body); code != 400 || errorCode(t, b) != contracts.CodeInvalidRequest {
 			t.Errorf("%s: %d %s", name, code, b)
 		}
+	}
+	if st, _ := getState(a.st, context.Background(), alice.ProfileID, "item"); st.Revision != 2 {
+		t.Fatalf("a rejected body changed the item: %+v", st)
+	}
+	if code, b := a.do(&alice, "PUT", "/api/v1/items/item/continue-watching-hidden", `{"expectedRevision":null}`); code != 400 {
+		t.Errorf("hide null revision: %d %s", code, b)
 	}
 }
 
@@ -237,7 +253,8 @@ func TestStoreErrorsNeverLeak(t *testing.T) {
 		{"PUT", "/api/v1/items/item/continue-watching-hidden", `{"expectedRevision":0}`},
 	} {
 		code, b := a.do(&alice, c.method, c.path, c.body)
-		if code != 500 || errorCode(t, b) != contracts.CodeInternalError || strings.Contains(strings.ToLower(string(b)), "sql") {
+		msg := decodeInto[struct{ Code, Message string }](t, b)
+		if code != 500 || msg.Code != contracts.CodeInternalError || msg.Message != "Internal error." {
 			t.Errorf("%s %s: %d %s", c.method, c.path, code, b)
 		}
 	}
@@ -258,7 +275,39 @@ func TestProfilesAreIsolated(t *testing.T) {
 
 func TestRoutesNeedAPrincipal(t *testing.T) {
 	a := newAPIEnv(t)
-	if code, b := a.do(nil, "PUT", "/api/v1/items/item/watched", `{"watched":true,"expectedRevision":0}`); code != 401 {
-		t.Fatalf("no principal: %d %s", code, b)
+	for _, c := range []struct{ method, path, body string }{
+		{"POST", "/api/v1/playback/sessions/ps-1/progress", tickBody(1, 10_000)},
+		{"PUT", "/api/v1/items/item/watched", `{"watched":true,"expectedRevision":0}`},
+		{"PUT", "/api/v1/items/item/continue-watching-hidden", `{"expectedRevision":0}`},
+	} {
+		if code, b := a.do(nil, c.method, c.path, c.body); code != 401 {
+			t.Errorf("no principal %s: %d %s", c.path, code, b)
+		}
+	}
+	if n := a.count(`SELECT COUNT(*) FROM userdata_state`); n != 0 {
+		t.Fatalf("%d rows written", n)
+	}
+}
+
+// Progress asks ItemFacts about the session's version and file revision; marks ask about the item alone (#177 note 1).
+func TestItemFactsArguments(t *testing.T) {
+	a := newAPIEnv(t)
+	a.progress(alice, "ps-1", tickBody(1, 10_000))
+	a.do(&alice, "PUT", "/api/v1/items/item/watched", `{"watched":true,"expectedRevision":0}`)
+	a.do(&alice, "PUT", "/api/v1/items/item/continue-watching-hidden", `{"expectedRevision":1}`)
+	want := []string{"item|v1|" + r1, "item||", "item||"}
+	if strings.Join(a.asked, ",") != strings.Join(want, ",") {
+		t.Fatalf("ItemFacts asked %v, want %v", a.asked, want)
+	}
+}
+
+func TestHideTouchesOnlyTheCallersRow(t *testing.T) {
+	a := newAPIEnv(t)
+	a.progress(alice, "ps-1", tickBody(1, 40_000))
+	if code, b := a.do(&bob, "PUT", "/api/v1/items/item/continue-watching-hidden", `{"expectedRevision":0}`); code != 200 {
+		t.Fatalf("bob hide = %d %s", code, b)
+	}
+	if got, _ := getState(a.st, context.Background(), alice.ProfileID, "item"); got.HiddenFromContinueWatching || got.Revision != 0 {
+		t.Fatalf("alice changed: %+v", got)
 	}
 }

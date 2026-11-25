@@ -75,7 +75,7 @@ func (a *API) withPrincipal(h func(http.ResponseWriter, *http.Request, contracts
 
 func (a *API) progress(w http.ResponseWriter, r *http.Request, p contracts.Principal) {
 	var e contracts.ProgressEvent
-	if !decodeStrict(w, r, &e, "sequence", "kind", "positionMs", "fromPositionMs") {
+	if !decodeStrict(w, r, &e, "fromPositionMs", "sequence", "kind", "positionMs", "fromPositionMs") {
 		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Send sequence, kind, positionMs and fromPositionMs.")
 		return
 	}
@@ -95,6 +95,9 @@ func (a *API) progress(w http.ResponseWriter, r *http.Request, p contracts.Princ
 		return
 	}
 	dur, noAuto, ok, err := a.facts(r.Context(), p, ref.ItemID, ref.VersionID, ref.SourceRevision)
+	if err == nil && dur < 0 {
+		err = errors.New("userdata: item facts gave a negative duration")
+	}
 	if err != nil {
 		a.fail(w, r, err)
 		return
@@ -114,7 +117,7 @@ func (a *API) progress(w http.ResponseWriter, r *http.Request, p contracts.Princ
 
 func (a *API) watched(w http.ResponseWriter, r *http.Request, p contracts.Principal) {
 	var req contracts.WatchedRequest
-	if !decodeStrict(w, r, &req, "watched", "expectedRevision") || req.ExpectedRevision < 0 {
+	if !decodeStrict(w, r, &req, "", "watched", "expectedRevision") || req.ExpectedRevision < 0 {
 		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Send watched and a nonnegative expectedRevision.")
 		return
 	}
@@ -125,7 +128,7 @@ func (a *API) watched(w http.ResponseWriter, r *http.Request, p contracts.Princi
 
 func (a *API) hide(w http.ResponseWriter, r *http.Request, p contracts.Principal) {
 	var req contracts.HideRequest
-	if !decodeStrict(w, r, &req, "expectedRevision") || req.ExpectedRevision < 0 {
+	if !decodeStrict(w, r, &req, "", "expectedRevision") || req.ExpectedRevision < 0 {
 		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Send a nonnegative expectedRevision.")
 		return
 	}
@@ -157,7 +160,7 @@ func (a *API) mark(w http.ResponseWriter, r *http.Request, p contracts.Principal
 func (a *API) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, ErrInvalid):
-		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Invalid progress event.")
+		contracts.WriteError(w, r, contracts.CodeInvalidRequest, "Invalid request.")
 	case errors.Is(err, ErrRevisionConflict):
 		contracts.WriteError(w, r, contracts.CodeRevisionConflict, "This item changed. Reload and try again.")
 	default:
@@ -166,9 +169,10 @@ func (a *API) fail(w http.ResponseWriter, r *http.Request, err error) {
 	}
 }
 
-// decodeStrict reads a body of at most maxBody that has every required key
-// and no unknown field into v.
-func decodeStrict(w http.ResponseWriter, r *http.Request, v any, required ...string) bool {
+// decodeStrict reads into v a body of at most maxBody with exactly the
+// required keys (every schema property is required, so any other key, even a
+// case variant Go would match, is refused) and no null except in nullable.
+func decodeStrict(w http.ResponseWriter, r *http.Request, v any, nullable string, required ...string) bool {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 	if err != nil {
 		return false
@@ -177,8 +181,12 @@ func decodeStrict(w http.ResponseWriter, r *http.Request, v any, required ...str
 	if json.Unmarshal(body, &keys) != nil {
 		return false
 	}
+	if len(keys) != len(required) {
+		return false
+	}
 	for _, k := range required {
-		if _, ok := keys[k]; !ok {
+		raw, ok := keys[k]
+		if !ok || (k != nullable && string(bytes.TrimSpace(raw)) == "null") {
 			return false
 		}
 	}

@@ -433,6 +433,11 @@ func TestLatePauseWithinTolerance(t *testing.T) {
 	if r := e.play(s, pause, 3, 19_500); !r.Accepted || r.State.Resume.PositionMs != 19_500 || e.covered() != before {
 		t.Fatalf("pause 500 ms behind: %s, %+v, covered %d", reason(r), r.State.Resume, e.covered())
 	}
+	b := sess("sb", r1)
+	e.play(b, tick, 1, 20_000)
+	if r := e.play(b, stop, 2, 19_000); !r.Accepted || r.State.Resume.PositionMs != 19_000 {
+		t.Fatalf("stop exactly 1,000 ms behind: %s", reason(r))
+	}
 	t2 := sess("s2", r1)
 	e.play(t2, tick, 1, 20_000)
 	if r := e.play(t2, stop, 2, 18_999); reason(r) != "stale" {
@@ -442,5 +447,43 @@ func TestLatePauseWithinTolerance(t *testing.T) {
 	e.play(t3, tick, 1, 20_000)
 	if r := e.play(t3, tick, 2, 19_500); reason(r) != "stale" {
 		t.Fatalf("tick 500 ms behind = %s", reason(r))
+	}
+}
+
+// A late pause just after the tick that marked the item watched must not bring resume back (Decisions 11 and 12).
+func TestLatePauseAfterAutoWatchedKeepsResumeCleared(t *testing.T) {
+	e := newEnv(t)
+	s := sess("s1", r1)
+	seq := e.ticks(s, 0, 0, 90_000)
+	if r := e.play(s, tick, seq, 95_000); r.State.Watched == nil || r.State.Resume != nil {
+		t.Fatalf("not auto-watched at 95%%: %+v", r.State)
+	}
+	if r := e.play(s, pause, seq+1, 94_400); !r.Accepted || r.State.Resume != nil {
+		t.Fatalf("late pause wrote resume: %s %+v", reason(r), r.State.Resume)
+	}
+}
+
+// A multi-episode-file session keeps file resume (§3.8) even on an item watched automatically elsewhere.
+func TestNoAutoWatchedSessionKeepsResume(t *testing.T) {
+	e := newEnv(t)
+	e.ticks(sess("s1", r1), 0, 0, 100_000)
+	m := sess("s2", r2)
+	m.NoAutoWatched = true
+	seq := e.ticks(m, 0, 0, 90_000)
+	if r := e.play(m, tick, seq, 100_000); r.State.Resume == nil || r.State.Resume.PositionMs != 100_000 {
+		t.Fatalf("NoAutoWatched session cleared resume: %+v", r.State)
+	}
+}
+
+// An imported watched mark keeps resume like a manual one (Decision 11).
+func TestImportedWatchedKeepsResume(t *testing.T) {
+	e := newEnv(t)
+	if _, err := e.db.Exec(`INSERT INTO userdata_state (profile_id, item_id, watched_value, watched_origin, watched_at)
+		VALUES ('p1', 'item', 1, 'import', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	e.ticks(sess("s1", r1), 0, 0, 100_000)
+	if st := e.get(); st.Resume == nil || st.Resume.PositionMs != 100_000 || st.Watched.Origin != contracts.WatchedImport {
+		t.Fatalf("imported mark lost resume: %+v", st)
 	}
 }

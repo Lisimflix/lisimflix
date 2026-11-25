@@ -97,8 +97,13 @@ func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e con
 		}
 		markAuto := !sess.NoAutoWatched && !watched.Valid && IsWatched(e.PositionMs, covered, sess.DurationMs)
 		autoWatched := markAuto || (watched.Int64 == 1 && origin.String == contracts.WatchedAuto)
+		// A late pause or stop just after the mark counts from where playback had got to.
+		reached := e.PositionMs
+		if prev.exists && (e.Kind == contracts.ProgressPause || e.Kind == contracts.ProgressStop) {
+			reached = max(reached, prev.pos)
+		}
 		switch {
-		case autoWatched && pastWatchedPosition(e.PositionMs, sess.DurationMs):
+		case !sess.NoAutoWatched && autoWatched && pastWatchedPosition(reached, sess.DurationMs):
 			// No "Resume from the credits" on an item watched automatically (DATA-1b Decision 11).
 			if _, err := tx.ExecContext(ctx, `UPDATE userdata_state SET resume_position_ms = NULL, resume_duration_ms = NULL,
 				resume_version_id = NULL, resume_source_revision = NULL, resume_updated_at = NULL

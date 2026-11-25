@@ -33,10 +33,11 @@ const (
 // Revision, so a row with only progress is still 0, but progress can still
 // change Resume, Watched (the automatic mark), PlayCount, LastPlayedAt and
 // HiddenFromContinueWatching (a later session clears a hide): an unchanged
-// Revision does not mean unchanged state. When progress marks an item watched
-// (origin auto), Resume becomes nil, so a finished item offers Play, not
-// Resume in the credits; a manual mark keeps Resume. Writes send Revision
-// back as expectedRevision.
+// Revision does not mean unchanged state. Progress past 95% on an item
+// watched automatically sets Resume to nil, so a finished item offers Play,
+// not Resume in the credits; a rewatch records Resume again until it passes
+// 95%. A manual or imported mark keeps Resume. Writes send Revision back as
+// expectedRevision.
 type UserItemState struct {
 	ItemID                     string     `json:"itemId"`
 	Revision                   int64      `json:"revision"`

@@ -399,7 +399,7 @@ export interface components {
             /** Format: int64 */
             sequence: number;
         };
-        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched, and hiding from Continue Watching. Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. When progress marks an item watched (origin auto), resume becomes null, so a finished item offers Play, not Resume in the credits; a manual mark keeps resume. Writes send revision back as expectedRevision. */
+        /** @description The current profile's state for one movie or episode. revision counts explicit changes: marking watched or unwatched, and hiding from Continue Watching. Progress never changes revision, so a row with only progress is still 0, but progress can still change resume, watched (the automatic mark), playCount, lastPlayedAt and hiddenFromContinueWatching (a later session clears a hide): an unchanged revision does not mean unchanged state. Progress past 95% on an item watched automatically sets resume to null, so a finished item offers Play, not Resume in the credits; a rewatch records resume again until it passes 95%. A manual or imported mark keeps resume. Writes send revision back as expectedRevision. */
         UserItemState: {
             itemId: string;
             /** Format: int64 */

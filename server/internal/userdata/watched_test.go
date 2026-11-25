@@ -96,7 +96,7 @@ func TestUnwatchedIsAReset(t *testing.T) {
 	if n := e.count(`SELECT COUNT(*) FROM userdata_intervals`); n != 0 || e.covered() != 0 {
 		t.Fatalf("coverage left: %d rows, covered %d", n, e.covered())
 	}
-	if r := e.play(a, tick, 11, 95_000); reason(r) != "stale" {
+	if r := e.play(a, tick, 11, 100_000); reason(r) != "stale" { // same position: only the reset makes it stale
 		t.Fatalf("old session = %s", reason(r))
 	}
 	e.ticks(sess("b", r1), 0, 0, 100_000)
