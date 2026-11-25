@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -423,5 +424,130 @@ func TestServeStartsWithoutTheMovie(t *testing.T) {
 	run([]string{"healthcheck", "--config", f.cfgPath}, nil, &out, &out)
 	if strings.Contains(out.String(), "m1config") {
 		t.Fatalf("healthcheck failed on the config: %s", out.String())
+	}
+}
+
+// reopen restarts the server on the same config and database, as a process
+// restart would. Auth sessions are in memory, so browsers sign in again.
+func (f *fixture) reopen() {
+	f.t.Helper()
+	f.s.shutdown(context.Background(), nil)
+	s, err := compose(context.Background(), f.cfgPath, "", "", testWeb, nil, slog.New(slog.DiscardHandler))
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	f.s = s
+	f.ts.Config.Handler = s.handler
+	f.t.Cleanup(func() { s.shutdown(context.Background(), nil) })
+}
+
+func tickJSON(seq, pos int64) string {
+	return fmt.Sprintf(`{"sequence":%d,"kind":"tick","positionMs":%d,"fromPositionMs":null}`, seq, pos)
+}
+
+// decodeStrictly refuses unknown fields: the real responses must match the contract types exactly.
+func decodeStrictly(t *testing.T, b []byte, v any) {
+	t.Helper()
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		t.Fatalf("decode %s: %v", b, err)
+	}
+}
+
+func TestProgressOverHTTPSurvivesRestart(t *testing.T) {
+	f := newFixture(t)
+	b := f.browser()
+	b.signIn()
+	ps := b.start("k-progress-1")
+	for i, pos := range []int64{5_000, 10_000} {
+		if resp, out := b.do("POST", "/api/v1/playback/sessions/"+ps.ID+"/progress", tickJSON(int64(i+1), pos), nil); resp.StatusCode != 200 {
+			t.Fatalf("progress %d = %d %s", pos, resp.StatusCode, out)
+		}
+	}
+	f.reopen()
+	b = f.browser()
+	b.signIn()
+	resp, out := b.do("PUT", "/api/v1/items/"+ps.ItemID+"/watched", `{"watched":true,"expectedRevision":0}`, nil)
+	var st contracts.UserItemState
+	decodeStrictly(t, out, &st)
+	if resp.StatusCode != 200 || st.Revision != 1 || st.Resume == nil || st.Resume.PositionMs != 10_000 || st.Watched == nil {
+		t.Fatalf("watched after restart = %d %s", resp.StatusCode, out)
+	}
+}
+
+func TestProgressResponsesMatchContract(t *testing.T) {
+	f := newFixture(t)
+	b := f.browser()
+	b.signIn()
+	ps := b.start("k-progress-2")
+	resp, out := b.do("POST", "/api/v1/playback/sessions/"+ps.ID+"/progress", tickJSON(1, 1_000), nil)
+	var res contracts.ProgressResult
+	decodeStrictly(t, out, &res)
+	if resp.StatusCode != 200 || !res.Accepted || res.State.ItemID != ps.ItemID {
+		t.Fatalf("progress = %d %s", resp.StatusCode, out)
+	}
+	for _, c := range []struct{ path, body string }{
+		{"/api/v1/items/" + ps.ItemID + "/continue-watching-hidden", `{"expectedRevision":0}`},
+		{"/api/v1/items/" + ps.ItemID + "/watched", `{"watched":true,"expectedRevision":1}`},
+	} {
+		resp, out := b.do("PUT", c.path, c.body, nil)
+		var st contracts.UserItemState
+		decodeStrictly(t, out, &st)
+		if resp.StatusCode != 200 || st.ItemID != ps.ItemID {
+			t.Fatalf("%s = %d %s", c.path, resp.StatusCode, out)
+		}
+	}
+}
+
+func TestProgressNeedsCSRFAndSignIn(t *testing.T) {
+	f := newFixture(t)
+	b := f.browser()
+	b.signIn()
+	ps := b.start("k-progress-3")
+	token := b.token
+	b.token = ""
+	if resp, out := b.do("POST", "/api/v1/playback/sessions/"+ps.ID+"/progress", tickJSON(1, 1_000), nil); resp.StatusCode != 403 || !strings.Contains(string(out), contracts.CodeCSRFFailed) {
+		t.Fatalf("no token = %d %s", resp.StatusCode, out)
+	}
+	b.token = token
+	anon := f.browser()
+	_, out := anon.do("GET", "/api/v1/auth/session", "", nil)
+	var st contracts.AuthState
+	json.Unmarshal(out, &st)
+	anon.token = st.CSRFToken
+	if resp, out := anon.do("POST", "/api/v1/playback/sessions/"+ps.ID+"/progress", tickJSON(1, 1_000), nil); resp.StatusCode != 401 {
+		t.Fatalf("not signed in = %d %s", resp.StatusCode, out)
+	}
+	var n int
+	if err := f.s.db.QueryRow(`SELECT COUNT(*) FROM userdata_events`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("%d events stored, %v", n, err)
+	}
+}
+
+func TestProgressRoutesAbsentWhenStorageFailed(t *testing.T) {
+	f := newFixture(t)
+	f.s.shutdown(context.Background(), nil)
+	db, err := storage.Open(context.Background(), filepath.Join(filepath.Dir(f.cfgPath), "lisimflix.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	db.ExecContext(context.Background(), `INSERT INTO schema_migrations(version, checksum, applied_at) VALUES('29990101000000_future_x', 'x', 'now')`)
+	db.Close()
+	f.reopen()
+	if f.s.db != nil {
+		t.Fatal("storage started")
+	}
+	b := f.browser()
+	b.signIn()
+	ps := b.start("k-progress-4")
+	for _, c := range []struct{ method, path, body string }{
+		{"POST", "/api/v1/playback/sessions/" + ps.ID + "/progress", tickJSON(1, 1_000)},
+		{"PUT", "/api/v1/items/" + ps.ItemID + "/watched", `{"watched":true,"expectedRevision":0}`},
+		{"PUT", "/api/v1/items/" + ps.ItemID + "/continue-watching-hidden", `{"expectedRevision":0}`},
+	} {
+		if resp, out := b.do(c.method, c.path, c.body, nil); resp.StatusCode != 404 {
+			t.Errorf("%s %s = %d %s", c.method, c.path, resp.StatusCode, out)
+		}
 	}
 }

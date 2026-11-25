@@ -14,8 +14,6 @@ import (
 // is at or below the highest event id at the time of the mark become stale.
 // The play count is untouched. A stale expectedRevision is
 // ErrRevisionConflict and changes nothing. No event row is written.
-//
-// Planned: DATA-1b (setWatched handler).
 func (s *Store) SetWatched(ctx context.Context, profileID, itemID string, watched bool, expectedRevision int64) (contracts.UserItemState, error) {
 	return s.mark(ctx, profileID, itemID, expectedRevision, func(tx *sql.Tx, now, eventID int64) error {
 		if watched {
@@ -37,8 +35,6 @@ func (s *Store) SetWatched(ctx context.Context, profileID, itemID string, watche
 // Hide removes the item from Continue Watching until a session with no events
 // yet at the time of the hide plays it. Events and progress are kept.
 // Revision rules as SetWatched.
-//
-// Planned: DATA-1b (hideContinueWatching handler).
 func (s *Store) Hide(ctx context.Context, profileID, itemID string, expectedRevision int64) (contracts.UserItemState, error) {
 	return s.mark(ctx, profileID, itemID, expectedRevision, func(tx *sql.Tx, now, eventID int64) error {
 		_, err := tx.ExecContext(ctx, `UPDATE userdata_state SET hidden = 1, hide_event_id = ? WHERE profile_id = ? AND item_id = ?`,

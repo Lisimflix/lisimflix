@@ -12,8 +12,6 @@ import (
 // one transaction. A duplicate or stale event is stored as a rejected row and
 // answered Accepted: false with the unchanged state, not an error. Event times
 // are the server's receipt time. Progress never bumps the revision.
-//
-// Planned: DATA-1b (reportProgress handler).
 func (s *Store) Apply(ctx context.Context, profileID string, sess Session, e contracts.ProgressEvent) (contracts.ProgressResult, error) {
 	var res contracts.ProgressResult
 	if profileID == "" {

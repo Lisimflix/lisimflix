@@ -70,6 +70,7 @@ type env struct {
 	srv   *httptest.Server
 	play  *fakePlayback
 	cat   *fakePlayback // the catalogue handler; nil when built without one
+	user  *fakePlayback // the user-data handler
 	ready error
 	mu    sync.Mutex
 }
@@ -95,12 +96,12 @@ func build(t *testing.T, origin string, log *slog.Logger, cat *fakePlayback) *en
 	if err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, play: &fakePlayback{}, cat: cat}
+	e := &env{t: t, play: &fakePlayback{}, cat: cat, user: &fakePlayback{}}
 	var catalogue http.Handler
 	if cat != nil {
 		catalogue = cat
 	}
-	h, err := New(cfg, am, e.play, catalogue, web, func(context.Context) error {
+	h, err := New(cfg, am, e.play, catalogue, e.user, web, func(context.Context) error {
 		e.mu.Lock()
 		defer e.mu.Unlock()
 		return e.ready
@@ -386,44 +387,44 @@ func TestNewRejectsInconsistentInputs(t *testing.T) {
 	plainAM, _ := auth.NewManager(cfg.Viewer, false, func(string) {})
 	ready := func(context.Context) error { return nil }
 	play := &fakePlayback{}
-	if _, err := New(cfg, secureAM, play, play, web, ready, nil); err == nil {
+	if _, err := New(cfg, secureAM, play, play, nil, web, ready, nil); err == nil {
 		t.Error("accepted Secure cookies on an http origin")
 	}
 	for name, fn := range map[string]func() error{
-		"nil auth":     func() error { _, err := New(cfg, nil, play, play, web, ready, nil); return err },
-		"nil playback": func() error { _, err := New(cfg, plainAM, nil, play, web, ready, nil); return err },
-		"nil web":      func() error { _, err := New(cfg, plainAM, play, play, nil, ready, nil); return err },
-		"nil ready":    func() error { _, err := New(cfg, plainAM, play, play, web, nil, nil); return err },
+		"nil auth":     func() error { _, err := New(cfg, nil, play, play, nil, web, ready, nil); return err },
+		"nil playback": func() error { _, err := New(cfg, plainAM, nil, play, nil, web, ready, nil); return err },
+		"nil web":      func() error { _, err := New(cfg, plainAM, play, play, nil, nil, ready, nil); return err },
+		"nil ready":    func() error { _, err := New(cfg, plainAM, play, play, nil, web, nil, nil); return err },
 		"no index": func() error {
-			_, err := New(cfg, plainAM, play, play, fstest.MapFS{"a.js": {Data: []byte("x")}}, ready, nil)
+			_, err := New(cfg, plainAM, play, play, nil, fstest.MapFS{"a.js": {Data: []byte("x")}}, ready, nil)
 			return err
 		},
 		"mount under /api/": func() error {
-			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/api/v1/hooks", http.NotFoundHandler()})
+			_, err := New(cfg, plainAM, play, play, nil, web, ready, nil, Mount{"/api/v1/hooks", http.NotFoundHandler()})
 			return err
 		},
 		"mount under /health/": func() error {
-			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/health/x", http.NotFoundHandler()})
+			_, err := New(cfg, plainAM, play, play, nil, web, ready, nil, Mount{"/health/x", http.NotFoundHandler()})
 			return err
 		},
 		"mount at /": func() error {
-			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/", http.NotFoundHandler()})
+			_, err := New(cfg, plainAM, play, play, nil, web, ready, nil, Mount{"/", http.NotFoundHandler()})
 			return err
 		},
 		"mount at /api": func() error {
-			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/api", http.NotFoundHandler()})
+			_, err := New(cfg, plainAM, play, play, nil, web, ready, nil, Mount{"/api", http.NotFoundHandler()})
 			return err
 		},
 		"mount at /health": func() error {
-			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/health", http.NotFoundHandler()})
+			_, err := New(cfg, plainAM, play, play, nil, web, ready, nil, Mount{"/health", http.NotFoundHandler()})
 			return err
 		},
 		"duplicate mount": func() error {
-			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/hooks/x", http.NotFoundHandler()}, Mount{"/hooks/x", http.NotFoundHandler()})
+			_, err := New(cfg, plainAM, play, play, nil, web, ready, nil, Mount{"/hooks/x", http.NotFoundHandler()}, Mount{"/hooks/x", http.NotFoundHandler()})
 			return err
 		},
 		"mount without handler": func() error {
-			_, err := New(cfg, plainAM, play, play, web, ready, nil, Mount{"/hooks/x", nil})
+			_, err := New(cfg, plainAM, play, play, nil, web, ready, nil, Mount{"/hooks/x", nil})
 			return err
 		},
 	} {
@@ -441,7 +442,7 @@ func TestMountSkipsBrowserChecks(t *testing.T) {
 		Viewer: m1config.Viewer{AccountID: "a", ProfileID: "p", Username: "viewer", PasswordHash: viewerHash}}
 	am, _ := auth.NewManager(cfg.Viewer, false, func(string) {})
 	hook := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusAccepted) })
-	h, err := New(cfg, am, &fakePlayback{}, nil, web, func(context.Context) error { return nil }, nil, Mount{"/hooks/v1/arr", hook})
+	h, err := New(cfg, am, &fakePlayback{}, nil, nil, web, func(context.Context) error { return nil }, nil, Mount{"/hooks/v1/arr", hook})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -462,5 +463,36 @@ func TestMountSkipsBrowserChecks(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("API without Origin: %d, want 403", resp.StatusCode)
+	}
+}
+
+// The user-data routes reach the user-data handler (not the catalogue's or
+// playback's prefix routes), and only with a signed-in session.
+func TestUserdataRoutesRequireSignIn(t *testing.T) {
+	e := newEnv(t, lanOrigin)
+	routes := []struct{ method, path string }{
+		{"POST", "/api/v1/playback/sessions/ps-1/progress"},
+		{"PUT", "/api/v1/items/mov-1/watched"},
+		{"PUT", "/api/v1/items/mov-1/continue-watching-hidden"},
+	}
+	anon := e.browser()
+	_, out := anon.do("GET", "/api/v1/auth/session", "", nil)
+	var st contracts.AuthState
+	json.Unmarshal(out, &st)
+	anon.token = st.CSRFToken
+	for _, r := range routes {
+		if resp, b := anon.do(r.method, r.path, "{}", nil); resp.StatusCode != 401 {
+			t.Errorf("anonymous %s %s = %d %s", r.method, r.path, resp.StatusCode, b)
+		}
+	}
+	b := e.browser()
+	b.signIn()
+	for _, r := range routes {
+		if resp, out := b.do(r.method, r.path, "{}", nil); resp.StatusCode != 200 {
+			t.Errorf("signed in %s %s = %d %s", r.method, r.path, resp.StatusCode, out)
+		}
+	}
+	if len(e.user.seen) != 3 || len(e.play.seen) != 0 || len(e.cat.seen) != 0 {
+		t.Fatalf("user %d, playback %d, catalogue %d requests", len(e.user.seen), len(e.play.seen), len(e.cat.seen))
 	}
 }

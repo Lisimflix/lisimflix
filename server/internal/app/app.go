@@ -41,10 +41,11 @@ type Mount struct {
 // /api/v1/items and everything under them. Both only ever see requests with a
 // live session. A nil catalogue (storage didn't start) leaves its routes
 // answering 404 not_found, so the browse app falls back to the M1 movie (UI-2
-// decision 10). mounts add routes beside the API (see Mount). web must contain
+// decision 10). userdata owns progress, watched and hide (DATA-1b); nil
+// (storage didn't start) leaves them answering 404. mounts add routes beside the API (see Mount). web must contain
 // index.html. ready reports whether initialisation succeeded; /health/ready
 // returns 503 while it returns an error.
-func New(cfg m1config.Config, am *auth.Manager, playback, catalogue http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger, mounts ...Mount) (http.Handler, error) {
+func New(cfg m1config.Config, am *auth.Manager, playback, catalogue, userdata http.Handler, web fs.FS, ready func(context.Context) error, log *slog.Logger, mounts ...Mount) (http.Handler, error) {
 	if am == nil || playback == nil || web == nil || ready == nil {
 		return nil, errors.New("app: auth manager, playback handler, web assets and ready check are required")
 	}
@@ -72,6 +73,13 @@ func New(cfg m1config.Config, am *auth.Manager, playback, catalogue http.Handler
 	if catalogue != nil {
 		for _, p := range []string{"/api/v1/libraries", "/api/v1/libraries/", "/api/v1/items", "/api/v1/items/"} {
 			api.Handle(p, am.Require(catalogue))
+		}
+	}
+	if userdata != nil {
+		// More specific than the playback and catalogue prefixes, so they win.
+		for _, p := range []string{"POST /api/v1/playback/sessions/{sessionId}/progress",
+			"PUT /api/v1/items/{itemId}/watched", "PUT /api/v1/items/{itemId}/continue-watching-hidden"} {
+			api.Handle(p, am.Require(userdata))
 		}
 	}
 	api.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

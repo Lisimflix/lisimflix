@@ -18,7 +18,6 @@ import (
 var migrationsFS embed.FS
 
 // Migrations is the progress schema, for storage.Migrate.
-// Planned: DATA-1b (serve registers the userdata migrations).
 func Migrations() storage.Source {
 	sub, err := fs.Sub(migrationsFS, "migrations")
 	if err != nil {
@@ -28,16 +27,12 @@ func Migrations() storage.Source {
 }
 
 var (
-	// Planned: DATA-1b (setWatched and hideContinueWatching handlers map it to 409).
 	ErrRevisionConflict = errors.New("userdata: revision conflict")
-	// Planned: DATA-1b (reportProgress handler maps it to 400).
-	ErrInvalid = errors.New("userdata: invalid")
+	ErrInvalid          = errors.New("userdata: invalid")
 )
 
 // Session is a live playback session, which fixes the item, version and
 // source revision its events apply to.
-//
-// Planned: DATA-1b (reportProgress handler supplies it).
 type Session struct {
 	ID, ItemID, VersionID, SourceRevision string
 	DurationMs                            int64
@@ -45,8 +40,6 @@ type Session struct {
 }
 
 // Store keeps per-profile progress in the shared database.
-//
-// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
 type Store struct {
 	db          *storage.DB
 	now         func() time.Time
@@ -60,7 +53,6 @@ func (s *Store) committed() {
 	}
 }
 
-// Planned: DATA-1b (reportProgress, setWatched, listContinueWatching handlers).
 func NewStore(db *storage.DB) *Store { return &Store{db: db, now: time.Now} }
 
 // States returns one state per requested item for the profile, the zero

@@ -179,7 +179,7 @@
     "/api/v1/items/{itemId}/watched": {
       "put": {
         "operationId": "setWatched",
-        "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
+        "x-lisimflix": { "owner": "DATA-1", "status": "implemented" },
         "summary": "Mark a movie or episode watched (origin manual) or unwatched for the current profile. Marking unwatched resets the item: watched and resume become null, so the next play starts from the beginning, and playing it past 95% with at least half of it played marks it watched again (origin auto). expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes.",
         "parameters": [{ "$ref": "#/components/parameters/ItemId" }, { "$ref": "#/components/parameters/CSRFToken" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/WatchedRequest" } } } },
@@ -197,7 +197,7 @@
     "/api/v1/items/{itemId}/continue-watching-hidden": {
       "put": {
         "operationId": "hideContinueWatching",
-        "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
+        "x-lisimflix": { "owner": "DATA-1", "status": "implemented" },
         "summary": "Remove a movie or episode from the current profile's Continue Watching. This is an explicit change, so it bumps UserItemState.revision (progress never does). Progress, resume and watched are kept. The item comes back on the first accepted progress event of a playback session whose first progress event comes after the hide; there is no un-hide call. expectedRevision must equal the current UserItemState.revision, otherwise 409 revision_conflict and nothing changes.",
         "parameters": [{ "$ref": "#/components/parameters/ItemId" }, { "$ref": "#/components/parameters/CSRFToken" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/HideRequest" } } } },
@@ -215,7 +215,7 @@
     "/api/v1/playback/sessions/{sessionId}/progress": {
       "post": {
         "operationId": "reportProgress",
-        "x-lisimflix": { "owner": "DATA-1", "status": "planned" },
+        "x-lisimflix": { "owner": "DATA-1", "status": "implemented" },
         "summary": "Report progress for an owned live session. A duplicate or out-of-order sequence is 200 with accepted:false. A session whose source changed is 409 source_changed; an ended session is 410.",
         "parameters": [{ "$ref": "#/components/parameters/SessionId" }, { "$ref": "#/components/parameters/CSRFToken" }],
         "requestBody": { "required": true, "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ProgressEvent" } } } },

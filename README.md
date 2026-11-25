@@ -14,6 +14,8 @@ falling back to the M1 movie when storage is down.
 Library scanning (LIB-2) is being built: `lisimflix library add` registers a folder of movies, TV or
 anime, and the server keeps it scanned and probed for the browse app. The admin screens follow (LIB-2d).
 `lisimflix hook add` connects Sonarr or Radarr, so imports are scanned at once (LIB-4).
+Progress (DATA-1) is being built: the server stores each profile's resume position and watched
+marks for the M1 movie; catalogue items and Continue Watching follow.
 
 To run it, see [`deploy/README.md`](deploy/README.md). M1 is for one viewer on a trusted
 private network only, over plain HTTP.
