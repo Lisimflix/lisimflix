@@ -107,7 +107,7 @@ func (s *Store) ContinueWatching(ctx context.Context, profileID string, limit in
 	}
 	rows, err := s.db.QueryContext(ctx, `SELECT item_id, `+stateCols+` FROM userdata_state
 		WHERE profile_id = ? AND hidden = 0 AND resume_position_ms IS NOT NULL AND covered_ms >= ?
-		AND COALESCE(watched_value, 0) = 0`+keyset+`
+		AND COALESCE(watched_value, 0) = 0 AND last_played_at IS NOT NULL`+keyset+`
 		ORDER BY last_played_at DESC, item_id LIMIT ?`, append(args, limit+1)...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("userdata: continue watching: %w", err)

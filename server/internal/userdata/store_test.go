@@ -208,9 +208,9 @@ func TestContinueWatchingPages(t *testing.T) {
 			seen[st.ItemID]++
 			order = append(order, st)
 		}
-		if page == 0 {
+		if page == 0 { // an item from a later page moves ahead of the cursor: keyset paging skips it, never repeats it
 			e.advance(time.Minute)
-			e.play(Session{ID: "late", ItemID: items[0].ItemID, VersionID: "v1", SourceRevision: r1, DurationMs: 100_000}, tick, 0, 45_000)
+			e.play(Session{ID: "late", ItemID: "item-010", VersionID: "v1", SourceRevision: r1, DurationMs: 100_000}, tick, 0, 45_000)
 		}
 		if next == nil {
 			if len(items) > 50 || page != 2 {
@@ -220,8 +220,8 @@ func TestContinueWatchingPages(t *testing.T) {
 		}
 		after = next
 	}
-	if len(seen) != 120 {
-		t.Fatalf("%d distinct items, want 120", len(seen))
+	if len(seen) != 119 || seen["item-010"] != 0 {
+		t.Fatalf("%d distinct items (item-010 %d times), want 119 without the moved item", len(seen), seen["item-010"])
 	}
 	for id, n := range seen {
 		if n != 1 {
@@ -233,5 +233,36 @@ func TestContinueWatchingPages(t *testing.T) {
 		if a.LastPlayedAt.Before(*b.LastPlayedAt) || (a.LastPlayedAt.Equal(*b.LastPlayedAt) && a.ItemID > b.ItemID) {
 			t.Fatalf("out of order at %d: %s then %s", i, a.ItemID, b.ItemID)
 		}
+	}
+}
+
+func TestContinueWatchingFullLastPage(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	for i := range 100 {
+		e.playItem(fmt.Sprintf("item-%03d", i), fmt.Sprintf("s-%03d", i), 40_000)
+	}
+	first, next, err := e.st.ContinueWatching(ctx, "p1", 50, nil)
+	if err != nil || len(first) != 50 || next == nil {
+		t.Fatalf("page 1: %d items, next %v, %v", len(first), next, err)
+	}
+	second, next, err := e.st.ContinueWatching(ctx, "p1", 50, next)
+	if err != nil || len(second) != 50 || next != nil {
+		t.Fatalf("page 2: %d items, next %+v, %v", len(second), next, err)
+	}
+}
+
+// A row with resume but no last_played_at (an importer could write one) is not listed and does not break paging.
+func TestContinueWatchingSkipsRowWithoutLastPlayed(t *testing.T) {
+	e := newEnv(t)
+	e.playItem("A", "sA", 40_000)
+	if _, err := e.db.Exec(`INSERT INTO userdata_state (profile_id, item_id, resume_position_ms, resume_duration_ms,
+		resume_version_id, resume_source_revision, resume_updated_at, covered_ms)
+		VALUES ('p1', 'B', 40000, 100000, 'v1', ?, 1, 40000)`, r1); err != nil {
+		t.Fatal(err)
+	}
+	items, next, err := e.st.ContinueWatching(context.Background(), "p1", 1, nil)
+	if err != nil || len(items) != 1 || items[0].ItemID != "A" || next != nil {
+		t.Fatalf("items %+v, next %+v, %v", items, next, err)
 	}
 }
