@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -48,6 +49,32 @@ func TestOpenUsesWALAndForeignKeys(t *testing.T) {
 	d.QueryRow(`PRAGMA foreign_keys`).Scan(&fk)
 	if mode != "wal" || fk != 1 {
 		t.Fatalf("journal_mode=%s foreign_keys=%d", mode, fk)
+	}
+}
+
+// #240: a data directory whose name holds URI delimiters ("#", "?") or "%"
+// opens the database at exactly that path, not a truncated or decoded one.
+func TestOpenPathWithURICharacters(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "media #2 ?x %41")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "lisimflix.db")
+	d, err := Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.Exec(`CREATE TABLE t (x)`); err != nil {
+		t.Fatal(err)
+	}
+	var file string
+	if err := d.QueryRow(`SELECT file FROM pragma_database_list WHERE name = 'main'`).Scan(&file); err != nil || file != path {
+		t.Fatalf("database file %q (%v), want %q", file, err, path)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(dir))
+	if len(entries) != 1 {
+		t.Fatalf("stray files next to the data directory: %v", entries)
 	}
 }
 

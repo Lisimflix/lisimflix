@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strings"
 
 	_ "modernc.org/sqlite"
 )
@@ -40,7 +41,9 @@ func Open(ctx context.Context, path string) (*DB, error) {
 		q.Add("_pragma", p)
 	}
 	q.Set("_txlock", "immediate")
-	sdb, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	// In a file: URI "?" starts the query, "#" the fragment and "%" an escape,
+	// so a data directory like "media #2" needs them escaped (#240).
+	sdb, err := sql.Open("sqlite", "file:"+uriEscaper.Replace(path)+"?"+q.Encode())
 	if err != nil {
 		return nil, fmt.Errorf("storage: open: %w", err)
 	}
@@ -55,6 +58,8 @@ func Open(ctx context.Context, path string) (*DB, error) {
 	}
 	return &DB{DB: sdb, path: path}, nil
 }
+
+var uriEscaper = strings.NewReplacer("%", "%25", "?", "%3F", "#", "%23")
 
 // ensurePrivateFile creates path with mode 0600, or tightens an existing file.
 func ensurePrivateFile(path string) error {
